@@ -3,7 +3,6 @@
 * https://github.com/lieuweprins/jquery-drawr
 * Copyright (c) 2019 Lieuwe Prins
 * Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
-* Version: 0.4.0
 */
 
 (function( $ ) {
@@ -448,33 +447,6 @@
  
 }( jQuery ));
 
-/*
-todo:
-LONG TERM:
-FEATURE: tool, text
-FEATURE: blur routine using pixel raw data. maybe smudge too.
-FEATURE: undo/redo
-FEATURE: implement combined js file - jquery.drawr.bundle.js taskrunner needed for that
-FEATURE: destroy function, unbinding events etc
-minify
-the rotated sliders look so wonky on android.
-the sfx layer is wonky looking when zoomed in, glitches out, on android.
-FEATURE: ability to set whether pen pressure affects size, opacity, or none, per brush.
-FEATURE: implement faux scrolling with css translations. perhaps. we need free movement outside of the parent element. and its fast.
-debug every value; make sure we use integers for every draw operation.
-my brushes have a bit of a rough start. the first three spots should be lighter maybe? i dunno.
-sliders behave wonky on android. possibly also on iphone x
-THINK about undo. a couple levels would be easy
-a real, fancy color picker with a js generated palette image probably. there is none. maybe a seperate plugin that will get bundled.
-the buttons have border radius at android
-
-SHORT TERM:
-FEATURE: namespace events
-FEATURE: zooming needs to adjust the scroll position, every drawing program does that.
-per brush pressure_affects_alpha and pressure_affects_size setting to determine whether to send modified brush info to the plugin. to add to that, drawstart and the like should receive a size and alpha. and sfx event should too.
-voor demo aan jan:
-4 - professional git hub page
-*/
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-spray mdi-24px",
 	name: "airbrush",
