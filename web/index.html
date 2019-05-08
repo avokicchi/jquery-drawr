@@ -205,14 +205,6 @@ There's a few other features, such as loading, saving an image, adding custom bu
 
 </pre>
 
-<!--<div style="position:absolute;top:10px;right:10px;width:200px;height:500px;background:#fff;border:5px solid green;overflow:scroll;" id = "debug"></div>-->
-
-<!--
-<button onmousedown='$(".demo-canvas").drawr("stop");' ontouchstart='$(".demo-canvas").drawr("stop");'>Hide controls</button>
-<button onmousedown='$(".demo-canvas").drawr("start");' ontouchstart='$(".demo-canvas").drawr("start");'>Show controls</button>
-<button onmousedown='load_kitten();' ontouchstart='load_kitten();'>Load image</button>
--->
-
 I hope you find this plugin useful somehow! 
 
 <hr/>
@@ -223,13 +215,6 @@ This project is maintained by Lieuwe Prins
 
 
 <script type="text/javascript">
-
-	function load_kitten(){
-		var width = 50 + parseInt(Math.random()*800);
-		var height = 50 + parseInt(Math.random()*800);
-		var demo_image = "http://placekitten.com/" + width + "/" + height;
-		$(".demo-canvas").drawr("load",demo_image);
-	}
 
 	$("#drawr-container .demo-canvas").drawr({
 		"enable_tranparency" : true,
