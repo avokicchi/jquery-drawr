@@ -11,8 +11,8 @@ Usage:
 ```
 
 ```javascript
-	$("#canvas").drawr({ "enable_tranparency" : true, "canvas_width" : 800, "canvas_height" : 800 });
-	$("#canvas").drawr("start");
+$("#canvas").drawr({ "enable_tranparency" : true, "canvas_width" : 800, "canvas_height" : 800 });
+$("#canvas").drawr("start");
 ```
 
-More [I'm an inline-style link with title](https://rawrfl.es/jquery-drawr/ "Info and demos at this link")
+More [Info and demos at this link](https://rawrfl.es/jquery-drawr/ "Info and demos at this link")
