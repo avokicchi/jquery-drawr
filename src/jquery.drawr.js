@@ -371,11 +371,9 @@
 				currentCanvas.$memoryCanvas=$("<canvas class='sfx-canvas'></canvas>");
 				currentCanvas.$memoryCanvas.insertBefore(currentCanvas);
 
-				console.warn("about to set up canvas");
 	        	//set up canvas
         		plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height);
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_tranparency });			
-				console.warn("canvas set up");
 
 				//brush dialog
         		currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes");
