@@ -1,0 +1,26 @@
+{
+  "name": "jquery-drawr",
+  "version": "1.0.0",
+  "description": "Transform any canvas into a drawing area",
+  "main": "gulpfile.js",
+  "dependencies": {
+    "gulp": "^4.0.2"
+  },
+  "devDependencies": {
+    "gulp-concat": "^2.6.1",
+    "gulp-minify": "^3.1.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lieuweprins/jquery-drawr.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lieuweprins/jquery-drawr/issues"
+  },
+  "homepage": "https://github.com/lieuweprins/jquery-drawr#readme"
+}
