@@ -349,18 +349,18 @@
 				var max_bar_width = container_width;
 				var visible_scroll_x = container_width;
 				if(this.scrollX<0) visible_scroll_x += this.scrollX;
-				if(this.scrollX> this.width-container_width) visible_scroll_x -= this.scrollX-(this.width-container_width);
+				if(this.scrollX> (this.width*this.zoomFactor)-container_width) visible_scroll_x -= this.scrollX-((this.width*this.zoomFactor)-container_width);
 				if(visible_scroll_x<0) visible_scroll_x = 0;	
 				var percentage = 100/this.width * visible_scroll_x;
 				var scroll_bar_width= max_bar_width / 100 * percentage;
+				scroll_bar_width/=this.zoomFactor;
 				if(scroll_bar_width<1) scroll_bar_width = 1;
 
-				var position_percentage = (100/(this.width-container_width))*this.scrollX;	
-
+				var position_percentage = (100/((this.width*this.zoomFactor)-container_width))*this.scrollX;	
 				var posx=(((max_bar_width-scroll_bar_width)/100)*position_percentage);
-
 				if(posx<0) posx=0;
 				if(posx>container_width-scroll_bar_width) posx = container_width-scroll_bar_width;
+
 				context.moveTo(posx,container_height-3);
 				context.lineTo(posx+scroll_bar_width,container_height-3);
 				context.stroke();
@@ -369,17 +369,18 @@
 				var max_bar_height = container_height;
 				var visible_scroll_y = container_height;
 				if(this.scrollY<0) visible_scroll_y += this.scrollY;
-				if(this.scrollY> this.height-container_height) visible_scroll_y -= this.scrollY-(this.height-container_height);
+				if(this.scrollY> (this.height*this.zoomFactor)-container_height) visible_scroll_y -= this.scrollY-((this.height*this.zoomFactor)-container_height);
 				if(visible_scroll_y<0) visible_scroll_y = 0;	
-				var percentage = 100/this.height * visible_scroll_y;
+				var percentage = 100/(this.height*this.zoomFactor) * visible_scroll_y;
 				var scroll_bar_height= max_bar_height / 100 * percentage;
+			//	scroll_bar_height/=this.zoomFactor;
 				if(scroll_bar_height<1) scroll_bar_height = 1;
-				var position_percentage = (100/(this.width-container_height))*this.scrollY;	
 
+				var position_percentage = (100/((this.width*this.zoomFactor)-container_height))*this.scrollY;	
 				var posy=(((max_bar_height-scroll_bar_height)/100)*position_percentage);
-
 				if(posy<0) posy=0;
 				if(posy>container_height-scroll_bar_height) posy = container_height-scroll_bar_height;
+
 				context.moveTo(container_width-2,posy);
 				context.lineTo(container_width-2,posy+scroll_bar_height);
 				context.stroke();
@@ -590,6 +591,8 @@
 		if(typeof $.fn.drawr.availableBrushes=="undefined") $.fn.drawr.availableBrushes=[];
 		$.fn.drawr.availableBrushes.push(brush);
     };
+
+    //go to center? do dis: plugin.apply_scroll.call(currentCanvas,((currentCanvas.width*currentCanvas.zoomFactor)-$(currentCanvas).parent().width())/2,((currentCanvas.height*currentCanvas.zoomFactor)-$(currentCanvas).parent().height())/2,true);
  
 }( jQuery ));
 
