@@ -10,7 +10,6 @@ jQuery.fn.drawr.register({
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
-		context.lineWidth = size;
 		context.globalAlpha = alpha;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
