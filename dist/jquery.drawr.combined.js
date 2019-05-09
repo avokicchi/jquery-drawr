@@ -246,25 +246,32 @@
         }
 
         //set some default settings. :)
-        plugin.initialize_canvas = function(width,height){
-        	$(this).css({ "display" : "block", "background-size": "20px 20px", "user-select": "none", "webkit-touch-callout": "none" });
+        plugin.initialize_canvas = function(width,height,reset){
+        	$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none" });
         	$(this).parent().css({	"overflow": "hidden", "user-select": "none", "webkit-touch-callout": "none" });
         	if(this.settings.enable_tranparency==true) $(this).css({"background-image" : "url(" + tspImg + ")"});
 			this.width=width;
 			this.height=height;
-			$(this).width(width);
-			$(this).height(height);
-			this.zoomFactor = 1;
-			this.brushColor = { r: 0, g: 0, b: 0 };
-			this.plugin = plugin;
+			
+			if(reset==true){
+				this.zoomFactor = 1;
+				if(typeof this.$zoomToolbox!=="undefined") this.$zoomToolbox.find("input").val(100).trigger("input");
+				plugin.apply_scroll.call(this,0,0,false);
+				$(this).width(width);
+				$(this).height(height);
+			}
+
+			$(currentCanvas).css({
+    			"background-size": (20*this.zoomFactor) + "px " + (20*this.zoomFactor) + "px "
+    		});
+
 			//this.brushSize = this.settings.inital_brush_size;
 			//this.brushAlpha = this.settings.inital_brush_alpha;
 			this.pen_pressure = false;//switches mode once it detects.
-			if(typeof this.$zoomToolbox!=="undefined") this.$zoomToolbox.find("input").val(100).trigger("input");
 			//TODO: fix zoomlevel slider value, update it
 			//$(this).parent()[0].scrollLeft = 0;
 			//$(this).parent()[0].scrollTop = 0;
-			plugin.apply_scroll.call(this,0,0,false);
+			
 			var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
     		if(this.settings.enable_tranparency==false){
     			context.fillStyle="white";
@@ -293,7 +300,6 @@
 			this.$memoryCanvas[0].height=parent_height;
 			this.$memoryCanvas.width(parent_width);
 			this.$memoryCanvas.height(parent_height);
-			window.requestAnimationFrame(plugin.draw_animations.bind(this));
 
         };
 
@@ -463,7 +469,7 @@
 
 	        	img.onload = function(){
 	        		var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_tranparency });
-	        		plugin.initialize_canvas.call(currentCanvas,img.width,img.height);
+	        		plugin.initialize_canvas.call(currentCanvas,img.width,img.height,true);
 	        		currentCanvas.undoStack = [{data: currentCanvas.toDataURL("image/png"),current:true}];
         			context.drawImage(img,0,0);
 	        	};
@@ -495,10 +501,14 @@
 				currentCanvas.$memoryCanvas=$("<canvas class='sfx-canvas'></canvas>");
 				currentCanvas.$memoryCanvas.insertBefore(currentCanvas);
 
+				currentCanvas.plugin = plugin;
+
 	        	//set up canvas
-        		plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height);
+        		plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
         		currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_tranparency });			
+				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
+				window.requestAnimationFrame(plugin.draw_animations.bind(currentCanvas));
 
 				//brush dialog
         		currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes");
@@ -529,7 +539,7 @@
 						img.crossOrigin = "Anonymous";
 
 						img.onload = function(){
-							currentCanvas.plugin.initialize_canvas.call(currentCanvas,img.width,img.height);
+							currentCanvas.plugin.initialize_canvas.call(currentCanvas,img.width,img.height,false);
 							context.drawImage(img,0,0);
 						};
 						img.src=undo;
