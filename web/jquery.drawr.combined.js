@@ -1029,11 +1029,12 @@ jQuery.fn.drawr.register({
 		};
 		context.globalAlpha=alpha
 		if(typeof brush.$floatyBox=="undefined"){
-			brush.$floatyBox = $('<div style="z-index:6;position:absolute;width:100px;height:20px;"><input style="background:transparent;border:0px;padding:0px;font-size:20px;font-family:sans-serif;" type="text" value=""><button class="ok"><i class="mdi mdi-check"></i></button><button class="cancel"><i class="mdi mdi-close"></i></button></div>');
+			var fontSizeForDisplay= parseInt(20 * self.zoomFactor);
+			brush.$floatyBox = $('<div style="z-index:6;position:absolute;width:100px;height:20px;"><input style="background:transparent;border:0px;padding:0px;font-size:' + fontSizeForDisplay + 'px;font-family:sans-serif;" type="text" value=""><button class="ok"><i class="mdi mdi-check"></i></button><button class="cancel"><i class="mdi mdi-close"></i></button></div>');
 			$(brush.$floatyBox).insertAfter($(this).parent());
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + x,
-				top: $(this).parent().offset().top + y,
+				left: $(this).parent().offset().left + (x*self.zoomFactor) - this.scrollX,
+				top: $(this).parent().offset().top + (y*self.zoomFactor) - this.scrollY,
 			});
 			brush.$floatyBox.find("input").on("mousedown touchstart",function(e){
 				e.preventDefault();
@@ -1058,8 +1059,8 @@ jQuery.fn.drawr.register({
 			});
 		} else {
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + x - $(this).parent()[0].scrollLeft,
-				top: $(this).parent().offset().top + y - $(this).parent()[0].scrollTop,
+				left: $(this).parent().offset().left + (x*self.zoomFactor) - this.scrollX,
+				top: $(this).parent().offset().top + (y*self.zoomFactor) - this.scrollY,
 			});
 		}
 	},
@@ -1081,8 +1082,8 @@ jQuery.fn.drawr.register({
 
 		} else {
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + x - $(this).parent()[0].scrollLeft,
-				top: $(this).parent().offset().top + y - $(this).parent()[0].scrollTop,
+				left: $(this).parent().offset().left + (x*this.zoomFactor) - this.scrollX,
+				top: $(this).parent().offset().top + (y*this.zoomFactor) - this.scrollY,
 			});
 		}
 	}
