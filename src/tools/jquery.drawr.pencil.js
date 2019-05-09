@@ -50,5 +50,8 @@ jQuery.fn.drawr.register({
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		context.globalAlpha = alpha;
 		brush.drawRotatedImage(context,brush.brushImage,x,y,0,size);
+	},
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		return true;
 	}
 });

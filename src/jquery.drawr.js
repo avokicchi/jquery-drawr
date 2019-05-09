@@ -168,7 +168,16 @@
 					 	if(calculatedSize<1) calculatedSize = 1;
 					}
 
-					if(typeof self.active_brush.drawStop!=="undefined") self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+					var result=undefined;
+
+					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+					//if there is an action to undo
+					if(typeof result!=="undefined"){
+						self.$undoButton.css("opacity",1);
+		      			self.undoStack.push({data: self.toDataURL("image/png"),current: true});
+		      			if(self.undoStack.length>(self.settings.undo_max_levels+1)) self.undoStack.shift();
+		      		}
+	  
 				}
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
 				$(".drawr-toolbox").data("dragging", false);
@@ -215,7 +224,7 @@
         plugin.create_button = function(toolbox,type,data,css){
         	var self=this;
         	var el = $("<button style='float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></button>");
-    	    el.css({ "outline" : "none", "text-align":"center","padding-left": "0px","padding-right": "0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"40px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
+    	    el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
     		if(typeof css!=="undefined") el.css(css);
     		el.addClass("type-" + type);
         	el.data("data",data).data("type",type);
@@ -233,11 +242,7 @@
         		e.stopPropagation();
         		e.preventDefault();
         	});
-        	if($(toolbox).find(".seperator").length>0 && type=="action"){
-        		el.insertBefore($(toolbox).find(".seperator"));
-        	} else {
-	        	$(toolbox).append(el);
-	        }
+        	$(toolbox).append(el);
         	return el;
         };
 
@@ -287,6 +292,7 @@
 			var parent_height = $(this).parent().innerHeight() - plugin.scroll_bar_width();
 			var borderTop = parseInt(window.getComputedStyle($(this).parent()[0], null).getPropertyValue("border-top-width"));
 			var borderLeft = parseInt(window.getComputedStyle($(this).parent()[0], null).getPropertyValue("border-left-width"));
+
 			this.$memoryCanvas.css({
 				"z-index": 5,
 				"position":"absolute",
@@ -379,6 +385,7 @@
 	        	img.onload = function(){
 	        		var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_tranparency });
 	        		plugin.initialize_canvas.call(currentCanvas,img.width,img.height);
+	        		currentCanvas.undoStack = [{data: currentCanvas.toDataURL("image/png"),current:true}];
         			context.drawImage(img,0,0);
 	        	};
 	        	img.src=param;
@@ -399,7 +406,8 @@
 		    	var defaultSettings = {
 		    		"enable_tranparency" : true,
 		    		"canvas_width" : $(currentCanvas).parent().innerWidth() - plugin.scroll_bar_width(),
-		    		"canvas_height" : $(currentCanvas).parent().innerHeight() - plugin.scroll_bar_width()
+		    		"canvas_height" : $(currentCanvas).parent().innerHeight() - plugin.scroll_bar_width(),
+		    		"undo_max_levels" : 5
 		    	};
 	        	if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 	        	currentCanvas.settings = defaultSettings;
@@ -410,6 +418,7 @@
 
 	        	//set up canvas
         		plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height);
+        		currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_tranparency });			
 
 				//brush dialog
@@ -420,13 +429,38 @@
 				$.each($.fn.drawr.availableBrushes,function(i,brush){
 	    			plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"brush",brush);
 				});
-				currentCanvas.$brushToolbox.append("<div style='clear:both;border-top:2px solid #000;' class='seperator'></div>");
+				//currentCanvas.$brushToolbox.append("<div style='clear:both;border-top:2px solid #000;' class='seperator'></div>");
 	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-palette-outline mdi-24px"}).on("touchstart mousedown",function(){
 	    			currentCanvas.$colorToolbox.toggle();
 	    		});
 	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-magnify mdi-24px"}).on("touchstart mousedown",function(){
 	    			currentCanvas.$zoomToolbox.toggle();
+	    		});	    		
+	    		currentCanvas.$undoButton=plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",{"icon":"mdi mdi-undo-variant mdi-24px"}).on("touchstart mousedown",function(){
+				    if(currentCanvas.undoStack.length>0){
+						if(currentCanvas.undoStack[currentCanvas.undoStack.length-1].current==true){
+							currentCanvas.undoStack.pop();//ignore current version of canvas
+						}
+						$.each(currentCanvas.undoStack,function(i,stackitem){
+							stackitem.current=false;
+						});
+						if(currentCanvas.undoStack.length==0) return;
+						var undo = currentCanvas.undoStack.pop().data;
+						var img = document.createElement("img");
+						img.crossOrigin = "Anonymous";
+
+						img.onload = function(){
+							currentCanvas.plugin.initialize_canvas.call(currentCanvas,img.width,img.height);
+							context.drawImage(img,0,0);
+						};
+						img.src=undo;
+						if(currentCanvas.undoStack.length==0) {//don't allow stack to be emtpy.
+							currentCanvas.$undoButton.css("opacity",0.5);
+							currentCanvas.undoStack.push({data:undo,current:false});
+						}
+					}
 	    		});
+	    		currentCanvas.$undoButton.css("opacity",0.5);
 				//color dialog
         		currentCanvas.$colorToolbox = plugin.create_toolbox.call(currentCanvas,"color",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Color");
 	    		var colors = ["#FFFFFF","#0074D9","#2ECC40","#FFDC00","#FF4136","#111111"];

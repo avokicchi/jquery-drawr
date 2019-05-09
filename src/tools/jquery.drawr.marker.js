@@ -39,7 +39,7 @@ jQuery.fn.drawr.register({
 			}
 		});
 		context.stroke();
-
+		return true;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		brush.currentSize = size;

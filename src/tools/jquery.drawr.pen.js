@@ -19,5 +19,8 @@ jQuery.fn.drawr.register({
 		context.beginPath();
 		context.arc(x,y, size/2, 0, 2 * Math.PI);
 		context.fill();
+	},
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		return true;
 	}
 });

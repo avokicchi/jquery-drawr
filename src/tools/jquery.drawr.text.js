@@ -64,6 +64,7 @@ jQuery.fn.drawr.register({
 		context.fillText(text, x-2, y+19);
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
+		return true;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		brush.currentPosition = {

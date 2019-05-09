@@ -29,6 +29,7 @@ jQuery.fn.drawr.register({
 		context.strokeRect(brush.startPosition.x,brush.startPosition.y,brush.currentPosition.x-brush.startPosition.x,brush.currentPosition.y-brush.startPosition.y);
 
 		this.effectCallback = null;
+		return true;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		brush.currentPosition = {

@@ -21,5 +21,8 @@ jQuery.fn.drawr.register({
 		radgrad.addColorStop(1, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0)');
 		context.fillStyle = radgrad;
 		context.fillRect(x-(self.brushSize/2), y-(self.brushSize/2), self.brushSize, self.brushSize);
+	},
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		return true;
 	}
 });
