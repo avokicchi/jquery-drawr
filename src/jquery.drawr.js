@@ -25,13 +25,16 @@
 		        b: parseInt(result[3], 16)
 		    } : null;
 		};
-		plugin.get_mouse_data = function (event,relativeTo) {//body event, but relative to other element extend with pressure later.
-			if(typeof relativeTo!=="undefined"){
+		plugin.get_mouse_data = function (event,relativeTo,scrollEl) {//body event, but relative to other element extend with pressure later.
+			if(typeof relativeTo!=="undefined" && relativeTo!==null){
 				var borderTop = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-top-width"));
 				var borderLeft = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-left-width"));
+				var translate_x = typeof scrollEl!=="undefined" ? scrollEl.scrollX : 0;
+				var translate_y = typeof scrollEl!=="undefined" ? scrollEl.scrollY : 0;
+
 				var bounding_box = {
-					left: relativeTo.offsetLeft - $(relativeTo).scrollLeft() + borderLeft,
-					top: relativeTo.offsetTop - $(relativeTo).scrollTop() + borderTop
+					left: relativeTo.offsetLeft - translate_x + borderLeft,
+					top: relativeTo.offsetTop - translate_y + borderTop
 				};
 			} else {
 				var bounding_box = {
@@ -52,22 +55,6 @@
 				return { x: (event.pageX - bounding_box.left)/this.zoomFactor, y: (event.pageY-bounding_box.top)/this.zoomFactor, pressure: 1 };
 			}
 		};
-		plugin.scroll_bar_width = function () {
-		    var outer = document.createElement("div");
-		    outer.style.visibility = "hidden";
-		    outer.style.width = "100px";
-		    outer.style.msOverflowStyle = "scrollbar"; // needed for WinJS apps
-		    document.body.appendChild(outer);
-		    var widthNoScroll = outer.offsetWidth;
-		    outer.style.overflow = "scroll";
-		    var inner = document.createElement("div");
-		    inner.style.width = "100%";
-		    outer.appendChild(inner);        
-		    var widthWithScroll = inner.offsetWidth;
-		    outer.parentNode.removeChild(outer);
-		    return widthNoScroll - widthWithScroll;
-		};
-
 		plugin.is_dragging = false;
 
         plugin.bind_draw_events = function(){
@@ -80,13 +67,13 @@
 				var canvasRect = {
 					left: self.offsetLeft,
 					top: self.offsetTop,
-					width: $(self).parent()[0].offsetWidth - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-right-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width")) - plugin.scroll_bar_width(),
-					height: $(self).parent()[0].offsetHeight - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-bottom-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width")) - plugin.scroll_bar_width()
+					width: $(self).parent()[0].offsetWidth - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-right-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width")),
+					height: $(self).parent()[0].offsetHeight - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-bottom-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"))
 				};
 				var mouse_data = plugin.get_mouse_data.call(self,e);
 				if(self.$brushToolbox.is(":visible") && mouse_data.x*self.zoomFactor>canvasRect.left && mouse_data.x*self.zoomFactor<(canvasRect.left + canvasRect.width) && mouse_data.y*self.zoomFactor>canvasRect.top && mouse_data.y*self.zoomFactor<(canvasRect.top + canvasRect.height)){//yay! We're drawing!
 					if(plugin.is_dragging==false){
-						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0]);
+						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
 						$(self).data("is_drawing",true);
 					//	alert(context.lineCap);
 						context.lineCap = "round";context.lineJoin = 'round';
@@ -111,7 +98,7 @@
 					}
 				}
 			}).on("touchmove mousemove", function(e){
-				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0]);
+				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
 				if($(self).data("is_drawing")==true){
 					var positions = $(self).data("positions");
 					var currentSpot = {x:mouse_data.x,y:mouse_data.y};
@@ -155,7 +142,7 @@
 	        	});
 			}).on("touchend mouseup", function(e){
 				if($(self).data("is_drawing")==true){
-					var mouse_data = plugin.get_mouse_data.call(self,e);
+					var mouse_data = plugin.get_mouse_data.call(self,e,self);
 
  					var calculatedAlpha = self.brushAlpha;
  					if(self.active_brush.pressure_affects_alpha==true){
@@ -261,7 +248,7 @@
         //set some default settings. :)
         plugin.initialize_canvas = function(width,height){
         	$(this).css({ "display" : "block", "background-size": "20px 20px", "user-select": "none", "webkit-touch-callout": "none" });
-        	$(this).parent().css({	"overflow": "scroll", "user-select": "none", "webkit-touch-callout": "none" });
+        	$(this).parent().css({	"overflow": "hidden", "user-select": "none", "webkit-touch-callout": "none" });
         	if(this.settings.enable_tranparency==true) $(this).css({"background-image" : "url(" + tspImg + ")"});
 			this.width=width;
 			this.height=height;
@@ -275,8 +262,9 @@
 			this.pen_pressure = false;//switches mode once it detects.
 			if(typeof this.$zoomToolbox!=="undefined") this.$zoomToolbox.find("input").val(100).trigger("input");
 			//TODO: fix zoomlevel slider value, update it
-			$(this).parent()[0].scrollLeft = 0;
-			$(this).parent()[0].scrollTop = 0;
+			//$(this).parent()[0].scrollLeft = 0;
+			//$(this).parent()[0].scrollTop = 0;
+			plugin.apply_scroll.call(this,0,0,false);
 			var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
     		if(this.settings.enable_tranparency==false){
     			context.fillStyle="white";
@@ -288,8 +276,8 @@
 			var context = this.$memoryCanvas[0].getContext("2d");
 			context.fillStyle="blue";
 			context.fillRect(0,0,width,height);
-			var parent_width = $(this).parent().innerWidth() - plugin.scroll_bar_width();
-			var parent_height = $(this).parent().innerHeight() - plugin.scroll_bar_width();
+			var parent_width = $(this).parent().innerWidth();
+			var parent_height = $(this).parent().innerHeight();
 			var borderTop = parseInt(window.getComputedStyle($(this).parent()[0], null).getPropertyValue("border-top-width"));
 			var borderLeft = parseInt(window.getComputedStyle($(this).parent()[0], null).getPropertyValue("border-left-width"));
 
@@ -314,9 +302,84 @@
         	context.clearRect(0,0,this.$memoryCanvas[0].width,this.$memoryCanvas[0].height);
  
         	if(typeof this.effectCallback!=="undefined" && this.effectCallback!==null){
-        		this.effectCallback.call(this,context,this.active_brush,$(this).parent()[0].scrollLeft,$(this).parent()[0].scrollTop,this.zoomFactor);
+        		this.effectCallback.call(this,context,this.active_brush,this.scrollX,this.scrollY,this.zoomFactor);
         	}
-    		
+
+        	var container_width = $(this).parent().width();
+        	var container_height = $(this).parent().height();
+
+			context.globalAlpha = 0.5;//brush.currentAlpha;
+			context.lineWidth = 1;
+			context.lineJoin = context.lineCap = "round";
+			context.strokeStyle = "black";
+
+			//draw lines outlining canvas size
+
+			context.beginPath(); 
+			context.moveTo(0,-1-this.scrollY);
+			context.lineTo(this.width,-1-this.scrollY);
+			context.stroke();
+
+    		context.beginPath(); 
+			context.moveTo(0,(this.height*this.zoomFactor)-this.scrollY);
+			context.lineTo(this.width,(this.height*this.zoomFactor)-this.scrollY);
+			context.stroke();
+
+			context.beginPath(); 
+			context.moveTo(-1-this.scrollX,0);
+			context.lineTo(-1-this.scrollX,this.height);
+			context.stroke();
+
+    		context.beginPath(); 
+			context.moveTo((this.width*this.zoomFactor)-this.scrollX,0);
+			context.lineTo((this.width*this.zoomFactor)-this.scrollX,this.height);
+			context.stroke();
+
+			//scroll indicators
+			if(this.scrollTimer>0){
+
+				context.globalAlpha = (0.6/100)*this.scrollTimer<1 ?  (0.6/100)*this.scrollTimer : 0.6;//brush.currentAlpha;
+
+				this.scrollTimer-=5;
+				context.lineWidth = 4;
+				context.lineCap = 'square';
+				context.beginPath(); 
+
+				//horizontal
+				var max_bar_width = container_width;
+				var visible_scroll_x = container_width;
+				if(this.scrollX<0) visible_scroll_x += this.scrollX;
+				if(this.scrollX> this.width-container_width) visible_scroll_x -= this.scrollX-(this.width-container_width);
+				if(visible_scroll_x<0) visible_scroll_x = 0;	
+				var percentage = 100/this.width * visible_scroll_x;
+				var scroll_bar_width= max_bar_width / 100 * percentage;
+				if(scroll_bar_width<1) scroll_bar_width = 1;
+				var position_percentage = (100/(this.width-container_width))*this.scrollX;	
+				var posx=((max_bar_width/100)*position_percentage);
+				if(posx<0) posx=0;
+				if(posx>container_width-scroll_bar_width) posx = container_width-scroll_bar_width;
+				context.moveTo(posx,container_height-3);
+				context.lineTo(posx+scroll_bar_width,container_height-3);
+				context.stroke();
+
+				//vertical
+				var max_bar_height = container_height;
+				var visible_scroll_y = container_height;
+				if(this.scrollY<0) visible_scroll_y += this.scrollY;
+				if(this.scrollY> this.height-container_height) visible_scroll_y -= this.scrollY-(this.height-container_height);
+				if(visible_scroll_y<0) visible_scroll_y = 0;	
+				var percentage = 100/this.height * visible_scroll_y;
+				var scroll_bar_height= max_bar_height / 100 * percentage;
+				if(scroll_bar_height<1) scroll_bar_height = 1;
+				var position_percentage = (100/(this.width-container_height))*this.scrollY;	
+				var posy=((max_bar_height/100)*position_percentage);
+				if(posy<0) posy=0;
+				if(posy>container_height-scroll_bar_height) posy = container_height-scroll_bar_height;
+				context.moveTo(container_width-2,posy);
+				context.lineTo(container_width-2,posy+scroll_bar_height);
+				context.stroke();
+			}
+
         	//window.requestAnimationFrame(plugin.draw_animations);
         	window.requestAnimationFrame(plugin.draw_animations.bind(this));
         };
@@ -344,6 +407,16 @@
 	    		e.preventDefault();
 	    	});
 			return $(toolbox);
+        };
+
+        plugin.apply_scroll = function(x,y,setTimer){
+        	var self = this;
+        	$(self).css("transform","translate(" + -x + "px," + -y + "px)");
+        	self.scrollX = x;
+        	self.scrollY = y;
+        	if(setTimer==true){
+        		self.scrollTimer= 250;
+        	}
         };
 
     	if ( action == "export" ) {
@@ -405,8 +478,8 @@
 	        	//determine settings
 		    	var defaultSettings = {
 		    		"enable_tranparency" : true,
-		    		"canvas_width" : $(currentCanvas).parent().innerWidth() - plugin.scroll_bar_width(),
-		    		"canvas_height" : $(currentCanvas).parent().innerHeight() - plugin.scroll_bar_width(),
+		    		"canvas_width" : $(currentCanvas).parent().innerWidth(),
+		    		"canvas_height" : $(currentCanvas).parent().innerHeight(),
 		    		"undo_max_levels" : 5
 		    	};
 	        	if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);

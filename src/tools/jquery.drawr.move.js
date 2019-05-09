@@ -22,9 +22,9 @@ jQuery.fn.drawr.register({
 		}
 
 		brush.dragStartX=x;
-		brush.scrollStartX=parseInt($(this).parent()[0].scrollLeft);
+		brush.scrollStartX=this.scrollX;
 		brush.dragStartY=y;
-		brush.scrollStartY=parseInt($(this).parent()[0].scrollTop);
+		brush.scrollStartY=this.scrollY;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
@@ -39,7 +39,9 @@ jQuery.fn.drawr.register({
 
 		var diffx = parseInt(-(x - brush.dragStartX));
 		var diffy = parseInt(-(y - brush.dragStartY));
-		$(this).parent()[0].scrollLeft = brush.scrollStartX + diffx;
-		$(this).parent()[0].scrollTop = brush.scrollStartY + diffy;
+
+		self.plugin.apply_scroll.call(self,brush.scrollStartX + diffx,brush.scrollStartY + diffy,true);
+		//$(this).parent()[0].scrollLeft = brush.scrollStartX + diffx;
+		//$(this).parent()[0].scrollTop = brush.scrollStartY + diffy;
 	}
 });
