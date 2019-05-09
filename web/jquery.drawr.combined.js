@@ -354,8 +354,11 @@
 				var percentage = 100/this.width * visible_scroll_x;
 				var scroll_bar_width= max_bar_width / 100 * percentage;
 				if(scroll_bar_width<1) scroll_bar_width = 1;
+
 				var position_percentage = (100/(this.width-container_width))*this.scrollX;	
-				var posx=((max_bar_width/100)*position_percentage);
+
+				var posx=(((max_bar_width-scroll_bar_width)/100)*position_percentage);
+
 				if(posx<0) posx=0;
 				if(posx>container_width-scroll_bar_width) posx = container_width-scroll_bar_width;
 				context.moveTo(posx,container_height-3);
@@ -372,7 +375,9 @@
 				var scroll_bar_height= max_bar_height / 100 * percentage;
 				if(scroll_bar_height<1) scroll_bar_height = 1;
 				var position_percentage = (100/(this.width-container_height))*this.scrollY;	
-				var posy=((max_bar_height/100)*position_percentage);
+
+				var posy=(((max_bar_height-scroll_bar_height)/100)*position_percentage);
+
 				if(posy<0) posy=0;
 				if(posy>container_height-scroll_bar_height) posy = container_height-scroll_bar_height;
 				context.moveTo(container_width-2,posy);
@@ -570,9 +575,8 @@
 		    			"background-size": (20*factor) + "px " + (20*factor) + "px "
 		    		});
 		    		if(zoomDiff!==1){
-		    			//$(currentCanvas).parent()[0].scrollLeft = $(currentCanvas).parent()[0].scrollLeft * zoomDiff;
-		    			//$(currentCanvas).parent()[0].scrollTop = $(currentCanvas).parent()[0].scrollTop * zoomDiff;
-		    			//doesn't seem to work. m aybe my logic on this is off. I think what you really want is the scroll position at 100% zoom level times the zoomfactor. that currently is not recorded, though.
+		    			plugin.apply_scroll.call(currentCanvas,currentCanvas.scrollX * zoomDiff,currentCanvas.scrollY * zoomDiff,true);
+		    			//doesn't seem to work perfectly but it'll do for now
 		    		}
         		});
 				plugin.bind_draw_events.call(currentCanvas);
