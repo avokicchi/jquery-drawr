@@ -88,15 +88,26 @@
 					if(plugin.is_dragging==false){
 						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0]);
 						$(self).data("is_drawing",true);
-						context.lineWidth = self.active_brush.size;
 					//	alert(context.lineCap);
 						context.lineCap = "round";context.lineJoin = 'round';
-	 					var calculatedAlpha = self.brushAlpha * (mouse_data.pressure * 2);
-	 					context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
-						//context.strokeStyle = "skyblue";
+
+						//calculate alpha
+	 					var calculatedAlpha = self.brushAlpha;
+	 					if(self.active_brush.pressure_affects_alpha==true){
+						 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+						 	if(calculatedAlpha>1) calculatedAlpha = 1;
+						}
+						var calculatedSize = self.active_brush.size;
+	 					if(self.active_brush.pressure_affects_size==true){
+						 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+						 	if(calculatedSize<1) calculatedSize = 1;
+						}
+
+						//context.lineWidth
+	 					//context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
-						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,e);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,mouse_data.pressure,e);
+						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					}
 				}
 			}).on("touchmove mousemove", function(e){
@@ -107,14 +118,28 @@
 					var lastSpot=positions[positions.length-1];
 					var dist = plugin.distance_between(lastSpot, currentSpot);
  					var angle = plugin.angle_between(lastSpot, currentSpot);
- 					var stepSize = self.brushSize/6;
- 					var calculatedAlpha = self.brushAlpha * (mouse_data.pressure * 2);
- 					context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
+
+ 					var calculatedAlpha = self.brushAlpha;
+ 					if(self.active_brush.pressure_affects_alpha==true){
+					 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+					 	if(calculatedAlpha>1) calculatedAlpha = 1;
+					}
+					var calculatedSize = self.active_brush.size;
+ 					if(self.active_brush.pressure_affects_size==true){
+					 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+					 	if(calculatedSize<1) calculatedSize = 1;
+					}
+
+ 					var stepSize = calculatedSize/6;
+
+ 					//var calculatedAlpha = self.brushAlpha * (mouse_data.pressure * 2);
+ 					//context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
+
  					if(stepSize<1) stepSize = 1;
 					for (var i = stepSize; i < dist; i+=stepSize) {//advance along the line between last spot and current spot using a^2 + b^2 = c^2 nonsense.
 					    x = lastSpot.x + (Math.sin(angle) * i);
 					    y = lastSpot.y + (Math.cos(angle) * i);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,mouse_data.pressure,e);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,calculatedAlpha,e);
 					    positions.push({x:x,y:y});
 					}
 					$(self).data("positions",positions);
@@ -131,7 +156,19 @@
 			}).on("touchend mouseup", function(e){
 				if($(self).data("is_drawing")==true){
 					var mouse_data = plugin.get_mouse_data.call(self,e);
-					if(typeof self.active_brush.drawStop!=="undefined") self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,e);
+
+ 					var calculatedAlpha = self.brushAlpha;
+ 					if(self.active_brush.pressure_affects_alpha==true){
+					 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+					 	if(calculatedAlpha>1) calculatedAlpha = 1;
+					}
+					var calculatedSize = self.active_brush.size;
+ 					if(self.active_brush.pressure_affects_size==true){
+					 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+					 	if(calculatedSize<1) calculatedSize = 1;
+					}
+
+					if(typeof self.active_brush.drawStop!=="undefined") self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 				}
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
 				$(".drawr-toolbox").data("dragging", false);
@@ -178,7 +215,7 @@
         plugin.create_button = function(toolbox,type,data,css){
         	var self=this;
         	var el = $("<button style='float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></button>");
-    	    el.css({ "outline" : "none", "text-align":"center","padding-left": "0px","padding-right": "0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"40px","user-select": "none", "text-align": "center" });
+    	    el.css({ "outline" : "none", "text-align":"center","padding-left": "0px","padding-right": "0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"40px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
     		if(typeof css!=="undefined") el.css(css);
     		el.addClass("type-" + type);
         	el.data("data",data).data("type",type);
@@ -207,7 +244,7 @@
         /* create a slider */
         plugin.create_slider = function(toolbox,title,min,max,value){
         	var self=this;
-		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input value="' + value + '" style="width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
+		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
 	    	$(toolbox).find("input:last").on("mousedown touchstart",function(e){
 	    		e.stopPropagation();
 	    	}).on("input",function(e){
@@ -451,14 +488,18 @@ jQuery.fn.drawr.register({
 	size: 40,
 	alpha: 0.2,
 	order: 3,
+	pressure_affects_alpha: true,
+	pressure_affects_size: false,
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
+	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
-		//context.globalAlpha = 0.05;
+		context.lineWidth = size;
+		context.globalAlpha = alpha;
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
+		context.globalAlpha = alpha;
 		var radgrad = context.createRadialGradient(x,y,0,x,y,this.brushSize/2);//non zero values for the gradient break globalAlpha unfortunately.
 		radgrad.addColorStop(0, 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')');
 		radgrad.addColorStop(0.5, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0.5)');
@@ -473,19 +514,23 @@ jQuery.fn.drawr.register({
 	size: 6,
 	alpha: 0.5,
 	order: 4,
+	pressure_affects_alpha: true,
+	pressure_affects_size: true,
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
+	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
+		context.globalAlpha = alpha;
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self=  this;
-		var radgrad = context.createRadialGradient(x,y,0,x,y,self.brushSize/2);//non zero values for the gradient break globalAlpha unfortunately.
+		context.globalAlpha = alpha;
+		var radgrad = context.createRadialGradient(x,y,0,x,y,size/2);//non zero values for the gradient break globalAlpha unfortunately.
 		radgrad.addColorStop(0, 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')');
 		radgrad.addColorStop(0.5, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0.5)');
 		radgrad.addColorStop(1, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0)');
 		context.fillStyle = radgrad;
-		context.fillRect(x-(self.brushSize/2), y-(self.brushSize/2), self.brushSize, self.brushSize);
+		context.fillRect(x-(size/2), y-(size/2), size, size);
 	}
 });
 jQuery.fn.drawr.register({
@@ -494,29 +539,32 @@ jQuery.fn.drawr.register({
 	size: 10,
 	alpha: 0.8,
 	order: 5,
+	pressure_affects_alpha: true,
+	pressure_affects_size: true,
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
+	drawStart: function(brush,context,x,y,size,alpha,event){
 		if(this.settings.enable_tranparency==true){
 			context.globalCompositeOperation="destination-out";
 		} else {
 			context.globalCompositeOperation="source-over";
 		}
-		//context.globalAlpha = 0.2;
+		context.globalAlpha = alpha;
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
+		context.globalAlpha = alpha;
 		if(self.settings.enable_tranparency==true){
-			var radgrad = context.createRadialGradient(x,y,0,x,y,self.brushSize/2);//non zero values for the gradient break globalAlpha unfortunately.
+			var radgrad = context.createRadialGradient(x,y,0,x,y,size/2);//non zero values for the gradient break globalAlpha unfortunately.
 			radgrad.addColorStop(0, '#000');
 			radgrad.addColorStop(0.5, 'rgba(0,0,0,0.5)');
 			radgrad.addColorStop(1, 'rgba(0,0,0,0)');
 			context.fillStyle = radgrad;
-			context.fillRect(x-(self.brushSize/2), y-(self.brushSize/2), self.brushSize, self.brushSize);
+			context.fillRect(x-(size/2), y-(size/2), size, size);
 		} else {
 	    	context.fillStyle = 'white';
 			context.beginPath();
-			context.arc(x,y, self.brushSize/2, 0, 2 * Math.PI);
+			context.arc(x,y, size/2, 0, 2 * Math.PI);
 			context.fill();
 		}
 	}
@@ -540,36 +588,39 @@ jQuery.fn.drawr.register({
 	size: 3,
 	alpha: 1,
 	order: 8,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
 	activate: function(brush,context){
 
 	},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
-		brush.currentAlpha = context.globalAlpha;
+	drawStart: function(brush,context,x,y,size,alpha,event){
+		brush.currentAlpha = alpha;
 		brush.startPosition = {
 			"x" : x,
 			"y" : y
 		};
 		this.effectCallback = brush.effectCallback;
-		context.globalAlpha=this.brushAlpha;
+		context.globalAlpha=alpha;
+		context.lineWidth = size;
 	},
-	drawStop: function(brush,context,x,y,event){
-		context.globalAlpha=this.brushAlpha;
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		context.globalAlpha=alpha;
 		context.lineJoin = 'miter';
-		context.lineWidth = this.brushSize;
+		context.lineWidth = size;
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 		context.fillRect(brush.startPosition.x,brush.startPosition.y,brush.currentPosition.x-brush.startPosition.x,brush.currentPosition.y-brush.startPosition.y);
 
 		this.effectCallback = null;
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		brush.currentPosition = {
 			"x" : x,
 			"y" : y
 		};
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
-		context.globalAlpha=this.brushAlpha;
+		context.globalAlpha=brush.currentAlpha;
 		context.lineJoin = 'miter';
 		//context.lineWidth = this.brushSize;
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
@@ -584,22 +635,29 @@ jQuery.fn.drawr.register({
 	size: 15,
 	alpha: 0.3,
 	order: 10,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
 	activate: function(brush,context){
 
 	},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
-		brush.currentAlpha = context.globalAlpha;
+	drawStart: function(brush,context,x,y,size,alpha,event){
+		context.globalCompositeOperation="source-over";
+		brush.currentAlpha = alpha;
 		brush.startPosition = {
 			"x" : x,
 			"y" : y
 		};
 		this.effectCallback = brush.effectCallback;
 	},
-	drawStop: function(brush,context,x,y,event){
-		context.globalAlpha=this.brushAlpha;
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		context.globalAlpha=alpha;
+		
+		brush.currentSize = size;
+		brush.currentAlpha = alpha;
+
 		this.effectCallback = null;
-		context.lineWidth = this.brushSize;
+		context.lineWidth = size;
 		context.lineJoin = context.lineCap = "round";
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 
@@ -614,7 +672,9 @@ jQuery.fn.drawr.register({
 		context.stroke();
 
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
+		brush.currentSize = size;
+		brush.currentAlpha = alpha;
 		brush.currentPosition = {
 			"x" : x,
 			"y" : y
@@ -622,8 +682,8 @@ jQuery.fn.drawr.register({
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
 
-		context.globalAlpha = this.brushAlpha;//brush.currentAlpha;
-		context.lineWidth = this.brushSize*adjustzoom;
+		context.globalAlpha = brush.currentAlpha;//brush.currentAlpha;
+		context.lineWidth = brush.currentSize*adjustzoom;
 		context.lineJoin = context.lineCap = "round";
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 
@@ -651,7 +711,7 @@ jQuery.fn.drawr.register({
 	deactivate: function(brush,context){
 	    $(this).parent().css({"cursor":"default"});//"overflow":"hidden",
 	},
-	drawStart: function(brush,context,x,y,event){
+	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
 		brush.dragStartX=null;brush.scrollStartX=null;
 		brush.dragStartY=null;brush.scrollStartY=null;
@@ -669,7 +729,7 @@ jQuery.fn.drawr.register({
 		brush.dragStartY=y;
 		brush.scrollStartY=parseInt($(this).parent()[0].scrollTop);
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
 
 		if(event.type=="touchmove" || event.type=="touchstart"){
@@ -693,18 +753,17 @@ jQuery.fn.drawr.register({
 	size: 3,
 	alpha: 1,
 	order: 2,
+	pressure_affects_alpha: false,
+	pressure_affects_size: true,
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
+	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
+		context.globalAlpha=alpha;
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
-		var size = parseInt(self.brushSize);
-		if(self.pen_pressure){
-			size=size + parseFloat(10*pressure);
-		}
-		if(size<self.brushSize) size=self.brushSize;
+		context.globalAlpha=alpha;
     	context.fillStyle = 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')';
 		context.beginPath();
 		context.arc(x,y, size/2, 0, 2 * Math.PI);
@@ -717,6 +776,8 @@ jQuery.fn.drawr.register({
 	size: 5,
 	alpha: 0.8,
 	order: 1,
+	pressure_affects_alpha: true,
+	pressure_affects_size: false,
 	activate: function(brush,context){
 		var self = this;
 		brush.brushImage = new Image();
@@ -737,9 +798,9 @@ jQuery.fn.drawr.register({
 		brush.brushImage.src = 'images/lead-pencil.png';//'pencil.png';
 	},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
+	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
-		//context.globalAlpha = 0.6;
+		context.globalAlpha = alpha;
 	},
 	drawRotatedImage: function (context, image, x, y, angle, size) {
 		context.save();
@@ -758,8 +819,9 @@ jQuery.fn.drawr.register({
 		context.drawImage(image,destx,desty,imageWidth,imageHeight);
 	    context.restore();
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
-		brush.drawRotatedImage(context,brush.brushImage,x,y,0,this.brushSize);
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
+		context.globalAlpha = alpha;
+		brush.drawRotatedImage(context,brush.brushImage,x,y,0,size);
 	}
 });
 jQuery.fn.drawr.register({
@@ -768,37 +830,41 @@ jQuery.fn.drawr.register({
 	size: 3,
 	alpha: 1,
 	order: 7,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
 	activate: function(brush,context){
 
 	},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
-		brush.currentAlpha = context.globalAlpha;
+	drawStart: function(brush,context,x,y,size,alpha,event){
+		context.globalCompositeOperation="source-over";
+		brush.currentAlpha = alpha;
+		brush.currentSize = size;
 		brush.startPosition = {
 			"x" : x,
 			"y" : y
 		};
 		this.effectCallback = brush.effectCallback;
-		context.globalAlpha=this.brushAlpha;
+		context.globalAlpha=alpha;
 	},
-	drawStop: function(brush,context,x,y,event){
-		context.globalAlpha=this.brushAlpha;
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		context.globalAlpha=alpha;
 		context.lineJoin = 'miter';
-		context.lineWidth = this.brushSize;
+		context.lineWidth = size;
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 		context.strokeRect(brush.startPosition.x,brush.startPosition.y,brush.currentPosition.x-brush.startPosition.x,brush.currentPosition.y-brush.startPosition.y);
 
 		this.effectCallback = null;
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		brush.currentPosition = {
 			"x" : x,
 			"y" : y
 		};
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
-		context.globalAlpha = this.brushAlpha;//brush.currentAlpha;
-		context.lineWidth = this.brushSize*adjustzoom;
+		context.globalAlpha = brush.currentAlpha;//brush.currentAlpha;
+		context.lineWidth = brush.currentSize*adjustzoom;
 		context.lineJoin = 'miter';
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 		context.strokeRect((brush.startPosition.x*adjustzoom)-adjustx,(brush.startPosition.y*adjustzoom)-adjusty,(brush.currentPosition.x-brush.startPosition.x)*adjustzoom,(brush.currentPosition.y-brush.startPosition.y)*adjustzoom);

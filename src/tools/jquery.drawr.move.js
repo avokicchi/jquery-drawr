@@ -8,7 +8,7 @@ jQuery.fn.drawr.register({
 	deactivate: function(brush,context){
 	    $(this).parent().css({"cursor":"default"});//"overflow":"hidden",
 	},
-	drawStart: function(brush,context,x,y,event){
+	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
 		brush.dragStartX=null;brush.scrollStartX=null;
 		brush.dragStartY=null;brush.scrollStartY=null;
@@ -26,7 +26,7 @@ jQuery.fn.drawr.register({
 		brush.dragStartY=y;
 		brush.scrollStartY=parseInt($(this).parent()[0].scrollTop);
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
 
 		if(event.type=="touchmove" || event.type=="touchstart"){

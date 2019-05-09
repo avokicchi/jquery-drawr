@@ -4,6 +4,8 @@ jQuery.fn.drawr.register({
 	size: 5,
 	alpha: 0.8,
 	order: 1,
+	pressure_affects_alpha: true,
+	pressure_affects_size: false,
 	activate: function(brush,context){
 		var self = this;
 		brush.brushImage = new Image();
@@ -24,9 +26,9 @@ jQuery.fn.drawr.register({
 		brush.brushImage.src = 'images/lead-pencil.png';//'pencil.png';
 	},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
+	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
-		//context.globalAlpha = 0.6;
+		context.globalAlpha = alpha;
 	},
 	drawRotatedImage: function (context, image, x, y, angle, size) {
 		context.save();
@@ -45,7 +47,8 @@ jQuery.fn.drawr.register({
 		context.drawImage(image,destx,desty,imageWidth,imageHeight);
 	    context.restore();
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
-		brush.drawRotatedImage(context,brush.brushImage,x,y,0,this.brushSize);
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
+		context.globalAlpha = alpha;
+		brush.drawRotatedImage(context,brush.brushImage,x,y,0,size);
 	}
 });

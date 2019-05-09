@@ -88,15 +88,26 @@
 					if(plugin.is_dragging==false){
 						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0]);
 						$(self).data("is_drawing",true);
-						context.lineWidth = self.active_brush.size;
 					//	alert(context.lineCap);
 						context.lineCap = "round";context.lineJoin = 'round';
-	 					var calculatedAlpha = self.brushAlpha * (mouse_data.pressure * 2);
-	 					context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
-						//context.strokeStyle = "skyblue";
+
+						//calculate alpha
+	 					var calculatedAlpha = self.brushAlpha;
+	 					if(self.active_brush.pressure_affects_alpha==true){
+						 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+						 	if(calculatedAlpha>1) calculatedAlpha = 1;
+						}
+						var calculatedSize = self.active_brush.size;
+	 					if(self.active_brush.pressure_affects_size==true){
+						 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+						 	if(calculatedSize<1) calculatedSize = 1;
+						}
+
+						//context.lineWidth
+	 					//context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
-						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,e);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,mouse_data.pressure,e);
+						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					}
 				}
 			}).on("touchmove mousemove", function(e){
@@ -107,14 +118,28 @@
 					var lastSpot=positions[positions.length-1];
 					var dist = plugin.distance_between(lastSpot, currentSpot);
  					var angle = plugin.angle_between(lastSpot, currentSpot);
- 					var stepSize = self.brushSize/6;
- 					var calculatedAlpha = self.brushAlpha * (mouse_data.pressure * 2);
- 					context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
+
+ 					var calculatedAlpha = self.brushAlpha;
+ 					if(self.active_brush.pressure_affects_alpha==true){
+					 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+					 	if(calculatedAlpha>1) calculatedAlpha = 1;
+					}
+					var calculatedSize = self.active_brush.size;
+ 					if(self.active_brush.pressure_affects_size==true){
+					 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+					 	if(calculatedSize<1) calculatedSize = 1;
+					}
+
+ 					var stepSize = calculatedSize/6;
+
+ 					//var calculatedAlpha = self.brushAlpha * (mouse_data.pressure * 2);
+ 					//context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
+
  					if(stepSize<1) stepSize = 1;
 					for (var i = stepSize; i < dist; i+=stepSize) {//advance along the line between last spot and current spot using a^2 + b^2 = c^2 nonsense.
 					    x = lastSpot.x + (Math.sin(angle) * i);
 					    y = lastSpot.y + (Math.cos(angle) * i);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,mouse_data.pressure,e);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,calculatedAlpha,e);
 					    positions.push({x:x,y:y});
 					}
 					$(self).data("positions",positions);
@@ -131,7 +156,19 @@
 			}).on("touchend mouseup", function(e){
 				if($(self).data("is_drawing")==true){
 					var mouse_data = plugin.get_mouse_data.call(self,e);
-					if(typeof self.active_brush.drawStop!=="undefined") self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,e);
+
+ 					var calculatedAlpha = self.brushAlpha;
+ 					if(self.active_brush.pressure_affects_alpha==true){
+					 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+					 	if(calculatedAlpha>1) calculatedAlpha = 1;
+					}
+					var calculatedSize = self.active_brush.size;
+ 					if(self.active_brush.pressure_affects_size==true){
+					 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+					 	if(calculatedSize<1) calculatedSize = 1;
+					}
+
+					if(typeof self.active_brush.drawStop!=="undefined") self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 				}
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
 				$(".drawr-toolbox").data("dragging", false);
@@ -178,7 +215,7 @@
         plugin.create_button = function(toolbox,type,data,css){
         	var self=this;
         	var el = $("<button style='float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></button>");
-    	    el.css({ "outline" : "none", "text-align":"center","padding-left": "0px","padding-right": "0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"40px","user-select": "none", "text-align": "center" });
+    	    el.css({ "outline" : "none", "text-align":"center","padding-left": "0px","padding-right": "0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"40px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
     		if(typeof css!=="undefined") el.css(css);
     		el.addClass("type-" + type);
         	el.data("data",data).data("type",type);
@@ -207,7 +244,7 @@
         /* create a slider */
         plugin.create_slider = function(toolbox,title,min,max,value){
         	var self=this;
-		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input value="' + value + '" style="width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
+		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
 	    	$(toolbox).find("input:last").on("mousedown touchstart",function(e){
 	    		e.stopPropagation();
 	    	}).on("input",function(e){

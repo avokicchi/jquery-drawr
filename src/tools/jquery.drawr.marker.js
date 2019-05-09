@@ -4,22 +4,29 @@ jQuery.fn.drawr.register({
 	size: 15,
 	alpha: 0.3,
 	order: 10,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
 	activate: function(brush,context){
 
 	},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){
-		brush.currentAlpha = context.globalAlpha;
+	drawStart: function(brush,context,x,y,size,alpha,event){
+		context.globalCompositeOperation="source-over";
+		brush.currentAlpha = alpha;
 		brush.startPosition = {
 			"x" : x,
 			"y" : y
 		};
 		this.effectCallback = brush.effectCallback;
 	},
-	drawStop: function(brush,context,x,y,event){
-		context.globalAlpha=this.brushAlpha;
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		context.globalAlpha=alpha;
+		
+		brush.currentSize = size;
+		brush.currentAlpha = alpha;
+
 		this.effectCallback = null;
-		context.lineWidth = this.brushSize;
+		context.lineWidth = size;
 		context.lineJoin = context.lineCap = "round";
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 
@@ -34,7 +41,9 @@ jQuery.fn.drawr.register({
 		context.stroke();
 
 	},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
+		brush.currentSize = size;
+		brush.currentAlpha = alpha;
 		brush.currentPosition = {
 			"x" : x,
 			"y" : y
@@ -42,8 +51,8 @@ jQuery.fn.drawr.register({
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
 
-		context.globalAlpha = this.brushAlpha;//brush.currentAlpha;
-		context.lineWidth = this.brushSize*adjustzoom;
+		context.globalAlpha = brush.currentAlpha;//brush.currentAlpha;
+		context.lineWidth = brush.currentSize*adjustzoom;
 		context.lineJoin = context.lineCap = "round";
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 
