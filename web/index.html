@@ -49,7 +49,11 @@
 
 <p></p>
 
-<div style="margin-left:20px;"><b>Example 1</b></div>
+<div style="margin-left:20px;">
+	<b>Example 1</b>
+	<a class="btn btn-sm btn-default" onclick='$("#drawr-container .demo-canvas").drawr("destroy");' ontouchstart='$("#drawr-container .demo-canvas").drawr("destroy");'>destroy</a> 
+	<a class="btn btn-sm btn-default" onclick='init_canvas1();' ontouchstart='init_canvas1();'>initialize</a>
+</div>
 
 <div id="drawr-container" style="margin:20px;width:350px;height:350px;border:2px dotted gray;">
 	<canvas class="demo-canvas drawr-test1"></canvas>
@@ -69,11 +73,17 @@
 	$("#canvas1").drawr({
 		"enable_tranparency" : true,
 	    "canvas_width" : 800,
-	    "canvas_height" : 800
+	    "canvas_height" : 800,
+	    "clear_on_init" : false
 	});
 
 	//Enable drawing mode, show controls
 	$("#canvas1").drawr("start");
+
+	function destroy(){
+		$("#canvas1").drawr("destroy");
+	}
+}
 
 </pre>
 
@@ -82,16 +92,16 @@
 Features
 <ol>
   <li>Drawing area</li>
-  <li>Extensible brush system</li>
+  <li>Extensible brush system, lots of default brushes</li>
   <li>Custom buttons</li>
   <li>Loading and saving images</li>
   <li>Excellent mobile support</li>
   <li>Basic pen pressure support for samsung and apple devices</li>
+  <li>Text insertion</li>
+  <li>Undo</li>
   <li><i>planned:</i></li>
   <li>Wacom tablet support</li>
-  <li>Undo/Redo</li>
   <li>Support for other icon fonts like font awesome</li>
-  <li>Text insertion</li>
   <li>Many more things.</li>
 </ol>
 
@@ -102,6 +112,7 @@ Methods
   <li>load</li>
   <li>export</li>
   <li>button</li>
+  <li>destroy</li>
 </ol>
 
 Options
@@ -111,6 +122,7 @@ Options
   <li>canvas_height</li>
   <li>undo_max_levels(5)</li>
   <li>color_mode("presets","picker")</li>
+  <li>clear_on_init</li>
 </ol>
 
 Events
@@ -207,7 +219,7 @@ There's a few other features, such as loading, saving an image, adding custom bu
 
 </pre>
 
-I hope you find this plugin useful somehow! 
+I hope you find this plugin useful somehow! <a href="draw.html">Try a fullscreen drawing session!</a>
 
 <hr/>
 
@@ -218,15 +230,20 @@ This project is maintained by Lieuwe Prins
 
 <script type="text/javascript">
 
-	$("#drawr-container .demo-canvas").drawr({
-		"enable_tranparency" : true,
-	    "canvas_width" : 800,
-	    "canvas_height" : 800
-	});
+	function init_canvas1(){
+		$("#drawr-container .demo-canvas").drawr({
+			"enable_tranparency" : true,
+		    "canvas_width" : 800,
+		    "canvas_height" : 800,
+		    "clear_on_init" : false
+		});
+		$("#drawr-container .demo-canvas").drawr("start");
+	}
+	init_canvas1();
 	$("#drawr-container2 .demo-canvas").drawr({ "enable_tranparency" : false, "color_mode" : "presets" });
 	$("#drawr-container3 .demo-canvas").drawr({ "enable_tranparency" : false });
 
-	$(".demo-canvas").drawr("start");
+	$("#drawr-container2 .demo-canvas,#drawr-container3 .demo-canvas").drawr("start");
 	
 	//add custom save button.
 	var buttoncollection = $("#drawr-container3 .demo-canvas").drawr("button", {

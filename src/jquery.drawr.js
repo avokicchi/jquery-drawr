@@ -71,8 +71,9 @@
         	var self=this;
         	var context = self.getContext("2d", { alpha: self.settings.enable_tranparency });
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
-			$(self).parent().on("touchstart", function(e){ e.preventDefault(); });//cancel scroll.
-			$(window).on("touchstart mousedown", function(e){
+			$(self).parent().on("touchstart.drawr", function(e){ e.preventDefault(); });//cancel scroll.
+
+			self.drawStart = function(e){
 				var parent = $(self).parent()[0];
 				var canvasRect = {
 					left: self.offsetLeft,
@@ -107,7 +108,9 @@
 						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					}
 				}
-			}).on("touchmove mousemove", function(e){
+			};
+			$(window).bind("touchstart.drawr mousedown.drawr", self.drawStart);
+			self.drawMove = function(e){
 				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
 				if($(self).data("is_drawing")==true){
 					var positions = $(self).data("positions");
@@ -150,7 +153,9 @@
 			            });
 	        		}
 	        	});
-			}).on("touchend mouseup", function(e){
+			};
+			$(window).bind("touchmove.drawr mousemove.drawr", self.drawMove);
+			self.drawStop = function(e){
 				if($(self).data("is_drawing")==true){
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
 
@@ -184,8 +189,8 @@
 		    		}
 	    		}
     			plugin.is_dragging=false;
-			});
-
+			};
+			$(window).bind("touchend.drawr mouseup.drawr", self.drawStop);
         };
 
         plugin.select_button = function(button){
@@ -225,7 +230,7 @@
     		if(typeof css!=="undefined") el.css(css);
     		el.addClass("type-" + type);
         	el.data("data",data).data("type",type);
-    		el.on("mousedown touchstart", function(e){
+    		el.on("mousedown.drawr touchstart.drawr", function(e){
         		if($(this).data("type")=="brush") plugin.select_button.call(self,this);
         		if($(this).data("type")=="toggle") {//toggle data attribute and select effect
         			if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
@@ -246,10 +251,10 @@
         /* create a slider */
         plugin.create_slider = function(toolbox,title,min,max,value){
         	var self=this;
-		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
+		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
 	    	$(toolbox).find(".slider-" + title.toLowerCase()).on("mousedown touchstart",function(e){
 	    		e.stopPropagation();
-	    	}).on("input",function(e){
+	    	}).on("input.drawr",function(e){
 	    		 $(this).next().text($(this).val());
 	    	});
 	    	return $(toolbox).find(".slider-" + title.toLowerCase());
@@ -257,11 +262,17 @@
 
         //set some default settings. :)
         plugin.initialize_canvas = function(width,height,reset){
+
+        	this.origStyles = plugin.get_styles(this);
+        	this.origParentStyles = plugin.get_styles($(this).parent()[0]);
         	$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none" });
         	$(this).parent().css({	"overflow": "hidden", "user-select": "none", "webkit-touch-callout": "none" });
         	if(this.settings.enable_tranparency==true) $(this).css({"background-image" : "url(" + tspImg + ")"});
-			this.width=width;
-			this.height=height;
+
+        	if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
+				this.width=width;
+				this.height=height;
+			}
 			
 			if(reset==true){
 				this.zoomFactor = 1;
@@ -275,19 +286,17 @@
     			"background-size": (20*this.zoomFactor) + "px " + (20*this.zoomFactor) + "px "
     		});
 
-			//this.brushSize = this.settings.inital_brush_size;
-			//this.brushAlpha = this.settings.inital_brush_alpha;
 			this.pen_pressure = false;//switches mode once it detects.
-			//TODO: fix zoomlevel slider value, update it
-			//$(this).parent()[0].scrollLeft = 0;
-			//$(this).parent()[0].scrollTop = 0;
 			
 			var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
-    		if(this.settings.enable_tranparency==false){
-    			context.fillStyle="white";
-    			context.fillRect(0,0,width,height);
-			} else {
-    			context.clearRect(0,0,width,height);
+
+    		if(this.settings.clear_on_init==true){
+	    		if(this.settings.enable_tranparency==false){
+	    			context.fillStyle="white";
+	    			context.fillRect(0,0,width,height);
+				} else {
+	    			context.clearRect(0,0,width,height);
+				}
 			}
 			//memory canvas
 			var context = this.$memoryCanvas[0].getContext("2d");
@@ -314,6 +323,7 @@
         };
 
         plugin.draw_animations = function(){
+        	if(!$(this).hasClass("active-drawr")) return;//end drawing loop
         	var context = this.$memoryCanvas[0].getContext("2d");
         	context.clearRect(0,0,this.$memoryCanvas[0].width,this.$memoryCanvas[0].height);
  
@@ -420,8 +430,8 @@
 			});
 			$(toolbox).insertAfter($(this).parent());
 			$(toolbox).offset(position);
-        	//$(toolbox).hide();
-	        $(toolbox).on("mousedown touchstart", function(e){
+        	$(toolbox).hide();
+	        $(toolbox).on("mousedown.drawr touchstart.drawr", function(e){
 	        	var ownerCanvas = this.ownerCanvas;
 				var mouse_data = plugin.get_mouse_data.call(ownerCanvas,e,this);
 	    		$(this).data("offsetx", mouse_data.x).data("offsety", mouse_data.y).data("dragging", true);
@@ -439,6 +449,16 @@
         	if(setTimer==true){
         		self.scrollTimer= 250;
         	}
+        };
+
+        plugin.get_styles = function(el){
+    	    var inlineStyles = {};
+            for (var i = 0, l = el.style.length; i < l; i++){
+                var styleProperty = el.style[i];
+                var styleValue = getComputedStyle(el, null).getPropertyValue(styleProperty);
+                inlineStyles[styleProperty]=styleValue;
+            }
+            return inlineStyles;
         };
 
     	if ( action == "export" ) {
@@ -462,11 +482,19 @@
 
 			var currentCanvas = this;	
 			if ( action === "start") {
+				if(!$(currentCanvas).hasClass("active-drawr")) {
+                    console.error("The element you are running this command on is not a drawr canvas.");
+                    return false;//can't start if not initialized.
+                }
 	            $(".drawr-toolbox").hide();
 	            $(".drawr-toolbox-brush").show();
 	            $(".drawr-toolbox-palette").show();
 				currentCanvas.$brushToolbox.find("button:first").mousedown();	            
 	        } else if ( action === "stop" ) {
+	        	if(!$(currentCanvas).hasClass("active-drawr")) {
+                    console.error("The element you are running this command on is not a drawr canvas.");
+                    return false;//can't stop if not initialized.
+                }
 	        	//reset togglers
 	        	currentCanvas.$brushToolbox.find('button.type-toggle').each(function(){
 					if($(this).data("state")==true){
@@ -475,6 +503,10 @@
 				});
 	            $(".drawr-toolbox").hide();
 	        } else if ( action === "load" ) {
+	        	if(!$(currentCanvas).hasClass("active-drawr")) {
+                    console.error("The element you are running this command on is not a drawr canvas.");
+                    return false;//can't load if not initialized.
+                }
 	        	var img = document.createElement("img");
 	        	img.crossOrigin = "Anonymous";
 
@@ -486,12 +518,64 @@
 	        	};
 	        	img.src=param;
 	        } else if ( action === "destroy" ) {
-	        	alert("unimplemented");
-	        	//$(currentCanvas).removeClass("active-drawr")
-	        	//destroy toolboxes
-	        	//unbind events
-	        	//remove canvas css
-	        	//remove properties stored on canvas
+	        	if(!$(currentCanvas).hasClass("active-drawr")) {
+                    console.error("The element you are running this command on is not a drawr canvas.");
+                    return false;//can't destroy if not initialized.
+                }
+	        	var parent = $(currentCanvas).parent();
+				parent.off("touchstart.drawr");
+				parent.find(".drawr-toolbox button").off("mousedown.drawr touchstart.drawr");
+				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
+				parent.find(".drawr-toolbox").on("mousedown.drawr touchstart.drawr");
+				parent.find('.drawr-toolbox .color-picker').off("choose.drawrpalette").drawrpalette("destroy");
+				$(window).unbind("touchend.drawr mouseup.drawr", currentCanvas.drawStop);
+				$(window).unbind("touchmove.drawr mousemove.drawr", currentCanvas.drawMove);
+				$(window).unbind("touchstart.drawr mousedown.drawr", currentCanvas.drawStart);
+				currentCanvas.$memoryCanvas.remove();
+				currentCanvas.$brushToolbox.remove();
+				currentCanvas.$settingsToolbox.remove();
+				currentCanvas.$zoomToolbox.remove();
+
+				delete currentCanvas.$memoryCanvas;
+				delete currentCanvas.$brushToolbox;
+				delete currentCanvas.$settingsToolbox;
+				delete currentCanvas.$zoomToolbox;
+
+				delete currentCanvas.plugin;
+				delete currentCanvas.settings;
+				delete currentCanvas.undoStack;
+				delete currentCanvas.brushColor;
+				delete currentCanvas.$undoButton;
+				delete currentCanvas.active_brush;
+				delete currentCanvas.zoomFactor;
+				delete currentCanvas.scrollX;
+				delete currentCanvas.scrollY;
+				delete currentCanvas.brushSize;
+				delete currentCanvas.brushAlpha;
+				delete currentCanvas.pen_pressure;
+				delete currentCanvas.drawStart;
+				delete currentCanvas.drawMove;
+				delete currentCanvas.drawStop;
+				delete scrollTimer;
+
+				//reset css and visuals and scrolls
+
+				$(currentCanvas).width(currentCanvas.width);
+				$(currentCanvas).height(currentCanvas.height);
+
+				$(currentCanvas).css("transform","translate(0px,0px)");
+
+				//reset styles to what they were.
+				$(currentCanvas).attr('style', '');
+				$(currentCanvas).parent().attr('style', '');
+				$(currentCanvas).css(currentCanvas.origStyles);
+				$(currentCanvas).parent().css(currentCanvas.origParentStyles);
+
+				delete currentCanvas.origStyles;
+				delete currentCanvas.origParentStyles;
+
+	    		$(currentCanvas).removeClass("active-drawr");
+				$(currentCanvas).parent().removeClass("drawr-container");
 	        } else if ( typeof action == "object" || typeof action =="undefined" ){//not an action, but an init call
 	        	
 				if($(currentCanvas).hasClass("active-drawr")) return false;//prevent double init
@@ -504,7 +588,8 @@
 		    		"canvas_width" : $(currentCanvas).parent().innerWidth(),
 		    		"canvas_height" : $(currentCanvas).parent().innerHeight(),
 		    		"undo_max_levels" : 5,
-		    		"color_mode" : "picker"
+		    		"color_mode" : "picker",
+		    		"clear_on_init" : true
 		    	};
 	        	if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 	        	currentCanvas.settings = defaultSettings;
@@ -531,13 +616,13 @@
 	    			plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"brush",brush);
 				});
 				//currentCanvas.$brushToolbox.append("<div style='clear:both;border-top:2px solid #000;' class='seperator'></div>");
-	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-palette-outline mdi-24px"}).on("touchstart mousedown",function(){
+	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-palette-outline mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
 	    			currentCanvas.$settingsToolbox.toggle();
 	    		});
-	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-magnify mdi-24px"}).on("touchstart mousedown",function(){
+	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-magnify mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
 	    			currentCanvas.$zoomToolbox.toggle();
 	    		});	    		
-	    		currentCanvas.$undoButton=plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",{"icon":"mdi mdi-undo-variant mdi-24px"}).on("touchstart mousedown",function(){
+	    		currentCanvas.$undoButton=plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",{"icon":"mdi mdi-undo-variant mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
 				    if(currentCanvas.undoStack.length>0){
 						if(currentCanvas.undoStack[currentCanvas.undoStack.length-1].current==true){
 							currentCanvas.undoStack.pop();//ignore current version of canvas
@@ -568,7 +653,7 @@
         		if(currentCanvas.settings.color_mode=="presets"){
         			var colors = ["#FFFFFF","#0074D9","#2ECC40","#FFDC00","#FF4136","#111111"];
 		    		$.each(colors,function(i,color){
-			    		plugin.create_button.call(currentCanvas,currentCanvas.$settingsToolbox[0],"color",{"icon":""},{"background":color}).on("touchstart mousedown",function(){
+			    		plugin.create_button.call(currentCanvas,currentCanvas.$settingsToolbox[0],"color",{"icon":""},{"background":color}).on("touchstart.drawr mousedown.drawr",function(){
 			    			currentCanvas.brushColor = plugin.hex_to_rgb(color);
 							if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
 							plugin.is_dragging=false;
@@ -581,12 +666,12 @@
 						if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
 					});
 				}
-	    		plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"alpha", 0,100,parseInt(100*defaultSettings.inital_brush_alpha)).on("input",function(){
+	    		plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"alpha", 0,100,parseInt(100*defaultSettings.inital_brush_alpha)).on("input.drawr",function(){
 		    		currentCanvas.brushAlpha = parseFloat(this.value/100);
 		    		currentCanvas.active_brush.alpha = parseFloat(this.value/100);;
 		    		plugin.is_dragging=false;
         		});
-        		plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"size", 2,100,defaultSettings.inital_brush_size).on("input",function(){
+        		plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"size", 2,100,defaultSettings.inital_brush_size).on("input.drawr",function(){
 		    		currentCanvas.brushSize = this.value;
 		    		currentCanvas.active_brush.size = this.value;
 		    		plugin.is_dragging=false;
@@ -594,7 +679,7 @@
 	    		//size dialog
         		//zoom dialog
         		currentCanvas.$zoomToolbox = plugin.create_toolbox.call(currentCanvas,"zoom",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Zoom",80);
-        		plugin.create_slider.call(currentCanvas, currentCanvas.$zoomToolbox,"zoom", 0,400,100).on("input",function(){
+        		plugin.create_slider.call(currentCanvas, currentCanvas.$zoomToolbox,"zoom", 0,400,100).on("input.drawr",function(){
 		    		//currentCanvas.brushAlpha = parseFloat(this.value/100);
 		    		var cleaned = Math.ceil(this.value/10)*10;
 		    		$(this).next().text(cleaned);
