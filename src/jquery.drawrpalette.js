@@ -303,7 +303,28 @@
                 currentPicker.$button.on("mousedown.drawrpalette touchstart.drawrpalette",function(e){
                     currentPicker.slidingHue=false;
                     currentPicker.slidingHsl=false;
+
+                    var elementLeft = currentPicker.$button.offset().left;
+                    var elementRight = elementLeft + currentPicker.$dropdown.outerWidth();
+
+                    var viewportLeft = $(window).scrollLeft();
+                    var viewportRight = viewportLeft + $(window).width();
+
                     currentPicker.$dropdown.show();
+
+                    if(elementRight < viewportRight){//falls within viewport in normal mode
+                       // position normally     
+                        currentPicker.$dropdown.offset({
+                            "top" : currentPicker.$button.offset().top + currentPicker.$button.outerHeight(),
+                            "left" : currentPicker.$button.offset().left
+                        });                 
+                    } else {
+                        currentPicker.$dropdown.offset({
+                           "top" : currentPicker.$button.offset().top + currentPicker.$button.outerHeight(),
+                            "left" : currentPicker.$button.offset().left - currentPicker.$dropdown.outerWidth() + currentPicker.$button.outerWidth()
+                        });
+                    }
+
                     var rgb = plugin.hex_to_rgb($(currentPicker).val());
                     var hsv = plugin.rgb_to_hsv(rgb.r,rgb.g,rgb.b);
                     currentPicker.hsv = hsv;
