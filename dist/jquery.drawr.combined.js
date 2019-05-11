@@ -175,9 +175,7 @@
 					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					//if there is an action to undo
 					if(typeof result!=="undefined"){
-						self.$undoButton.css("opacity",1);
-		      			self.undoStack.push({data: self.toDataURL("image/png"),current: true});
-		      			if(self.undoStack.length>(self.settings.undo_max_levels+1)) self.undoStack.shift();
+						plugin.record_undo_entry.call(self);
 		      		}
 	  
 				}
@@ -191,6 +189,12 @@
     			plugin.is_dragging=false;
 			};
 			$(window).bind("touchend.drawr mouseup.drawr", self.drawStop);
+        };
+
+        plugin.record_undo_entry = function(){
+        	this.$undoButton.css("opacity",1);
+  			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
+  			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
         };
 
         plugin.select_button = function(button){
@@ -1600,9 +1604,7 @@ jQuery.fn.drawr.register({
 		context.textAlign = "left"; 
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 		context.fillText(text, x-2, y+19);
-	},
-	drawStop: function(brush,context,x,y,size,alpha,event){
-		return true;
+		this.plugin.record_undo_entry.call(this);
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		brush.currentPosition = {
