@@ -55,6 +55,16 @@
 				return { x: (event.pageX - bounding_box.left)/this.zoomFactor, y: (event.pageY-bounding_box.top)/this.zoomFactor, pressure: 1 };
 			}
 		};
+		plugin.draw_hsl = function(hue,canvas){
+			var ctx = canvas.getContext('2d');
+			for(row=0; row<100; row++){
+				var grad = ctx.createLinearGradient(0, 0, 100,0);
+				grad.addColorStop(0, 'hsl('+hue+', 0%, '+(100-row)+'%)');
+				grad.addColorStop(1, 'hsl('+hue+', 100%, '+(50-row/2)+'%)');
+				ctx.fillStyle=grad;
+				ctx.fillRect(0, row, 100, 1);
+			}	
+	    };
 		plugin.is_dragging = false;
 
         plugin.bind_draw_events = function(){
@@ -202,8 +212,8 @@
         	this.active_brush = brush;
         	this.brushSize = typeof brush.size!=="undefined" ? brush.size : this.brushSize;
         	this.brushAlpha = typeof brush.alpha!=="undefined" ? brush.alpha : this.brushAlpha;
-        	if(typeof this.$colorToolbox!=="undefined") this.$colorToolbox.find("input:first").val(this.brushAlpha*100).trigger("input");
-        	if(typeof this.$colorToolbox!=="undefined") this.$colorToolbox.find("input:last").val(this.brushSize).trigger("input");
+        	if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-alpha").val(this.brushAlpha*100).trigger("input");
+        	if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-size").val(this.brushSize).trigger("input");
 			this.active_brush.activate.call(this,this.active_brush,context);
         };
 
@@ -236,13 +246,13 @@
         /* create a slider */
         plugin.create_slider = function(toolbox,title,min,max,value){
         	var self=this;
-		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
-	    	$(toolbox).find("input:last").on("mousedown touchstart",function(e){
+		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
+	    	$(toolbox).find(".slider-" + title.toLowerCase()).on("mousedown touchstart",function(e){
 	    		e.stopPropagation();
 	    	}).on("input",function(e){
 	    		 $(this).next().text($(this).val());
 	    	});
-	    	return $(toolbox).find("input:last");
+	    	return $(toolbox).find(".slider-" + title.toLowerCase());
         }
 
         //set some default settings. :)
@@ -397,20 +407,20 @@
         };
 
         /* Create floating dialog and appends it hidden after the canvas */
-        plugin.create_toolbox = function(id,position,title){
+        plugin.create_toolbox = function(id,position,title,width){
         	var self = this;
 			var toolbox = document.createElement("div");
 			toolbox.innerHTML="<div style='padding:5px 0px 5px 0px'>" + title + "</div>";
 			toolbox.className = "drawr-toolbox drawr-toolbox-" + id;
 			toolbox.ownerCanvas = self;
 			$(toolbox).css({
-				"position" : "absolute", "z-index" : 6, "cursor" : "move", "width" : "80px", "height" : "auto", "color" : "#fff",
+				"position" : "absolute", "z-index" : 6, "cursor" : "move", "width" : width + "px", "height" : "auto", "color" : "#fff",
 				"padding" : "2px", "background" : "linear-gradient(to bottom, rgba(69,72,77,1) 0%,rgba(0,0,0,1) 100%)", "border-radius" : "2px",
 				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center"
 			});
 			$(toolbox).insertAfter($(this).parent());
 			$(toolbox).offset(position);
-        	$(toolbox).hide();
+        	//$(toolbox).hide();
 	        $(toolbox).on("mousedown touchstart", function(e){
 	        	var ownerCanvas = this.ownerCanvas;
 				var mouse_data = plugin.get_mouse_data.call(ownerCanvas,e,this);
@@ -454,6 +464,7 @@
 			if ( action === "start") {
 	            $(".drawr-toolbox").hide();
 	            $(".drawr-toolbox-brush").show();
+	            $(".drawr-toolbox-palette").show();
 				currentCanvas.$brushToolbox.find("button:first").mousedown();	            
 	        } else if ( action === "stop" ) {
 	        	//reset togglers
@@ -492,7 +503,8 @@
 		    		"enable_tranparency" : true,
 		    		"canvas_width" : $(currentCanvas).parent().innerWidth(),
 		    		"canvas_height" : $(currentCanvas).parent().innerHeight(),
-		    		"undo_max_levels" : 5
+		    		"undo_max_levels" : 5,
+		    		"color_mode" : "picker"
 		    	};
 	        	if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 	        	currentCanvas.settings = defaultSettings;
@@ -511,7 +523,7 @@
 				window.requestAnimationFrame(plugin.draw_animations.bind(currentCanvas));
 
 				//brush dialog
-        		currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes");
+        		currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",80);
 
         		$.fn.drawr.availableBrushes.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
 
@@ -520,7 +532,7 @@
 				});
 				//currentCanvas.$brushToolbox.append("<div style='clear:both;border-top:2px solid #000;' class='seperator'></div>");
 	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-palette-outline mdi-24px"}).on("touchstart mousedown",function(){
-	    			currentCanvas.$colorToolbox.toggle();
+	    			currentCanvas.$settingsToolbox.toggle();
 	    		});
 	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-magnify mdi-24px"}).on("touchstart mousedown",function(){
 	    			currentCanvas.$zoomToolbox.toggle();
@@ -551,28 +563,37 @@
 	    		});
 	    		currentCanvas.$undoButton.css("opacity",0.5);
 				//color dialog
-        		currentCanvas.$colorToolbox = plugin.create_toolbox.call(currentCanvas,"color",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Color");
-	    		var colors = ["#FFFFFF","#0074D9","#2ECC40","#FFDC00","#FF4136","#111111"];
-	    		$.each(colors,function(i,color){
-		    		plugin.create_button.call(currentCanvas,currentCanvas.$colorToolbox[0],"color",{"icon":""},{"background":color}).on("touchstart mousedown",function(){
-		    			currentCanvas.brushColor = plugin.hex_to_rgb(color);
-						if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
-						plugin.is_dragging=false;
+        		currentCanvas.$settingsToolbox = plugin.create_toolbox.call(currentCanvas,"settings",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Settings",80);
+
+        		if(currentCanvas.settings.color_mode=="presets"){
+        			var colors = ["#FFFFFF","#0074D9","#2ECC40","#FFDC00","#FF4136","#111111"];
+		    		$.each(colors,function(i,color){
+			    		plugin.create_button.call(currentCanvas,currentCanvas.$settingsToolbox[0],"color",{"icon":""},{"background":color}).on("touchstart mousedown",function(){
+			    			currentCanvas.brushColor = plugin.hex_to_rgb(color);
+							if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
+							plugin.is_dragging=false;
+			    		});
 		    		});
-	    		});
-	    		plugin.create_slider.call(currentCanvas, currentCanvas.$colorToolbox,"alpha", 0,100,parseInt(100*defaultSettings.inital_brush_alpha)).on("input",function(){
+        		}else {
+	    			currentCanvas.$settingsToolbox.append("<input type='text' class='color-picker'/>");
+					currentCanvas.$settingsToolbox.find('.color-picker').drawrpalette().on("choose.drawrpalette",function(event,hexcolor){
+						currentCanvas.brushColor = plugin.hex_to_rgb(hexcolor);
+						if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
+					});
+				}
+	    		plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"alpha", 0,100,parseInt(100*defaultSettings.inital_brush_alpha)).on("input",function(){
 		    		currentCanvas.brushAlpha = parseFloat(this.value/100);
 		    		currentCanvas.active_brush.alpha = parseFloat(this.value/100);;
 		    		plugin.is_dragging=false;
         		});
-        		plugin.create_slider.call(currentCanvas, currentCanvas.$colorToolbox,"size", 2,100,defaultSettings.inital_brush_size).on("input",function(){
+        		plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"size", 2,100,defaultSettings.inital_brush_size).on("input",function(){
 		    		currentCanvas.brushSize = this.value;
 		    		currentCanvas.active_brush.size = this.value;
 		    		plugin.is_dragging=false;
         		});
 	    		//size dialog
         		//zoom dialog
-        		currentCanvas.$zoomToolbox = plugin.create_toolbox.call(currentCanvas,"zoom",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Zoom");
+        		currentCanvas.$zoomToolbox = plugin.create_toolbox.call(currentCanvas,"zoom",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Zoom",80);
         		plugin.create_slider.call(currentCanvas, currentCanvas.$zoomToolbox,"zoom", 0,400,100).on("input",function(){
 		    		//currentCanvas.brushAlpha = parseFloat(this.value/100);
 		    		var cleaned = Math.ceil(this.value/10)*10;
@@ -590,12 +611,14 @@
 		    			//doesn't seem to work perfectly but it'll do for now
 		    		}
         		});
+
 				plugin.bind_draw_events.call(currentCanvas);
 			}
 		});
 		return this;
  
     };
+
     /* Register a new brush */
     $.fn.drawr.register = function (brush){
 		if(typeof $.fn.drawr.availableBrushes=="undefined") $.fn.drawr.availableBrushes=[];

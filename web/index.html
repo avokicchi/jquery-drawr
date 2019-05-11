@@ -110,6 +110,7 @@ Options
   <li>canvas_width</li>
   <li>canvas_height</li>
   <li>undo_max_levels(5)</li>
+  <li>color_mode("presets","picker")</li>
 </ol>
 
 Events
@@ -124,7 +125,7 @@ Events
 </div>
 
 <pre>
-	//Code for Example 2
+	//Code for Example 2 (preset colors, no transparency)
 
 	<b>html</b>
 
@@ -137,7 +138,8 @@ Events
 	//Turn a canvas element into a sketch area
 	//width and height are grabbed automatically.
 	$("#canvas2").drawr({
-		"enable_tranparency" : false
+		"enable_tranparency" : false,
+		"color_mode" : "presets"
 	});
 
 	//Enable drawing mode, show controls
@@ -221,7 +223,7 @@ This project is maintained by Lieuwe Prins
 	    "canvas_width" : 800,
 	    "canvas_height" : 800
 	});
-	$("#drawr-container2 .demo-canvas").drawr({ "enable_tranparency" : false });
+	$("#drawr-container2 .demo-canvas").drawr({ "enable_tranparency" : false, "color_mode" : "presets" });
 	$("#drawr-container3 .demo-canvas").drawr({ "enable_tranparency" : false });
 
 	$(".demo-canvas").drawr("start");
