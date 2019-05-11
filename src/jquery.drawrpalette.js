@@ -150,12 +150,12 @@
             var hsv = this.hsv;
             var rgb = plugin.hsv_to_rgb(hsv.h,hsv.s,hsv.v);
             var color="rgb(" + rgb.r + "," + rgb.g + "," + rgb.b + ")";
-            this.$button.css("background",color);
-            if(hsv.v<0.5){
+            this.$button.css("background-color",color);
+            /*if(hsv.v<0.5){
                 this.$button.css("color","white");
             } else {
                 this.$button.css("color","black");
-            }
+            }*/
             plugin.draw_hsv.call(this,plugin.pickerSize,this.$dropdown.find("canvas")[0]);
         };
         
@@ -229,15 +229,19 @@
 
                 $(this).hide();
 
-                currentPicker.$button=$("<button><i class='mdi mdi-palette mdi-24px'></i></button>");
+                currentPicker.$button=$("<button>&nbsp;</button>");
                 currentPicker.$button.css({
                    "width" : "40px",
                    "height" : "40px",
-                   "border" : "1px solid #333",
-                   "background" : "#eee",
+                   "border" : "2px solid #ccc",
+                   "background-color" : "#eee",
                    "cursor":"pointer",
                    "text-align" : "text",
-                   "padding" : "0px"
+                   "padding" : "0px",
+                   "font-size": "2em",
+                   "background-image": "url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAcAAAAHCAYAAADEUlfTAAAAG0lEQVR42mNgwAfKy8v/48I4FeA0AacVDFQBAP9wJkE/KhUMAAAAAElFTkSuQmCC')",
+                   "background-repeat" : "no-repeat",
+                   "background-position" : "24px 25px"
                 });
                 currentPicker.$button.css(inlineStyles);
                 $.each(inlineClasses,function(i,className){
