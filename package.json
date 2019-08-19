@@ -17,8 +17,8 @@
     "type": "git",
     "url": "git+https://github.com/lieuweprins/jquery-drawr.git"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "Lieuwe Prins",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/lieuweprins/jquery-drawr/issues"
   },
