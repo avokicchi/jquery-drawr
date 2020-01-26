@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang=en>
+<head>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<script type="text/javascript">
+
+	</script>
+	<style>
+	body {
+		margin:0px;
+		-webkit-touch-callout: none;
+		-webkit-text-size-adjust: none;
+		-webkit-user-select: none;
+	}
+	</style>
+	<link href="https://cdnjs.cloudflare.com/ajax/libs/MaterialDesign-Webfont/3.6.95/css/materialdesignicons.css" rel="stylesheet">
+	<link href='http://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+
+	<script type="text/javascript" src="https://code.jquery.com/jquery-3.4.1.slim.min.js"></script>
+	<script type="text/javascript" src="jquery.drawr.combined.js?v=2"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
+
+</head>
+<body>
+
+<div class="modal fade" tabindex="-1" role="dialog" id = "myModal">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <h4 class="modal-title">Modal title</h4>
+      </div>
+      <div class="modal-body">
+        <div id="drawr-container" style="width:300vw;height:300vh;">
+			<canvas class="demo-canvas drawr-test1"></canvas>
+		</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary">Save changes</button>
+      </div>
+    </div><!-- /.modal-content -->
+  </div><!-- /.modal-dialog -->
+</div><!-- /.modal -->
+
+
+<button type="button" class="btn btn-primary btn-lg" data-toggle="modal" data-target="#myModal">
+  Launch demo modal
+</button>
+
+
+<input type="file" id="file-picker" style="display:none;">
+
+
+<script type="text/javascript">
+
+	$("#drawr-container .demo-canvas").drawr({
+		"enable_tranparency" : true,
+		"canvas_width" : 300,
+	    "canvas_height" : 300,
+	});
+
+	$(".demo-canvas").drawr("start");
+	
+	//add custom save button.
+	var buttoncollection = $("#drawr-container .demo-canvas").drawr("button", {
+		"icon":"mdi mdi-folder-open mdi-24px"
+	}).on("touchstart mousedown",function(){
+		//alert("demo of a custom button with your own functionality!");
+		$("#file-picker").click();
+	});
+	var buttoncollection = $("#drawr-container .demo-canvas").drawr("button", {
+		"icon":"mdi mdi-content-save mdi-24px"
+	}).on("touchstart mousedown",function(){
+		var imagedata = $("#drawr-container .demo-canvas").drawr("export","image/jpeg");
+		var element = document.createElement('a');
+		element.setAttribute('href', imagedata);// 'data:text/plain;charset=utf-8,' + encodeURIComponent("sillytext"));
+		element.setAttribute('download', "test.jpg");
+		element.style.display = 'none';
+		document.body.appendChild(element);
+		element.click();
+		document.body.removeChild(element);
+	});
+	$("#file-picker")[0].onchange = function(){
+		var file = $("#file-picker")[0].files[0];
+		if (!file.type.startsWith('image/')){ return }
+		var reader = new FileReader();
+		reader.onload = function(e) { 
+			$("#drawr-container .demo-canvas").drawr("load",e.target.result);
+		};
+		reader.readAsDataURL(file);
+	};
+
+</script>
+
+</body>
+</html>
