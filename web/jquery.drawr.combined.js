@@ -30,9 +30,10 @@
 				var borderLeft = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-left-width"));
 				var translate_x = typeof scrollEl!=="undefined" ? scrollEl.scrollX : 0;
 				var translate_y = typeof scrollEl!=="undefined" ? scrollEl.scrollY : 0;
+
 				var bounding_box = {
-					left: relativeTo.getBoundingClientRect().left - translate_x + borderLeft,
-					top: relativeTo.getBoundingClientRect().top - translate_y + borderTop
+					left: relativeTo.offsetLeft - translate_x + borderLeft,
+					top: relativeTo.offsetTop - translate_y + borderTop
 				};
 			} else {
 				var bounding_box = {
@@ -1250,6 +1251,7 @@ jQuery.fn.drawr.register({
 	},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
+		context.globalCompositeOperation="source-over";
 		brush.currentAlpha = alpha;
 		brush.startPosition = {
 			"x" : x,
