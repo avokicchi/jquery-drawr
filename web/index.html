@@ -27,7 +27,7 @@
 	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
 
 	<script type="text/javascript" src="https://code.jquery.com/jquery-3.4.1.slim.min.js"></script>
-	<script type="text/javascript" src="jquery.drawr.combined.js?v=2"></script>
+	<script type="text/javascript" src="jquery.drawr.combined.js?v=3"></script>
 
 </head>
 <body>
@@ -52,6 +52,7 @@
 <div style="margin-left:20px;">
 	<b>Example 1</b>
 	<a class="btn btn-sm btn-default" onclick='$("#drawr-container .demo-canvas").drawr("destroy");' ontouchstart='$("#drawr-container .demo-canvas").drawr("destroy");'>destroy</a> 
+	<a class="btn btn-sm btn-default" onclick='$("#drawr-container .demo-canvas").drawr("clear");' ontouchstart='$("#drawr-container .demo-canvas").drawr("clear");'>clear</a> 
 	<a class="btn btn-sm btn-default" onclick='init_canvas1();' ontouchstart='init_canvas1();'>initialize</a>
 </div>
 
@@ -82,6 +83,10 @@
 
 	function destroy(){
 		$("#canvas1").drawr("destroy");
+	}
+
+	function clear(){
+		$("#canvas1").drawr("clear");
 	}
 }
 

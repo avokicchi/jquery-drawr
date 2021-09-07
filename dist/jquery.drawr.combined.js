@@ -479,7 +479,21 @@
 	    	});
 	    	return collection;
 	    }
-
+	    if( action == "clear" ){
+	    	this.each(function() {
+	    		var currentCanvas = this;
+				currentCanvas.plugin.record_undo_entry.call(currentCanvas);
+	        	var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_tranparency });
+	        	if(currentCanvas.settings.enable_tranparency==false){
+	    			context.fillStyle="white";
+					context.globalCompositeOperation="source-over";
+					context.globalAlpha=1;
+	    			context.fillRect(0,0,currentCanvas.width,currentCanvas.height);
+				} else {
+	    			context.clearRect(0,0,currentCanvas.width,currentCanvas.height);
+				}
+	    	});
+	    }
         //Initialize canvas or calling of methods
 		this.each(function() {
 
