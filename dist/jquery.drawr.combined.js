@@ -190,6 +190,21 @@
 			$(window).bind("touchend.drawr mouseup.drawr", self.drawStop);
         };
 
+        plugin.clear_canvas = function(record_undo){
+        	if(record_undo) {
+				this.plugin.record_undo_entry.call(this);
+			}
+        	var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
+        	if(this.settings.enable_tranparency==false){
+    			context.fillStyle="white";
+				context.globalCompositeOperation="source-over";
+				context.globalAlpha=1;
+    			context.fillRect(0,0,this.width,this.height);
+			} else {
+    			context.clearRect(0,0,this.width,this.height);
+			}
+        };
+
         plugin.record_undo_entry = function(){
         	this.$undoButton.css("opacity",1);
   			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
@@ -482,16 +497,7 @@
 	    if( action == "clear" ){
 	    	this.each(function() {
 	    		var currentCanvas = this;
-				currentCanvas.plugin.record_undo_entry.call(currentCanvas);
-	        	var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_tranparency });
-	        	if(currentCanvas.settings.enable_tranparency==false){
-	    			context.fillStyle="white";
-					context.globalCompositeOperation="source-over";
-					context.globalAlpha=1;
-	    			context.fillRect(0,0,currentCanvas.width,currentCanvas.height);
-				} else {
-	    			context.clearRect(0,0,currentCanvas.width,currentCanvas.height);
-				}
+				currentCanvas.plugin.clear_canvas.call(currentCanvas,true);
 	    	});
 	    }
         //Initialize canvas or calling of methods
@@ -653,7 +659,10 @@
 						img.crossOrigin = "Anonymous";
 
 						img.onload = function(){
-							currentCanvas.plugin.initialize_canvas.call(currentCanvas,img.width,img.height,false);
+							currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
+							//currentCanvas.plugin.initialize_canvas.call(currentCanvas,img.width,img.height,false);
+							context.globalCompositeOperation="source-over";
+							context.globalAlpha = 1;
 							context.drawImage(img,0,0);
 						};
 						img.src=undo;
