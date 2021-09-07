@@ -1376,7 +1376,7 @@ jQuery.fn.drawr.register({
 
 		if(event.type=="touchmove" || event.type=="touchstart"){
 			x = event.originalEvent.touches[0].pageX;
-			Y = event.originalEvent.touches[0].pageY;
+			y = event.originalEvent.touches[0].pageY;
 		} else {
 			x = event.pageX;
 			y = event.pageY;
@@ -1392,7 +1392,7 @@ jQuery.fn.drawr.register({
 
 		if(event.type=="touchmove" || event.type=="touchstart"){
 			x = event.originalEvent.touches[0].pageX;
-			Y = event.originalEvent.touches[0].pageY;
+			y = event.originalEvent.touches[0].pageY;
 		} else {
 			x = event.pageX;
 			y = event.pageY;
