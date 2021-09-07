@@ -180,11 +180,11 @@
 				}
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
 				$(".drawr-toolbox").data("dragging", false);
-				if(!plugin.is_dragging){
+				/*if(!plugin.is_dragging){
 					if(e.target.tagName!=="INPUT"){
 		    			e.preventDefault();
 		    		}
-	    		}
+	    		}*/
     			plugin.is_dragging=false;
 			};
 			$(window).bind("touchend.drawr mouseup.drawr", self.drawStop);
