@@ -8,5 +8,4 @@ gulp.task('scripts', function() {
     .pipe(concat('jquery.drawr.combined.js'))
     .pipe(minify())
     .pipe(gulp.dest('./dist/'))
-    .pipe(gulp.dest('./web/'));
 });

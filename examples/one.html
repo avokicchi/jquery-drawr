@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang=en>
+<head>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<script type="text/javascript">
+
+	</script>
+	<style>
+	body {
+		margin:0px;
+		-webkit-touch-callout: none;
+		-webkit-text-size-adjust: none;
+		-webkit-user-select: none;
+	}
+	h1 {
+		background:#eee;
+		color:#333;
+		height:110px;
+		display:block;
+		font-size:3em !important;
+		padding:30px;
+		margin-top:0px !important;
+	}
+	</style>
+	<link href="https://cdnjs.cloudflare.com/ajax/libs/MaterialDesign-Webfont/3.6.95/css/materialdesignicons.css" rel="stylesheet">
+	<link href='http://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+
+	<script type="text/javascript" src="https://code.jquery.com/jquery-3.4.1.slim.min.js"></script>
+	<script type="text/javascript" src="../dist/jquery.drawr.combined.js"></script>
+
+</head>
+<body>
+
+	<a href="https://github.com/lieuweprins/jquery-drawr" style="float:right;">
+		<img width="120" height="120" src="https://github.blog/wp-content/uploads/2008/12/forkme_right_green_007200.png?resize=149%2C149" class="attachment-full size-full" alt="Fork me on GitHub" data-recalc-dims="1">
+	</a>
+	<h1>JQuery dRawr</h1>
+
+	<div class="container">
+		<br/>
+<p>
+	dRawr is a JQuery plugin that can transform any canvas component (with a container) into a drawing area. It's developed for iOS, Android, and most desktop browsers. 
+	<br/><b>The only requirement at the moment is <a href="https://materialdesignicons.com/" target="_blank">material design icons.</a></b>
+</p>
+
+<a class="btn btn-default" href="https://github.com/lieuweprins/jquery-drawr" target="_blank">View on github</a>
+
+<p></p>
+
+<div style="margin-left:20px;">
+	<b>Example 1</b>
+	<a class="btn btn-sm btn-default" onclick='$("#drawr-container .demo-canvas").drawr("destroy");' ontouchstart='$("#drawr-container .demo-canvas").drawr("destroy");'>destroy</a> 
+	<a class="btn btn-sm btn-default" onclick='$("#drawr-container .demo-canvas").drawr("clear");' ontouchstart='$("#drawr-container .demo-canvas").drawr("clear");'>clear</a> 
+	<a class="btn btn-sm btn-default" onclick='init_canvas1();' ontouchstart='init_canvas1();'>initialize</a>
+</div>
+
+<div id="drawr-container" style="margin:20px;width:350px;height:350px;border:2px dotted gray;">
+	<canvas class="demo-canvas drawr-test1"></canvas>
+</div>
+<pre>
+	//Code for Example 1
+
+	<b>html</b>
+
+	&lt;div style="width:350px;height:300px;border:2px dotted gray;margin:20px;"&gt;
+		&lt;canvas id="canvas1"&gt;&lt;/canvas&gt;
+	&lt;/div&gt;
+	
+	<b>js</b>
+	
+	//Turn a canvas element into a sketch area
+	$("#canvas1").drawr({
+		"enable_tranparency" : true,
+	    "canvas_width" : 800,
+	    "canvas_height" : 800,
+	    "clear_on_init" : false
+	});
+
+	//Enable drawing mode, show controls
+	$("#canvas1").drawr("start");
+
+	function destroy(){
+		$("#canvas1").drawr("destroy");
+	}
+
+	function clear(){
+		$("#canvas1").drawr("clear");
+	}
+}
+
+</pre>
+
+<div style="clear:both;"></div>
+
+</div>
+
+
+<script type="text/javascript">
+
+	function init_canvas1(){
+		$("#drawr-container .demo-canvas").drawr({
+			"enable_tranparency" : true,
+		    "canvas_width" : 800,
+		    "canvas_height" : 800,
+		    "clear_on_init" : false
+		});
+		$("#drawr-container .demo-canvas").drawr("start");
+	}
+	init_canvas1();
+</script>
+
+</body>
+</html>

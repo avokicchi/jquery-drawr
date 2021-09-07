@@ -213,7 +213,7 @@
 
         plugin.select_button = function(button){
         	var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
-        	this.$brushToolbox.find("button.type-brush").each(function(){
+        	this.$brushToolbox.find(".drawr-tool-btn.type-brush").each(function(){
         		$(this).removeClass("active");
         		$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
         	});
@@ -243,7 +243,7 @@
         /* Inserts a button into a toolbox */
         plugin.create_button = function(toolbox,type,data,css){
         	var self=this;
-        	var el = $("<button style='float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></button>");
+        	var el = $("<a class='drawr-tool-btn' style='float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
     	    el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
     		if(typeof css!=="undefined") el.css(css);
     		el.addClass("type-" + type);
@@ -512,14 +512,14 @@
 	            $(".drawr-toolbox").hide();
 	            $(".drawr-toolbox-brush").show();
 	            $(".drawr-toolbox-palette").show();
-				currentCanvas.$brushToolbox.find("button:first").mousedown();	            
+				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").mousedown();	            
 	        } else if ( action === "stop" ) {
 	        	if(!$(currentCanvas).hasClass("active-drawr")) {
                     console.error("The element you are running this command on is not a drawr canvas.");
                     return false;//can't stop if not initialized.
                 }
 	        	//reset togglers
-	        	currentCanvas.$brushToolbox.find('button.type-toggle').each(function(){
+	        	currentCanvas.$brushToolbox.find('.drawr-tool-btn.type-toggle').each(function(){
 					if($(this).data("state")==true){
 						$(this).trigger("mousedown");
 					}
@@ -547,7 +547,7 @@
                 }
 	        	var parent = $(currentCanvas).parent();
 				parent.off("touchstart.drawr");
-				parent.find(".drawr-toolbox button").off("mousedown.drawr touchstart.drawr");
+				parent.find(".drawr-toolbox .drawr-tool-btn").off("mousedown.drawr touchstart.drawr");
 				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
 				parent.find(".drawr-toolbox").on("mousedown.drawr touchstart.drawr");
 				parent.find('.drawr-toolbox .color-picker').off("choose.drawrpalette").drawrpalette("destroy");
