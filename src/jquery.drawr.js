@@ -81,9 +81,9 @@
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
 			$(self).parent().on("touchstart.drawr", function(e){ e.preventDefault(); });//cancel scroll.
 
-			self.drawStart = function(e){
+			//true if inside canvas, false if outside canvas.
+			self.boundCheck = function(event){
 				var parent = $(self).parent()[0];
-
 
 				var box = self.getBoundingClientRect();
 				box.x += $(document).scrollLeft();
@@ -95,8 +95,19 @@
 					width: $(self).parent()[0].offsetWidth - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-right-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width")),
 					height: $(self).parent()[0].offsetHeight - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-bottom-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"))
 				};
+				var mouse_data = plugin.get_mouse_data.call(self,event);
+
+				if(mouse_data.x*self.zoomFactor>canvasRect.left && mouse_data.x*self.zoomFactor<(canvasRect.left + canvasRect.width) && mouse_data.y*self.zoomFactor>canvasRect.top && mouse_data.y*self.zoomFactor<(canvasRect.top + canvasRect.height)){
+					return true;
+				} else {
+					return false;
+				}
+
+			};
+
+			self.drawStart = function(e){
 				var mouse_data = plugin.get_mouse_data.call(self,e);
-				if(self.$brushToolbox.is(":visible") && mouse_data.x*self.zoomFactor>canvasRect.left && mouse_data.x*self.zoomFactor<(canvasRect.left + canvasRect.width) && mouse_data.y*self.zoomFactor>canvasRect.top && mouse_data.y*self.zoomFactor<(canvasRect.top + canvasRect.height)){//yay! We're drawing!
+				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true){//yay! We're drawing!
 					if(plugin.is_dragging==false){
 						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
 						$(self).data("is_drawing",true);
@@ -125,6 +136,14 @@
 			};
 			$(window).bind("touchstart.drawr mousedown.drawr", self.drawStart);
 			self.drawMove = function(e){
+
+				var bound_check = self.boundCheck.call(self,e);
+				if(bound_check){
+					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue";
+				} else {
+					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="";
+				}
+
 				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
 				if($(self).data("is_drawing")==true){
 					var positions = $(self).data("positions");
