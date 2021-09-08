@@ -190,7 +190,13 @@
 	        	});
 			};
 			self.scrollWheel = function(e){
-				var delta = new Number(e.originalEvent.deltaY * -0.001);
+				var delta = new Number(e.originalEvent.deltaY * -0.005);
+
+				if(delta<0){
+					if(delta<-0.1) delta=-0.1;
+				} else if(delta>0){
+					if(delta>0.1) delta=0.1;
+				}
 
 				var newZoomies = self.zoomFactor + delta;
     			plugin.apply_zoom.call(self,newZoomies);
