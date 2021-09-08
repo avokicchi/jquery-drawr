@@ -189,6 +189,19 @@
 	        		}
 	        	});
 			};
+			self.scrollWheel = function(e){
+				var delta = new Number(e.originalEvent.deltaY * -0.001);
+
+				var newZoomies = self.zoomFactor + delta;
+    			plugin.apply_zoom.call(self,newZoomies);
+
+
+			};
+			$(self).parent().on("wheel.drawr", function(e){ 
+				e.preventDefault(); 
+				self.scrollWheel(e);
+			});
+
 			$(window).bind("touchmove.drawr mousemove.drawr", self.drawMove);
 			self.drawStop = function(e){
 				if($(self).data("is_drawing")==true){
@@ -505,6 +518,24 @@
         	}
         };
 
+        plugin.apply_zoom = function(zoomFactor){
+        	var self = this;
+
+    		var zoomDiff=1+(zoomFactor-self.zoomFactor);
+
+    		self.zoomFactor = zoomFactor;
+    		$(self).width(self.width*zoomFactor);
+    		$(self).height(self.height*zoomFactor);
+    		$(self).css({
+    			"background-size": (20*zoomFactor) + "px " + (20*zoomFactor) + "px "
+    		});
+    		if(zoomDiff!==1){
+    			plugin.apply_scroll.call(self,self.scrollX * zoomDiff,self.scrollY * zoomDiff,true);
+    			//doesn't seem to work perfectly but it'll do for now
+    		}
+
+        };
+
         plugin.get_styles = function(el){
     	    var inlineStyles = {};
             for (var i = 0, l = el.style.length; i < l; i++){
@@ -583,6 +614,7 @@
                 }
 	        	var parent = $(currentCanvas).parent();
 				parent.off("touchstart.drawr");
+				parent.off("wheel.drawr");
 				parent.find(".drawr-toolbox .drawr-tool-btn").off("mousedown.drawr touchstart.drawr");
 				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
 				parent.find(".drawr-toolbox").on("mousedown.drawr touchstart.drawr");
@@ -745,18 +777,9 @@
 		    		//currentCanvas.brushAlpha = parseFloat(this.value/100);
 		    		var cleaned = Math.ceil(this.value/10)*10;
 		    		$(this).next().text(cleaned);
-		    		var factor = (1/100)*cleaned;
-		    		var zoomDiff=1+(factor-currentCanvas.zoomFactor);
-		    		currentCanvas.zoomFactor = factor;
-		    		$(currentCanvas).width(currentCanvas.width*factor);
-		    		$(currentCanvas).height(currentCanvas.height*factor);
-		    		$(currentCanvas).css({
-		    			"background-size": (20*factor) + "px " + (20*factor) + "px "
-		    		});
-		    		if(zoomDiff!==1){
-		    			plugin.apply_scroll.call(currentCanvas,currentCanvas.scrollX * zoomDiff,currentCanvas.scrollY * zoomDiff,true);
-		    			//doesn't seem to work perfectly but it'll do for now
-		    		}
+
+    				plugin.apply_zoom.call(currentCanvas,cleaned/100);
+
         		});
 
 				plugin.bind_draw_events.call(currentCanvas);
