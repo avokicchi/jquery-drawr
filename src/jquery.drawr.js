@@ -31,10 +31,19 @@
 				var translate_x = typeof scrollEl!=="undefined" ? scrollEl.scrollX : 0;
 				var translate_y = typeof scrollEl!=="undefined" ? scrollEl.scrollY : 0;
 
-				var bounding_box = {
+				/*var bounding_box = {
 					left: relativeTo.offsetLeft - translate_x + borderLeft,
 					top: relativeTo.offsetTop - translate_y + borderTop
+				};*/
+
+				var box = relativeTo.getBoundingClientRect();
+				box.x += $(document).scrollLeft();
+				box.y += $(document).scrollTop();
+				bounding_box = {
+					left: box.x - translate_x + borderLeft,
+					top: box.y - translate_y + borderTop 
 				};
+
 			} else {
 				var bounding_box = {
 					left: 0,
@@ -74,9 +83,15 @@
 
 			self.drawStart = function(e){
 				var parent = $(self).parent()[0];
+
+
+				var box = self.getBoundingClientRect();
+				box.x += $(document).scrollLeft();
+				box.y += $(document).scrollTop();
+
 				var canvasRect = {
-					left: self.offsetLeft,
-					top: self.offsetTop,
+					left: box.x,
+					top: box.y,
 					width: $(self).parent()[0].offsetWidth - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-right-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width")),
 					height: $(self).parent()[0].offsetHeight - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-bottom-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"))
 				};
