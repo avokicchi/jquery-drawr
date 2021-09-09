@@ -367,8 +367,7 @@
 
 			this.pen_pressure = false;//switches mode once it detects.
 			
-			var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
-
+			var context = this.getContext("2d", { alpha: true });
     		if(this.settings.clear_on_init==true){
 	    		if(this.settings.enable_tranparency==false){
 	    			context.fillStyle="white";
@@ -376,7 +375,18 @@
 				} else {
 	    			context.clearRect(0,0,width,height);
 				}
+			} else {
+				var is_blank = !new Uint32Array(context.getImageData(0, 0, width, height).data.buffer).some(x => x !== 0);
+				if(is_blank){
+					if(this.settings.clear_on_init==true){
+		    			context.fillStyle="white";
+		    			context.fillRect(0,0,width,height);
+		    		} else {
+	    				context.clearRect(0,0,width,height);
+		    		}
+	    		}
 			}
+
 			//memory canvas
 			var context = this.$memoryCanvas[0].getContext("2d");
 			context.fillStyle="blue";
@@ -634,6 +644,8 @@
 				$(window).unbind("touchend.drawr mouseup.drawr", currentCanvas.drawStop);
 				$(window).unbind("touchmove.drawr mousemove.drawr", currentCanvas.drawMove);
 				$(window).unbind("touchstart.drawr mousedown.drawr", currentCanvas.drawStart);
+				$(window).unbind("wheel.drawr mousedown.drawr", currentCanvas.scrollWheel);
+				
 				currentCanvas.$memoryCanvas.remove();
 				currentCanvas.$brushToolbox.remove();
 				currentCanvas.$settingsToolbox.remove();
@@ -657,8 +669,10 @@
 				delete currentCanvas.brushAlpha;
 				delete currentCanvas.pen_pressure;
 				delete currentCanvas.drawStart;
+				delete currentCanvas.boundCheck;
 				delete currentCanvas.drawMove;
 				delete currentCanvas.drawStop;
+				delete currentCanvas.scrollWheel;
 				delete scrollTimer;
 
 				//reset css and visuals and scrolls
@@ -680,7 +694,6 @@
 	    		$(currentCanvas).removeClass("active-drawr");
 				$(currentCanvas).parent().removeClass("drawr-container");
 	        } else if ( typeof action == "object" || typeof action =="undefined" ){//not an action, but an init call
-	        	
 				if($(currentCanvas).hasClass("active-drawr")) return false;//prevent double init
 				currentCanvas.className = currentCanvas.className + " active-drawr";
 				$(currentCanvas).parent().addClass("drawr-container");
