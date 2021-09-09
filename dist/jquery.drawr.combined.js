@@ -353,7 +353,7 @@
         /* Inserts a button into a toolbox */
         plugin.create_button = function(toolbox,type,data,css){
         	var self=this;
-        	var el = $("<a class='drawr-tool-btn' style='float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
+        	var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
     	    el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
     		if(typeof css!=="undefined") el.css(css);
     		el.addClass("type-" + type);
