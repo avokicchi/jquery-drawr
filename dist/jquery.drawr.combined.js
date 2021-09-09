@@ -44,7 +44,7 @@
 			var other = 0;
 			var stylus = 0;
 			$.each(plugin.eventArr,function(i,ev){
-				if((ev.type=="touchmove" || ev.type=="touchstart" || ev.type=="touchend") && ev.touchtype=="stylus"){
+				if((ev.type=="touchmove" || ev.type=="touchstart") && ev.touchtype=="stylus"){
 					stylus++;
 				} else {
 					other++;
@@ -54,7 +54,7 @@
 			//$("#debug").val($("#debug").val()+"\n" + JSON.stringify({"test":event.type,"test2":event.originalEvent.touches[0].touchType}));
 			//$("#debug")[0].scrollTop = $("#debug")[0].scrollHeight;
 			if(stylus>other){
-				if((event.type=="touchmove" || event.type=="touchstart" || event.type=="touchend") && typeof event.originalEvent.touches[0].touchType!=="undefined" && event.originalEvent.touches[0].touchType=="stylus"){
+				if((event.type=="touchmove" || event.type=="touchstart") && typeof event.originalEvent.touches[0].touchType!=="undefined" && event.originalEvent.touches[0].touchType=="stylus"){
 					return false;
 				} else {
 					return true;
@@ -64,7 +64,8 @@
 		};
 
 		plugin.get_mouse_data = function (event,relativeTo,scrollEl) {//body event, but relative to other element extend with pressure later.
-			plugin.record_event(event);
+			
+			if(event.type!=="touchend") plugin.record_event(event);
 
 			if(typeof relativeTo!=="undefined" && relativeTo!==null){
 				var borderTop = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-top-width"));
@@ -266,7 +267,7 @@
 				if($(self).data("is_drawing")==true){
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
 				
-					if(plugin.check_ignore(e)==true) return;
+					//if(plugin.check_ignore(e)==true) return;
 
  					var calculatedAlpha = self.brushAlpha;
  					if(self.active_brush.pressure_affects_alpha==true){
