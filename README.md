@@ -26,6 +26,7 @@ $("#canvas").drawr("start");
 6.  Basic pen pressure support for Samsung and Apple devices
 7.  Text insertion
 8.  Undo
+9.  Ignores unintended touches
 
 **Methods**
 
