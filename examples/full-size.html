@@ -49,10 +49,10 @@
 	var buttoncollection = $("#drawr-container .demo-canvas").drawr("button", {
 		"icon":"mdi mdi-content-save mdi-24px"
 	}).on("touchstart mousedown",function(){
-		var imagedata = $("#drawr-container .demo-canvas").drawr("export","image/jpeg");
+		var imagedata = $("#drawr-container .demo-canvas").drawr("export","image/png");
 		var element = document.createElement('a');
 		element.setAttribute('href', imagedata);// 'data:text/plain;charset=utf-8,' + encodeURIComponent("sillytext"));
-		element.setAttribute('download', "test.jpg");
+		element.setAttribute('download', "test.png");
 		element.style.display = 'none';
 		document.body.appendChild(element);
 		element.click();
