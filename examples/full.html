@@ -14,15 +14,6 @@
 		-webkit-text-size-adjust: none;
 		-webkit-user-select: none;
 	}
-	h1 {
-		background:#eee;
-		color:#333;
-		height:110px;
-		display:block;
-		font-size:3em !important;
-		padding:30px;
-		margin-top:0px !important;
-	}
 	</style>
 	<link href="https://cdnjs.cloudflare.com/ajax/libs/MaterialDesign-Webfont/3.6.95/css/materialdesignicons.css" rel="stylesheet">
 	<link href='http://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
@@ -34,84 +25,10 @@
 </head>
 <body>
 
-	<a href="https://github.com/lieuweprins/jquery-drawr" style="float:right;">
-		<img width="120" height="120" src="https://github.blog/wp-content/uploads/2008/12/forkme_right_green_007200.png?resize=149%2C149" class="attachment-full size-full" alt="Fork me on GitHub" data-recalc-dims="1">
-	</a>
-	<h1>JQuery dRawr</h1>
-
-	<div class="container">
-		<br/>
-<p>
-	dRawr is a JQuery plugin that can transform any canvas component (with a container) into a drawing area. It's developed for iOS, Android, and most desktop browsers. 
-	<br/><b>The only requirement at the moment is <a href="https://materialdesignicons.com/" target="_blank">material design icons.</a></b>
-</p>
-
-<a class="btn btn-default" href="https://github.com/lieuweprins/jquery-drawr" target="_blank">View on github</a>
-
-<p></p>
-
-There's a few other features, such as loading, saving an image, adding custom buttons. Those are demonstrated below:
-
 <div id="drawr-container3" style="width:350px;height:300px;border:2px dotted gray;margin:20px;">
 	<canvas class="demo-canvas drawr-test3"></canvas>
 </div>
 <input type="file" id="file-picker" style="display:none;">
-
-<pre>
-	//Code for Example 3
-
-	<b>html</b>
-
-	&lt;div style="width:350px;height:300px;border:2px dotted gray;margin:20px;"&gt;
-		&lt;canvas id="canvas3"&gt;&lt;/canvas&gt;
-	&lt;/div&gt;
-	&lt;input type="file" id="file-picker" style="display:none;"&gt;
-	
-	<b>js</b>
-	
-	//Turn a canvas element into a sketch area
-	//width and height are grabbed automatically.
-	$("#canvas3").drawr({
-		"enable_tranparency" : false
-	});
-
-	//Enable drawing mode, show controls
-	$("#canvas3").drawr("start");
-
-	//add custom save button.
-	var buttoncollection = $("#canvas3").drawr("button", {
-		"icon":"mdi mdi-folder-open mdi-24px"
-	}).on("touchstart mousedown",function(){
-		$("#file-picker").click();
-	});
-	var buttoncollection = $("#canvas3").drawr("button", {
-		"icon":"mdi mdi-content-save mdi-24px"
-	}).on("touchstart mousedown",function(){
-		var imagedata = $("#canvas3").drawr("export","image/jpeg");
-		var element = document.createElement('a');
-		element.setAttribute('href', imagedata);
-		element.setAttribute('download', "test.jpg");
-		element.style.display = 'none';
-		document.body.appendChild(element);
-		element.click();
-		document.body.removeChild(element);
-	});
-	$("#file-picker")[0].onchange = function(){
-		var file = $("#file-picker")[0].files[0];
-		if (!file.type.startsWith('image/')){ return }
-		var reader = new FileReader();
-		reader.onload = function(e) { 
-			$("#canvas3").drawr("load",e.target.result);
-		};
-		reader.readAsDataURL(file);
-	};
-
-
-
-</pre>
-
-</div>
-
 
 <script type="text/javascript">
 

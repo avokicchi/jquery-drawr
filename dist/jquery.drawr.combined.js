@@ -24,7 +24,48 @@
 		        b: parseInt(result[3], 16)
 		    } : null;
 		};
+		window.rotplugin = plugin;
+		//keeps track of last 25 mouse or stylus events.
+		plugin.eventArr = [];
+		plugin.record_event = function(event){
+			var fakeevent = {
+				"type" : event.type,
+				"touchtype" : (event.type=="touchmove" || event.type=="touchstart" || event.type=="touchend") && typeof event.originalEvent.touches[0].touchType!=="undefined" ? event.originalEvent.touches[0].touchType : "direct"
+			};
+			plugin.eventArr.push(fakeevent);
+			if(plugin.eventArr.length>25){
+				plugin.eventArr.shift();
+			}
+		};
+		//checks if a drawing event should be ignored.
+		//rule: if the majority of the last 25 events is stylus, ignore touch. 
+		//if true, it should be ignored
+		plugin.check_ignore = function(event){
+			var other = 0;
+			var stylus = 0;
+			$.each(plugin.eventArr,function(i,ev){
+				if((ev.type=="touchmove" || ev.type=="touchstart" || ev.type=="touchend") && ev.touchtype=="stylus"){
+					stylus++;
+				} else {
+					other++;
+				}
+			});
+			//$("#debug").val($("#debug").val()+"\n" + JSON.stringify({"other":other,"stylus":stylus}));
+			//$("#debug").val($("#debug").val()+"\n" + JSON.stringify({"test":event.type,"test2":event.originalEvent.touches[0].touchType}));
+			//$("#debug")[0].scrollTop = $("#debug")[0].scrollHeight;
+			if(stylus>other){
+				if((event.type=="touchmove" || event.type=="touchstart" || event.type=="touchend") && typeof event.originalEvent.touches[0].touchType!=="undefined" && event.originalEvent.touches[0].touchType=="stylus"){
+					return false;
+				} else {
+					return true;
+				}
+			}
+			return false;
+		};
+
 		plugin.get_mouse_data = function (event,relativeTo,scrollEl) {//body event, but relative to other element extend with pressure later.
+			plugin.record_event(event);
+
 			if(typeof relativeTo!=="undefined" && relativeTo!==null){
 				var borderTop = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-top-width"));
 				var borderLeft = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-left-width"));
@@ -114,6 +155,9 @@
 
 			self.drawStart = function(e){
 				var mouse_data = plugin.get_mouse_data.call(self,e);
+
+				if(plugin.check_ignore(e)==true) return;
+
 				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true){//yay! We're drawing!
 					if(plugin.is_dragging==false){
 						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
@@ -145,6 +189,7 @@
 			self.drawMove = function(e){
 
 				var bound_check = self.boundCheck.call(self,e);
+
 				if(bound_check){
 					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue";
 				} else {
@@ -152,6 +197,8 @@
 				}
 
 				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
+
+				if(plugin.check_ignore(e)==true) return;
 
 				if($(self).data("is_drawing")==true){
 					var positions = $(self).data("positions");
@@ -218,6 +265,8 @@
 			self.drawStop = function(e){
 				if($(self).data("is_drawing")==true){
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
+				
+					if(plugin.check_ignore(e)==true) return;
 
  					var calculatedAlpha = self.brushAlpha;
  					if(self.active_brush.pressure_affects_alpha==true){
