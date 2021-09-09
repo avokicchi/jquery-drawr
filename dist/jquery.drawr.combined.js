@@ -56,10 +56,11 @@
 					this.pen_pressure=true;
 				} else {
 					//TODO: add support for 3D touch of apple and other devices (oddly enough, the fairphone 3 seems to support this)
-					/*if(typeof event.originalEvent.touches[0].force!=="undefined" && force > 0){
+					if(typeof event.originalEvent.touches[0].force!=="undefined" && pressure > 0){
 						this.pen_pressure=true;//this works, but at least on fairphone, the values are too low. testing needed on iOS devices.
-					}*/
-					this.pen_pressure=false;
+					} else {
+						this.pen_pressure=false;
+					}
 				}
 				if(pressure==0 && this.pen_pressure==false) pressure = 1;
 				return { x: (event.originalEvent.touches[0].pageX-bounding_box.left)/this.zoomFactor, y: (event.originalEvent.touches[0].pageY-bounding_box.top)/this.zoomFactor, pressure: this.pen_pressure ? pressure : 1 };
@@ -151,6 +152,7 @@
 				}
 
 				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
+
 				if($(self).data("is_drawing")==true){
 					var positions = $(self).data("positions");
 					var currentSpot = {x:mouse_data.x,y:mouse_data.y};
