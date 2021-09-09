@@ -9,6 +9,7 @@
  
     $.fn.drawr = function( action, param ) {
     	var plugin = this;
+    	//Image to represent transparency (two blocks of gray and white)
     	var tspImg="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAIAAAAC64paAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAB3RJTUUH4wUIDDYyGYFdggAAAC5JREFUOMtjfPXqFQNuICoqikeWiYECMKp5ZGhm/P//Px7p169fjwbYqGZKNAMA5EEI4kUyPZcAAAAASUVORK5CYII=";
     	plugin.distance_between = function(p1, p2) {
 		  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
@@ -24,8 +25,7 @@
 		        b: parseInt(result[3], 16)
 		    } : null;
 		};
-		window.rotplugin = plugin;
-		//keeps track of last 25 mouse or stylus events.
+		//keeps track of last 25 mouse or stylus events to determine majority, and ignore unintended touches by wrist.
 		plugin.eventArr = [];
 		plugin.record_event = function(event){
 			var fakeevent = {
@@ -62,8 +62,9 @@
 			}
 			return false;
 		};
-
-		plugin.get_mouse_data = function (event,relativeTo,scrollEl) {//body event, but relative to other element extend with pressure later.
+		//Function to get x/y/pressure data from mouse/touch/pointer events
+		//It can get it relative to body, or another component
+		plugin.get_mouse_data = function (event,relativeTo,scrollEl) {
 			
 			if(event.type!=="touchend") plugin.record_event(event);
 
@@ -72,11 +73,6 @@
 				var borderLeft = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-left-width"));
 				var translate_x = typeof scrollEl!=="undefined" ? scrollEl.scrollX : 0;
 				var translate_y = typeof scrollEl!=="undefined" ? scrollEl.scrollY : 0;
-
-				/*var bounding_box = {
-					left: relativeTo.offsetLeft - translate_x + borderLeft,
-					top: relativeTo.offsetTop - translate_y + borderTop
-				};*/
 
 				var box = relativeTo.getBoundingClientRect();
 				box.x += $(document).scrollLeft();
@@ -122,6 +118,7 @@
 	    };
 		plugin.is_dragging = false;
 
+		//Binds touch event listeners to the canvas's parent container
         plugin.bind_draw_events = function(){
         	var self=this;
         	var context = self.getContext("2d", { alpha: self.settings.enable_tranparency });
@@ -129,6 +126,8 @@
 			$(self).parent().on("touchstart.drawr", function(e){ e.preventDefault(); });//cancel scroll.
 
 			//true if inside canvas, false if outside canvas.
+			//used to check if an initial click or touch start event is valid inside the container
+			//and needs to be tracked through move/end events.
 			self.boundCheck = function(event){
 				var parent = $(self).parent()[0];
 
@@ -154,6 +153,9 @@
 
 			};
 
+			//handles touchstart and mousedown. sets the important is_drawing flag if drawing started within the canvas area
+			//this is important as drawing continues even when you leave, as long as it started in a valid area. 
+			//calls plugin drawStart and drawSpot functions
 			self.drawStart = function(e){
 				var mouse_data = plugin.get_mouse_data.call(self,e);
 
@@ -187,6 +189,9 @@
 				}
 			};
 			$(window).bind("touchstart.drawr mousedown.drawr", self.drawStart);
+
+			//handles touchmove and mousemove events. if is_drawing is true, will call plugins drawSpot
+			//also handles toolbox dragging
 			self.drawMove = function(e){
 
 				var bound_check = self.boundCheck.call(self,e);
@@ -199,9 +204,8 @@
 
 				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
 
-				if(plugin.check_ignore(e)==true) return;
+				if($(self).data("is_drawing")==true && plugin.check_ignore(e)==false){
 
-				if($(self).data("is_drawing")==true){
 					var positions = $(self).data("positions");
 					var currentSpot = {x:mouse_data.x,y:mouse_data.y};
 					var lastSpot=positions[positions.length-1];
@@ -221,11 +225,9 @@
 
  					var stepSize = calculatedSize/6;
 
- 					//var calculatedAlpha = self.brushAlpha * (mouse_data.pressure * 2);
- 					//context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
-
  					if(stepSize<1) stepSize = 1;
-					for (var i = stepSize; i < dist; i+=stepSize) {//advance along the line between last spot and current spot using a^2 + b^2 = c^2 nonsense.
+ 					//advance along the line between last spot and current spot using a^2 + b^2 = c^2 nonsense.
+					for (var i = stepSize; i < dist; i+=stepSize) {
 					    x = lastSpot.x + (Math.sin(angle) * i);
 					    y = lastSpot.y + (Math.cos(angle) * i);
 						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,calculatedAlpha,e);
@@ -243,6 +245,8 @@
 	        		}
 	        	});
 			};
+
+			//handles scrollwheel zooming
 			self.scrollWheel = function(e){
 				var delta = new Number(e.originalEvent.deltaY * -0.005);
 
@@ -254,8 +258,6 @@
 
 				var newZoomies = self.zoomFactor + delta;
     			plugin.apply_zoom.call(self,newZoomies);
-
-
 			};
 			$(self).parent().on("wheel.drawr", function(e){ 
 				e.preventDefault(); 
@@ -263,6 +265,10 @@
 			});
 
 			$(window).bind("touchmove.drawr mousemove.drawr", self.drawMove);
+
+			//hanldes mouseup and touchend to finish drawing. disables is_drawing flag, 
+			//and on some tools finalizes transfer of what was drawn on the fx canvas to the main canvas
+			//stops toolbox drag
 			self.drawStop = function(e){
 				if($(self).data("is_drawing")==true){
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
@@ -291,16 +297,13 @@
 				}
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
 				$(".drawr-toolbox").data("dragging", false);
-				/*if(!plugin.is_dragging){
-					if(e.target.tagName!=="INPUT"){
-		    			e.preventDefault();
-		    		}
-	    		}*/
     			plugin.is_dragging=false;
 			};
 			$(window).bind("touchend.drawr mouseup.drawr", self.drawStop);
         };
 
+        //function that can be called to clear the canvas from elsewhere in the plugin 
+        //as long as you call it with a "this" of the canvas
         plugin.clear_canvas = function(record_undo){
         	if(record_undo) {
 				this.plugin.record_undo_entry.call(this);
@@ -316,12 +319,15 @@
 			}
         };
 
+        //Call this before any canvas manipulation. it is automatically done with most tool plugins.
+        //works as long as you call it with a "this" of the canvas
         plugin.record_undo_entry = function(){
         	this.$undoButton.css("opacity",1);
   			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
   			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
         };
 
+        //calls a tool plugin's activate_brush call. 
         plugin.select_button = function(button){
         	var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
         	this.$brushToolbox.find(".drawr-tool-btn.type-brush").each(function(){
@@ -331,13 +337,9 @@
         	$(button).css({ "background" : "orange","color" : "white" });
         	$(button).addClass("active");
         	plugin.activate_brush.call(this,$(button).data("data"));
-        	/*if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
-				this.active_brush.deactivate.call(this,this.active_brush,context);
-			}
-        	this.active_brush = $(button).data("data");
-			this.active_brush.activate.call(this,this.active_brush,context);*/
         };
 
+        //activates a brush ( a tool plugin ).
         plugin.activate_brush = function(brush){
         	var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
         	if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
@@ -461,6 +463,9 @@
 
         };
 
+        //todo: document what this does. it is named strangely.
+        //at least seems to involve drawing the guide lines of where the drawing area ends.
+        //and the scroll indicators.
         plugin.draw_animations = function(){
         	if(!$(this).hasClass("active-drawr")) return;//end drawing loop
         	var context = this.$memoryCanvas[0].getContext("2d");
@@ -580,6 +585,8 @@
 			return $(toolbox);
         };
 
+        //call this to change scroll
+        //todo: document what setTimer is
         plugin.apply_scroll = function(x,y,setTimer){
         	var self = this;
         	$(self).css("transform","translate(" + -x + "px," + -y + "px)");
@@ -590,6 +597,7 @@
         	}
         };
 
+        //call this to set zoom. zoomFactor is between 0 and 4.
         plugin.apply_zoom = function(zoomFactor){
         	var self = this;
 
@@ -608,6 +616,7 @@
 
         };
 
+        //todo: document whatever this is
         plugin.get_styles = function(el){
     	    var inlineStyles = {};
             for (var i = 0, l = el.style.length; i < l; i++){
@@ -618,12 +627,15 @@
             return inlineStyles;
         };
 
+        //call with $(selector).drawr("export",mime)
+        //mime is optional, will default to png. returns a data url.
     	if ( action == "export" ) {
 	        var currentCanvas = this.first()[0];
 	        var mime = typeof param=="undefined" ? "image/png" : param;
 	        return currentCanvas.toDataURL(mime);
 	    } 
 
+	    //todo: document whatever this is 
 	    if( action == "button" ){
 	    	var collection = $();
 	    	this.each(function() {
@@ -633,12 +645,15 @@
 	    	});
 	    	return collection;
 	    }
+
+        //call with $(selector).drawr("clear") to clear the canvas.
 	    if( action == "clear" ){
 	    	this.each(function() {
 	    		var currentCanvas = this;
 				currentCanvas.plugin.clear_canvas.call(currentCanvas,true);
 	    	});
 	    }
+
         //Initialize canvas or calling of methods
 		this.each(function() {
 
@@ -664,6 +679,9 @@
 					}
 				});
 	            $(".drawr-toolbox").hide();
+
+	        //call with $(selector).drawr("load",something) to load an image.
+	        //todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
 	        } else if ( action === "load" ) {
 	        	if(!$(currentCanvas).hasClass("active-drawr")) {
                     console.error("The element you are running this command on is not a drawr canvas.");
@@ -679,6 +697,8 @@
         			context.drawImage(img,0,0);
 	        	};
 	        	img.src=param;
+	        //call with $(selector).drawr("destroy") 
+	        //should undo everything that was done to the canvas and its parent container, returning it to its original state.
 	        } else if ( action === "destroy" ) {
 	        	if(!$(currentCanvas).hasClass("active-drawr")) {
                     console.error("The element you are running this command on is not a drawr canvas.");
@@ -743,7 +763,8 @@
 
 	    		$(currentCanvas).removeClass("active-drawr");
 				$(currentCanvas).parent().removeClass("drawr-container");
-	        } else if ( typeof action == "object" || typeof action =="undefined" ){//not an action, but an init call
+			//not an action, but an init call
+	        } else if ( typeof action == "object" || typeof action =="undefined" ){
 				if($(currentCanvas).hasClass("active-drawr")) return false;//prevent double init
 				currentCanvas.className = currentCanvas.className + " active-drawr";
 				$(currentCanvas).parent().addClass("drawr-container");
