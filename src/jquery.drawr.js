@@ -774,7 +774,7 @@
 	        	//determine settings
 		    	var defaultSettings = {
 		    		"enable_tranparency" : true,
-					"enable_scrollwheel_zooming" : false,
+					"enable_scrollwheel_zooming" : true,
 		    		"canvas_width" : $(currentCanvas).parent().innerWidth(),
 		    		"canvas_height" : $(currentCanvas).parent().innerHeight(),
 		    		"undo_max_levels" : 5,
