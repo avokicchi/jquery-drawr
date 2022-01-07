@@ -46,6 +46,7 @@ $("#canvas").drawr("start");
 4.  undo_max_levels(5)
 5.  color_mode("presets","picker")
 6.  clear_on_init
+7.  enable_scrollwheel_zooming(true)
 
 [demos and docs at this link](https://rawrfl.es/jquery-drawr/ "demos and docs at this link")
 

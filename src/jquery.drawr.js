@@ -246,23 +246,25 @@
 	        	});
 			};
 
-			//handles scrollwheel zooming
-			self.scrollWheel = function(e){
-				var delta = new Number(e.originalEvent.deltaY * -0.005);
+			if(this.settings.enable_scrollwheel_zooming==true){
+				//handles scrollwheel zooming
+				self.scrollWheel = function(e){
+					var delta = new Number(e.originalEvent.deltaY * -0.005);
 
-				if(delta<0){
-					if(delta<-0.1) delta=-0.1;
-				} else if(delta>0){
-					if(delta>0.1) delta=0.1;
-				}
+					if(delta<0){
+						if(delta<-0.1) delta=-0.1;
+					} else if(delta>0){
+						if(delta>0.1) delta=0.1;
+					}
 
-				var newZoomies = self.zoomFactor + delta;
-    			plugin.apply_zoom.call(self,newZoomies);
-			};
-			$(self).parent().on("wheel.drawr", function(e){ 
-				e.preventDefault(); 
-				self.scrollWheel(e);
-			});
+					var newZoomies = self.zoomFactor + delta;
+					plugin.apply_zoom.call(self,newZoomies);
+				};
+				$(self).parent().on("wheel.drawr", function(e){ 
+					e.preventDefault(); 
+					self.scrollWheel(e);
+				});
+			}
 
 			$(window).bind("touchmove.drawr mousemove.drawr", self.drawMove);
 
@@ -772,6 +774,7 @@
 	        	//determine settings
 		    	var defaultSettings = {
 		    		"enable_tranparency" : true,
+					"enable_scrollwheel_zooming" : false,
 		    		"canvas_width" : $(currentCanvas).parent().innerWidth(),
 		    		"canvas_height" : $(currentCanvas).parent().innerHeight(),
 		    		"undo_max_levels" : 5,
