@@ -398,7 +398,7 @@
         	this.origParentStyles = plugin.get_styles($(this).parent()[0]);
         	$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none" });
         	$(this).parent().css({	"overflow": "hidden", "user-select": "none", "webkit-touch-callout": "none" });
-        	if(this.settings.enable_tranparency==true) $(this).css({"background-image" : "url(" + tspImg + ")"});
+        	if(this.settings.enable_tranparency_image==true) $(this).css({"background-image" : "url(" + tspImg + ")"});
 
         	if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
 				this.width=width;
@@ -772,6 +772,7 @@
 	        	//determine settings
 		    	var defaultSettings = {
 		    		"enable_tranparency" : true,
+					"enable_tranparency_image" : true,
 		    		"canvas_width" : $(currentCanvas).parent().innerWidth(),
 		    		"canvas_height" : $(currentCanvas).parent().innerHeight(),
 		    		"undo_max_levels" : 5,
