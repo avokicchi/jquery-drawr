@@ -121,7 +121,7 @@
 		//Binds touch event listeners to the canvas's parent container
         plugin.bind_draw_events = function(){
         	var self=this;
-        	var context = self.getContext("2d", { alpha: self.settings.enable_tranparency });
+        	var context = self.getContext("2d", { alpha: self.settings.enable_transparency });
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
 			$(self).parent().on("touchstart.drawr", function(e){ e.preventDefault(); });//cancel scroll.
 
@@ -308,8 +308,8 @@
         	if(record_undo) {
 				this.plugin.record_undo_entry.call(this);
 			}
-        	var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
-        	if(this.settings.enable_tranparency==false){
+        	var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
+        	if(this.settings.enable_transparency==false){
     			context.fillStyle="white";
 				context.globalCompositeOperation="source-over";
 				context.globalAlpha=1;
@@ -329,7 +329,7 @@
 
         //calls a tool plugin's activate_brush call. 
         plugin.select_button = function(button){
-        	var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
+        	var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
         	this.$brushToolbox.find(".drawr-tool-btn.type-brush").each(function(){
         		$(this).removeClass("active");
         		$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
@@ -341,7 +341,7 @@
 
         //activates a brush ( a tool plugin ).
         plugin.activate_brush = function(brush){
-        	var context = this.getContext("2d", { alpha: this.settings.enable_tranparency });
+        	var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
         	if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
 				this.active_brush.deactivate.call(this,this.active_brush,context);
 			}
@@ -398,7 +398,7 @@
         	this.origParentStyles = plugin.get_styles($(this).parent()[0]);
         	$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none" });
         	$(this).parent().css({	"overflow": "hidden", "user-select": "none", "webkit-touch-callout": "none" });
-        	if(this.settings.enable_tranparency==true) $(this).css({"background-image" : "url(" + tspImg + ")"});
+        	if(this.settings.enable_transparency==true) $(this).css({"background-image" : "url(" + tspImg + ")"});
 
         	if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
 				this.width=width;
@@ -421,7 +421,7 @@
 			
 			var context = this.getContext("2d", { alpha: true });
     		if(this.settings.clear_on_init==true){
-	    		if(this.settings.enable_tranparency==false){
+	    		if(this.settings.enable_transparency==false){
 	    			context.fillStyle="white";
 	    			context.fillRect(0,0,width,height);
 				} else {
@@ -691,7 +691,7 @@
 	        	img.crossOrigin = "Anonymous";
 
 	        	img.onload = function(){
-	        		var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_tranparency });
+	        		var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_transparency });
 	        		plugin.initialize_canvas.call(currentCanvas,img.width,img.height,true);
 	        		currentCanvas.undoStack = [{data: currentCanvas.toDataURL("image/png"),current:true}];
         			context.drawImage(img,0,0);
@@ -771,7 +771,7 @@
 
 	        	//determine settings
 		    	var defaultSettings = {
-		    		"enable_tranparency" : true,
+		    		"enable_transparency" : true,
 		    		"canvas_width" : $(currentCanvas).parent().innerWidth(),
 		    		"canvas_height" : $(currentCanvas).parent().innerHeight(),
 		    		"undo_max_levels" : 5,
@@ -790,7 +790,7 @@
 	        	//set up canvas
         		plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
         		currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
-				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_tranparency });			
+				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });			
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
 				window.requestAnimationFrame(plugin.draw_animations.bind(currentCanvas));
 
