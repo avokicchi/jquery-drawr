@@ -638,6 +638,28 @@
 	        return currentCanvas.toDataURL(mime);
 	    } 
 
+    	/*
+		this displays this level of the undo stack as a popup. handy for debugging undo problems.
+    	if ( action == "debug_undo" ) {
+	        var currentCanvas = this.first()[0];
+	        var level = typeof param=="undefined" ? 0 : param;
+	        var url = currentCanvas.undoStack[level].data;
+	        var img=document.createElement("img");
+	        img.src=url;
+	        img.className="undo-image";
+	        $(".undo-image").detach();
+	        $(document.body).append(img);
+	        $(".undo-image").css({
+	        	left:"50%",
+	        	top:"50%",
+	        	position:"absolute",
+	        	zIndex:1234134,
+	        	border:"1px dotted red",
+	        	boxShadow: "2px 2px 5px rgba(0,0,0,0.3)"
+	        });
+	        return null;
+	    }*/
+
 	    //todo: document whatever this is 
 	    if( action == "button" ){
 	    	var collection = $();
@@ -816,29 +838,32 @@
 	    		});	    		
 	    		currentCanvas.$undoButton=plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",{"icon":"mdi mdi-undo-variant mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
 				    if(currentCanvas.undoStack.length>0){
+				    	//the current property is because of the way some tools work it is needed to always keep a copy of the canvas' latest state (AFTER last draw action was done) in the undo buffer. 
+				    	//obviously you want to go back to the previous version, not the current one, so that one is ignored.
 						if(currentCanvas.undoStack[currentCanvas.undoStack.length-1].current==true){
 							currentCanvas.undoStack.pop();//ignore current version of canvas
 						}
 						$.each(currentCanvas.undoStack,function(i,stackitem){
 							stackitem.current=false;
 						});
-						if(currentCanvas.undoStack.length==0) return;
-						var undo = currentCanvas.undoStack.pop().data;
-						var img = document.createElement("img");
-						img.crossOrigin = "Anonymous";
+						if(currentCanvas.undoStack.length>0) {//is there anything noncurrent 
+							var undo = currentCanvas.undoStack.pop().data;
+							var img = document.createElement("img");
+							img.crossOrigin = "Anonymous";
 
-						img.onload = function(){
-							currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
-							//currentCanvas.plugin.initialize_canvas.call(currentCanvas,img.width,img.height,false);
-							context.globalCompositeOperation="source-over";
-							context.globalAlpha = 1;
-							context.drawImage(img,0,0);
-						};
-						img.src=undo;
-						if(currentCanvas.undoStack.length==0) {//don't allow stack to be emtpy.
-							currentCanvas.$undoButton.css("opacity",0.5);
-							currentCanvas.undoStack.push({data:undo,current:false});
+							img.onload = function(){
+								currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
+								//currentCanvas.plugin.initialize_canvas.call(currentCanvas,img.width,img.height,false);
+								context.globalCompositeOperation="source-over";
+								context.globalAlpha = 1;
+								context.drawImage(img,0,0);
+							};
+							img.src=undo;
 						}
+						if(currentCanvas.undoStack.length==0) {//re-add current version of the canvas.
+							currentCanvas.$undoButton.css("opacity",0.5);
+						}
+						currentCanvas.undoStack.push({data:undo,current:true});
 					}
 	    		});
 	    		currentCanvas.$undoButton.css("opacity",0.5);
