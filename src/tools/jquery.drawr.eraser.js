@@ -9,7 +9,7 @@ jQuery.fn.drawr.register({
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
-		if(this.settings.enable_tranparency==true){
+		if(this.settings.enable_transparency==true){
 			context.globalCompositeOperation="destination-out";
 		} else {
 			context.globalCompositeOperation="source-over";
@@ -19,7 +19,7 @@ jQuery.fn.drawr.register({
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
 		context.globalAlpha = alpha;
-		if(self.settings.enable_tranparency==true){
+		if(self.settings.enable_transparency==true){
 			var radgrad = context.createRadialGradient(x,y,0,x,y,size/2);//non zero values for the gradient break globalAlpha unfortunately.
 			radgrad.addColorStop(0, '#000');
 			radgrad.addColorStop(0.5, 'rgba(0,0,0,0.5)');

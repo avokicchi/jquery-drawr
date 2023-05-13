@@ -14,7 +14,7 @@ Usage:
 ```
 
 ```javascript
-$("#canvas").drawr({ "enable_tranparency" : true, "canvas_width" : 800, "canvas_height" : 800 });
+$("#canvas").drawr({ "enable_transparency" : true, "canvas_width" : 800, "canvas_height" : 800 });
 $("#canvas").drawr("start");
 ```
 **Features**
@@ -40,12 +40,13 @@ $("#canvas").drawr("start");
 
 **Options**
 
-1.  enable_tranparency
-2.  canvas_width
-3.  canvas_height
-4.  undo_max_levels(5)
-5.  color_mode("presets","picker")
-6.  clear_on_init
+1.  enable_transparency(true)
+2.  enable_transparency_image(true)
+3.  canvas_width
+4.  canvas_height
+5.  undo_max_levels(5)
+6.  color_mode("presets","picker")
+7.  clear_on_init(true)
 
 [demos and docs at this link](https://rawrfl.es/jquery-drawr/ "demos and docs at this link")
 
