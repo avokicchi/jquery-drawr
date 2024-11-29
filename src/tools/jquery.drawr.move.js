@@ -1,7 +1,7 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-cursor-move mdi-24px",
 	name: "move",
-	order: 9,
+	order: 10,
 	activate: function(brush,context){
 		$(this).parent().css({"cursor":"move"});//"overflow":"scroll",
 	},
