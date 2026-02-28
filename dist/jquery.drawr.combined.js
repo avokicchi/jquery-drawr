@@ -1524,6 +1524,61 @@ jQuery.fn.drawr.register({
 
 //effectCallback
 jQuery.fn.drawr.register({
+	icon: "mdi mdi-vector-line mdi-24px",
+	name: "line",
+	size: 3,
+	alpha: 1,
+	order: 9,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
+	activate: function(brush,context){
+
+	},
+	deactivate: function(brush,context){},
+	drawStart: function(brush,context,x,y,size,alpha,event){
+		context.globalCompositeOperation="source-over";
+		brush.currentAlpha = alpha;
+		brush.lineWidth = context.lineWidth = size;
+		brush.startPosition = {
+			"x" : x,
+			"y" : y
+		};
+		context.beginPath();
+		context.moveTo(x, y);
+		this.effectCallback = brush.effectCallback;
+		context.globalAlpha=alpha;
+		context.lineWidth = size;
+	},
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		context.globalAlpha=alpha;
+		context.lineJoin = 'miter';
+		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.lineTo(brush.currentPosition.x, brush.currentPosition.y);
+		context.stroke();
+
+		this.effectCallback = null;
+		return true;
+	},
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
+		brush.currentPosition = {
+			"x" : x,
+			"y" : y
+		};
+	},
+	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
+		context.globalAlpha=brush.currentAlpha;
+		context.lineJoin = 'miter';
+		context.lineWidth = brush.lineWidth;
+		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.beginPath();
+		context.moveTo(brush.startPosition.x*adjustzoom, brush.startPosition.y*adjustzoom);
+		context.lineTo(brush.currentPosition.x*adjustzoom, brush.currentPosition.y*adjustzoom);
+		context.stroke();
+	}
+});
+
+//effectCallback
+jQuery.fn.drawr.register({
 	icon: "mdi mdi-marker mdi-24px",
 	name: "marker",
 	size: 15,
@@ -1728,17 +1783,21 @@ jQuery.fn.drawr.register({
 	}
 });
 jQuery.fn.drawr.register({
+
 	icon: "mdi mdi-rotate-right mdi-24px",
 	name: "rotate",
 	order: 11,
+
 	activate: function(brush,context){
 		$(this).parent().css({"cursor":"crosshair"});
 	},
 	deactivate: function(brush,context){
 		$(this).parent().css({"cursor":"default"});
 	},
-	// Reads raw page coordinates (like the move tool) to compute angle from canvas center.
+	//reads raw page coordinates to compute angle from canvas center.
 	drawStart: function(brush,context,x,y,size,alpha,event){
+
+
 		var self = this;
 		var parent = $(self).parent()[0];
 		var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
@@ -1754,22 +1813,29 @@ jQuery.fn.drawr.register({
 			eventY = event.pageY;
 		}
 
-		// Click position in container-space
+		//click position
 		var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
 		var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
 
-		// Canvas center in container-space
+		//canvas center
 		var W = self.width * self.zoomFactor;
 		var H = self.height * self.zoomFactor;
 		var cx = W / 2 - self.scrollX;
 		var cy = H / 2 - self.scrollY;
 
 		brush.startAngle = Math.atan2(py - cy, px - cx);
-		brush.startRotation = self.rotationAngle || 0;
+		brush.startRotation=self.rotationAngle || 0;
+
 	},
+
 	drawSpot: function(brush,context,x,y,size,alpha,event){
+
 		var self = this;
 		var parent = $(self).parent()[0];
+		/*
+		var rect = parent.getBoundingClientRect();
+		 
+		*/
 		var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
 		var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
 		var box = parent.getBoundingClientRect();
@@ -1795,7 +1861,9 @@ jQuery.fn.drawr.register({
 		var delta = currentAngle - brush.startAngle;
 
 		self.plugin.apply_rotation.call(self, brush.startRotation + delta);
+
 	}
+
 });
 
 jQuery.fn.drawr.register({
