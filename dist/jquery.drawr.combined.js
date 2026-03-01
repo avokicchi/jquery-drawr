@@ -1502,7 +1502,24 @@ jQuery.fn.drawr.register({
 		context.lineJoin = 'miter';
 		context.lineWidth = size;
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.fillRect(brush.startPosition.x,brush.startPosition.y,brush.currentPosition.x-brush.startPosition.x,brush.currentPosition.y-brush.startPosition.y);
+		var angle = this.rotationAngle || 0;
+		var sx = brush.startPosition.x, sy = brush.startPosition.y;
+		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
+		if(angle){
+			var cx = this.width/2, cy = this.height/2;
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			context.save();
+			context.translate(cx, cy);
+			context.rotate(-angle);
+			context.translate(-cx, -cy);
+			var dsx = sx-cx, dsy = sy-cy, dex = ex-cx, dey = ey-cy;
+			sx = cx + cos*dsx - sin*dsy;
+			sy = cy + sin*dsx + cos*dsy;
+			ex = cx + cos*dex - sin*dey;
+			ey = cy + sin*dex + cos*dey;
+		}
+		context.fillRect(sx, sy, ex-sx, ey-sy);
+		if(angle){ context.restore(); }
 
 		this.effectCallback = null;
 		return true;
@@ -1514,11 +1531,36 @@ jQuery.fn.drawr.register({
 		};
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
+		var angle = this.rotationAngle || 0;
+		var sx, sy, ex, ey;
+		if(angle){
+			var _W = this.width * adjustzoom;
+			var _H = this.height * adjustzoom;
+			var _cx = _W / 2 - adjustx;
+			var _cy = _H / 2 - adjusty;
+			context.save();
+			context.translate(_cx, _cy);
+			context.rotate(-angle);
+			context.translate(-_cx, -_cy);
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
+			var sRelX = brush.startPosition.x  - this.width/2, sRelY = brush.startPosition.y  - this.height/2;
+			var eRelX = brush.currentPosition.x - this.width/2, eRelY = brush.currentPosition.y - this.height/2;
+			sx = (cos*sRelX - sin*sRelY) * adjustzoom + halfW - adjustx;
+			sy = (sin*sRelX + cos*sRelY) * adjustzoom + halfH - adjusty;
+			ex = (cos*eRelX - sin*eRelY) * adjustzoom + halfW - adjustx;
+			ey = (sin*eRelX + cos*eRelY) * adjustzoom + halfH - adjusty;
+		} else {
+			sx = brush.startPosition.x  * adjustzoom - adjustx;
+			sy = brush.startPosition.y  * adjustzoom - adjusty;
+			ex = brush.currentPosition.x * adjustzoom - adjustx;
+			ey = brush.currentPosition.y * adjustzoom - adjusty;
+		}
 		context.globalAlpha=brush.currentAlpha;
 		context.lineJoin = 'miter';
-		//context.lineWidth = this.brushSize;
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.fillRect((brush.startPosition.x*adjustzoom)-adjustx,(brush.startPosition.y*adjustzoom)-adjusty,(brush.currentPosition.x-brush.startPosition.x)*adjustzoom,(brush.currentPosition.y-brush.startPosition.y)*adjustzoom);
+		context.fillRect(sx, sy, ex-sx, ey-sy);
+		if(angle){ context.restore(); }
 	}
 });
 
@@ -1894,7 +1936,24 @@ jQuery.fn.drawr.register({
 		context.lineJoin = 'miter';
 		context.lineWidth = size;
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.strokeRect(brush.startPosition.x,brush.startPosition.y,brush.currentPosition.x-brush.startPosition.x,brush.currentPosition.y-brush.startPosition.y);
+		var angle = this.rotationAngle || 0;
+		var sx = brush.startPosition.x, sy = brush.startPosition.y;
+		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
+		if(angle){
+			var cx = this.width/2, cy = this.height/2;
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			context.save();
+			context.translate(cx, cy);
+			context.rotate(-angle);
+			context.translate(-cx, -cy);
+			var dsx = sx-cx, dsy = sy-cy, dex = ex-cx, dey = ey-cy;
+			sx = cx + cos*dsx - sin*dsy;
+			sy = cy + sin*dsx + cos*dsy;
+			ex = cx + cos*dex - sin*dey;
+			ey = cy + sin*dex + cos*dey;
+		}
+		context.strokeRect(sx, sy, ex-sx, ey-sy);
+		if(angle){ context.restore(); }
 
 		this.effectCallback = null;
 		return true;
@@ -1906,11 +1965,37 @@ jQuery.fn.drawr.register({
 		};
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
-		context.globalAlpha = brush.currentAlpha;//brush.currentAlpha;
+		var angle = this.rotationAngle || 0;
+		var sx, sy, ex, ey;
+		if(angle){
+			var _W = this.width * adjustzoom;
+			var _H = this.height * adjustzoom;
+			var _cx = _W / 2 - adjustx;
+			var _cy = _H / 2 - adjusty;
+			context.save();
+			context.translate(_cx, _cy);
+			context.rotate(-angle);
+			context.translate(-_cx, -_cy);
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
+			var sRelX = brush.startPosition.x  - this.width/2, sRelY = brush.startPosition.y  - this.height/2;
+			var eRelX = brush.currentPosition.x - this.width/2, eRelY = brush.currentPosition.y - this.height/2;
+			sx = (cos*sRelX - sin*sRelY) * adjustzoom + halfW - adjustx;
+			sy = (sin*sRelX + cos*sRelY) * adjustzoom + halfH - adjusty;
+			ex = (cos*eRelX - sin*eRelY) * adjustzoom + halfW - adjustx;
+			ey = (sin*eRelX + cos*eRelY) * adjustzoom + halfH - adjusty;
+		} else {
+			sx = brush.startPosition.x  * adjustzoom - adjustx;
+			sy = brush.startPosition.y  * adjustzoom - adjusty;
+			ex = brush.currentPosition.x * adjustzoom - adjustx;
+			ey = brush.currentPosition.y * adjustzoom - adjusty;
+		}
+		context.globalAlpha = brush.currentAlpha;
 		context.lineWidth = brush.currentSize*adjustzoom;
 		context.lineJoin = 'miter';
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.strokeRect((brush.startPosition.x*adjustzoom)-adjustx,(brush.startPosition.y*adjustzoom)-adjusty,(brush.currentPosition.x-brush.startPosition.x)*adjustzoom,(brush.currentPosition.y-brush.startPosition.y)*adjustzoom);
+		context.strokeRect(sx, sy, ex-sx, ey-sy);
+		if(angle){ context.restore(); }
 	}
 });
 
@@ -1932,6 +2017,17 @@ jQuery.fn.drawr.register({
 			delete brush.$floatyBox;
 		}
 	},
+	canvasToViewport: function(x, y){
+		//helper to make translation a bit more readable
+		var angle = this.rotationAngle || 0;
+		var cx = this.width / 2, cy = this.height / 2;
+		var dx = x - cx, dy = y - cy;
+		var cos = Math.cos(angle), sin = Math.sin(angle);
+		return {
+			x: (cos*dx - sin*dy) * this.zoomFactor + cx*this.zoomFactor - this.scrollX,
+			y: (sin*dx + cos*dy) * this.zoomFactor + cy*this.zoomFactor - this.scrollY
+		};
+	},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		var self=this;
 		brush.currentPosition = {
@@ -1943,9 +2039,10 @@ jQuery.fn.drawr.register({
 			var fontSizeForDisplay= parseInt(20 * self.zoomFactor);
 			brush.$floatyBox = $('<div style="z-index:6;position:absolute;width:100px;height:20px;"><input style="background:transparent;border:0px;padding:0px;font-size:' + fontSizeForDisplay + 'px;font-family:sans-serif;" type="text" value=""><button class="ok"><i class="mdi mdi-check"></i></button><button class="cancel"><i class="mdi mdi-close"></i></button></div>');
 			$(brush.$floatyBox).insertAfter($(this).parent());
+			var vp = brush.canvasToViewport.call(self, x, y);
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + (x*self.zoomFactor) - this.scrollX,
-				top: $(this).parent().offset().top + (y*self.zoomFactor) - this.scrollY,
+				left: $(this).parent().offset().left + vp.x,
+				top: $(this).parent().offset().top + vp.y,
 			});
 			brush.$floatyBox.find("input").on("mousedown touchstart",function(e){
 				e.preventDefault();
@@ -1969,17 +2066,32 @@ jQuery.fn.drawr.register({
 				delete brush.$floatyBox;
 			});
 		} else {
+			var vp = brush.canvasToViewport.call(self, x, y);
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + (x*self.zoomFactor) - this.scrollX,
-				top: $(this).parent().offset().top + (y*self.zoomFactor) - this.scrollY,
+				left: $(this).parent().offset().left + vp.x,
+				top: $(this).parent().offset().top + vp.y,
 			});
 		}
 	},
 	applyText: function(context,brush,x,y,text){
 		context.font = "20px sans-serif";
-		context.textAlign = "left"; 
+		context.textAlign = "left";
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.fillText(text, x-2, y+19);
+		var angle = this.rotationAngle || 0;
+		var drawX = x - 2, drawY = y + 19;
+		if(angle){
+			var cx = this.width / 2, cy = this.height / 2;
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			context.save();
+			context.translate(cx, cy);
+			context.rotate(-angle);
+			context.translate(-cx, -cy);
+			var dx = drawX - cx, dy = drawY - cy;
+			drawX = cx + cos*dx - sin*dy;
+			drawY = cy + sin*dx + cos*dy;
+		}
+		context.fillText(text, drawX, drawY);
+		if(angle){ context.restore(); }
 		this.plugin.record_undo_entry.call(this);
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
@@ -1987,12 +2099,11 @@ jQuery.fn.drawr.register({
 			"x" : x,
 			"y" : y
 		};
-		if(typeof brush.$floatyBox=="undefined"){
-
-		} else {
+		if(typeof brush.$floatyBox!=="undefined"){
+			var vp = brush.canvasToViewport.call(this, x, y);
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + (x*this.zoomFactor) - this.scrollX,
-				top: $(this).parent().offset().top + (y*this.zoomFactor) - this.scrollY,
+				left: $(this).parent().offset().left + vp.x,
+				top: $(this).parent().offset().top + vp.y,
 			});
 		}
 	}
