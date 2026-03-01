@@ -25,7 +25,7 @@
     "jquery": ">=1.7"
   },
   "devDependencies": {
-    "gulp": "^4.0.2",
+    "gulp": "^5.0.1",
     "gulp-concat": "^2.6.1",
     "gulp-rename": "^2.1.0",
     "gulp-terser": "^2.1.0"
