@@ -1,6 +1,18 @@
+(function (root, factory) {
+  if (typeof define === "function" && define.amd) {
+    define(["jquery"], factory);
+  } else if (typeof module === "object" && module.exports) {
+    module.exports = factory(require("jquery"));
+  } else {
+    factory(root.jQuery);
+  }
+}(typeof self !== "undefined" ? self : this, function ($) {
+  //"use strict";
+  if (!$) throw new Error("jquery-drawr requires jQuery");
+  var jQuery = $;
 /*!
 * jquery.drawr.js
-* https://github.com/lieuweprins/jquery-drawr
+* https://github.com/avokicchi/jquery-drawr
 * Copyright (c) 2019 Lieuwe Prins
 * Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
 */
@@ -88,8 +100,9 @@
 					top: 0 
 				};			
 			}
+			var x, y, pressure;
 			if(event.type=="touchmove" || event.type=="touchstart"){
-				var pressure = typeof event.originalEvent.touches[0].force!=="undefined" ? event.originalEvent.touches[0].force : 1;
+				pressure = typeof event.originalEvent.touches[0].force!=="undefined" ? event.originalEvent.touches[0].force : 1;
 				if(typeof event.originalEvent.touches[0].touchType!=="undefined" && event.originalEvent.touches[0].touchType=="stylus"){
 					this.pen_pressure=true;
 				} else {
@@ -101,10 +114,31 @@
 					}
 				}
 				if(pressure==0 && this.pen_pressure==false) pressure = 1;
-				return { x: (event.originalEvent.touches[0].pageX-bounding_box.left)/this.zoomFactor, y: (event.originalEvent.touches[0].pageY-bounding_box.top)/this.zoomFactor, pressure: this.pen_pressure ? pressure : 1 };
+				x = (event.originalEvent.touches[0].pageX-bounding_box.left)/this.zoomFactor;
+				y = (event.originalEvent.touches[0].pageY-bounding_box.top)/this.zoomFactor;
+				pressure = this.pen_pressure ? pressure : 1;
 			} else {
-				return { x: (event.pageX - bounding_box.left)/this.zoomFactor, y: (event.pageY-bounding_box.top)/this.zoomFactor, pressure: 1 };
+				x = (event.pageX - bounding_box.left)/this.zoomFactor;
+				y = (event.pageY-bounding_box.top)/this.zoomFactor;
+				pressure = 1;
 			}
+			//apply inverse canvas rotation 
+			if(typeof relativeTo!=="undefined" && relativeTo!==null && this.rotationAngle){
+				var angle = this.rotationAngle;
+                var W = this.width * this.zoomFactor;
+				var H = this.height * this.zoomFactor;
+				var dx = x * this.zoomFactor - W / 2;
+				var dy = y * this.zoomFactor - H / 2;
+				var cos = Math.cos(-angle);
+				var sin = Math.sin(-angle);
+				x= (dx * cos - dy * sin + W / 2)/this.zoomFactor;
+				y= (dx * sin + dy * cos + H / 2)/this.zoomFactor;
+			}
+			return { 
+				x: x,
+				 y: y, 
+				 pressure: pressure 
+			};
 		};
 		plugin.draw_hsl = function(hue,canvas){
 			var ctx = canvas.getContext('2d');
@@ -129,28 +163,25 @@
 			//used to check if an initial click or touch start event is valid inside the container
 			//and needs to be tracked through move/end events.
 			self.boundCheck = function(event){
+				//new rotation-aware hit test
 				var parent = $(self).parent()[0];
-
-				var box = self.getBoundingClientRect();
-				box.x += $(document).scrollLeft();
-				box.y += $(document).scrollTop();
-
-				var canvasRect = {
-					left: box.x,
-					top: box.y,
-					width: $(self).parent()[0].offsetWidth - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-right-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width")),
-					height: $(self).parent()[0].offsetHeight - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-bottom-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"))
-				};
-				canvasRect.left += self.scrollX;
-				canvasRect.top += self.scrollY;
-				var mouse_data = plugin.get_mouse_data.call(self,event);
-
-				if(mouse_data.x*self.zoomFactor>canvasRect.left && mouse_data.x*self.zoomFactor<(canvasRect.left + canvasRect.width) && mouse_data.y*self.zoomFactor>canvasRect.top && mouse_data.y*self.zoomFactor<(canvasRect.top + canvasRect.height)){
-					return true;
-				} else {
-					return false;
-				}
-
+				var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
+				var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
+				var box = parent.getBoundingClientRect();
+				var eventX = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].pageX : event.pageX;
+				var eventY = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].pageY : event.pageY;
+				var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
+				var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
+				var W = self.width * self.zoomFactor;
+				var H = self.height * self.zoomFactor;
+				var angle = self.rotationAngle || 0;
+				var dx = px - (W / 2 - self.scrollX);
+				var dy = py - (H / 2 - self.scrollY);
+				var cos = Math.cos(-angle);
+				var sin = Math.sin(-angle);
+				var canvasX = (dx * cos - dy * sin + W / 2) / self.zoomFactor;
+				var canvasY = (dx * sin + dy * cos + H / 2) / self.zoomFactor;
+				return canvasX >= 0 && canvasX <= self.width && canvasY >= 0 && canvasY <= self.height;
 			};
 
 			//handles touchstart and mousedown. sets the important is_drawing flag if drawing started within the canvas area
@@ -268,7 +299,7 @@
 
 			$(window).bind("touchmove.drawr mousemove.drawr", self.drawMove);
 
-			//hanldes mouseup and touchend to finish drawing. disables is_drawing flag, 
+			//handles mouseup and touchend to finish drawing. disables is_drawing flag, 
 			//and on some tools finalizes transfer of what was drawn on the fx canvas to the main canvas
 			//stops toolbox drag
 			self.drawStop = function(e){
@@ -410,6 +441,7 @@
 			
 			if(reset==true){
 				this.zoomFactor = 1;
+				this.rotationAngle = 0;
 				if(typeof this.$zoomToolbox!=="undefined") this.$zoomToolbox.find("input").val(100).trigger("input");
 				plugin.apply_scroll.call(this,0,0,false);
 				$(this).width(width);
@@ -466,8 +498,8 @@
 
         };
 
-        //todo: document what this does. it is named strangely.
-        //at least seems to involve drawing the guide lines of where the drawing area ends.
+        //this is basically the animation/drawing loop. 
+        //involves drawing the guide lines of where the drawing area ends.
         //and the scroll indicators.
         plugin.draw_animations = function(){
         	if(!$(this).hasClass("active-drawr")) return;//end drawing loop
@@ -475,7 +507,16 @@
         	context.clearRect(0,0,this.$memoryCanvas[0].width,this.$memoryCanvas[0].height);
  
         	if(typeof this.effectCallback!=="undefined" && this.effectCallback!==null){
+        		var _W = this.width * this.zoomFactor;
+        		var _H = this.height * this.zoomFactor;
+        		var _cx = _W / 2 - this.scrollX;
+        		var _cy = _H / 2 - this.scrollY;
+        		context.save();
+        		context.translate(_cx, _cy);
+        		context.rotate(this.rotationAngle || 0);
+        		context.translate(-_cx, -_cy);
         		this.effectCallback.call(this,context,this.active_brush,this.scrollX,this.scrollY,this.zoomFactor);
+        		context.restore();
         	}
 
         	var container_width = $(this).parent().width();
@@ -486,27 +527,16 @@
 			context.lineJoin = context.lineCap = "round";
 			context.strokeStyle = "black";
 
-			//draw lines outlining canvas size
-
-			context.beginPath(); 
-			context.moveTo(0,-1-this.scrollY);
-			context.lineTo(this.width,-1-this.scrollY);
-			context.stroke();
-
-    		context.beginPath(); 
-			context.moveTo(0,(this.height*this.zoomFactor)-this.scrollY);
-			context.lineTo(this.width,(this.height*this.zoomFactor)-this.scrollY);
-			context.stroke();
-
-			context.beginPath(); 
-			context.moveTo(-1-this.scrollX,0);
-			context.lineTo(-1-this.scrollX,this.height);
-			context.stroke();
-
-    		context.beginPath(); 
-			context.moveTo((this.width*this.zoomFactor)-this.scrollX,0);
-			context.lineTo((this.width*this.zoomFactor)-this.scrollX,this.height);
-			context.stroke();
+			//draw lines outlining canvas size (rotated with canvas)
+			var _bW = this.width * this.zoomFactor;
+			var _bH = this.height * this.zoomFactor;
+			var _bcx = _bW / 2 - this.scrollX;
+			var _bcy = _bH / 2 - this.scrollY;
+			context.save();
+			context.translate(_bcx, _bcy);
+			context.rotate(this.rotationAngle || 0);
+			context.strokeRect(-_bW / 2, -_bH / 2, _bW, _bH);
+			context.restore();
 
 			//scroll indicators
 			if(this.scrollTimer>0){
@@ -592,12 +622,20 @@
         //todo: document what setTimer is
         plugin.apply_scroll = function(x,y,setTimer){
         	var self = this;
-        	$(self).css("transform","translate(" + -x + "px," + -y + "px)");
+        	var angle = self.rotationAngle || 0;
+        	$(self).css("transform","translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)");
         	self.scrollX = x;
         	self.scrollY = y;
         	if(setTimer==true){
         		self.scrollTimer= 250;
         	}
+        };
+
+        //call this to set canvas rotation angle (radians).
+        plugin.apply_rotation = function(angle){
+        	var self = this;
+        	self.rotationAngle = angle;
+        	$(self).css("transform","translate(" + -self.scrollX + "px," + -self.scrollY + "px) rotate(" + angle + "rad)");
         };
 
         //call this to set zoom. zoomFactor is between 0 and 4.
@@ -760,6 +798,7 @@
 				delete currentCanvas.zoomFactor;
 				delete currentCanvas.scrollX;
 				delete currentCanvas.scrollY;
+				delete currentCanvas.rotationAngle;
 				delete currentCanvas.brushSize;
 				delete currentCanvas.brushAlpha;
 				delete currentCanvas.pen_pressure;
@@ -813,6 +852,7 @@
 				currentCanvas.$memoryCanvas.insertBefore(currentCanvas);
 
 				currentCanvas.plugin = plugin;
+				currentCanvas.rotationAngle = 0;
 
 	        	//set up canvas
         		plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
@@ -927,7 +967,7 @@
 
 /*!
 * jquery.drawrpalette.js
-* https://github.com/lieuweprins/jquery-drawrpalette
+* https://github.com/avokicchi/jquery-drawrpalette
 * Copyright (c) 2019 Lieuwe Prins
 * Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
 */
@@ -1474,7 +1514,101 @@ jQuery.fn.drawr.register({
 		context.lineJoin = 'miter';
 		context.lineWidth = size;
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.fillRect(brush.startPosition.x,brush.startPosition.y,brush.currentPosition.x-brush.startPosition.x,brush.currentPosition.y-brush.startPosition.y);
+		var angle = this.rotationAngle || 0;
+		var sx = brush.startPosition.x, sy = brush.startPosition.y;
+		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
+		if(angle){
+			var cx = this.width/2, cy = this.height/2;
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			context.save();
+			context.translate(cx, cy);
+			context.rotate(-angle);
+			context.translate(-cx, -cy);
+			var dsx = sx-cx, dsy = sy-cy, dex = ex-cx, dey = ey-cy;
+			sx = cx + cos*dsx - sin*dsy;
+			sy = cy + sin*dsx + cos*dsy;
+			ex = cx + cos*dex - sin*dey;
+			ey = cy + sin*dex + cos*dey;
+		}
+		context.fillRect(sx, sy, ex-sx, ey-sy);
+		if(angle){ context.restore(); }
+
+		this.effectCallback = null;
+		return true;
+	},
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
+		brush.currentPosition = {
+			"x" : x,
+			"y" : y
+		};
+	},
+	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
+		var angle = this.rotationAngle || 0;
+		var sx, sy, ex, ey;
+		if(angle){
+			var _W = this.width * adjustzoom;
+			var _H = this.height * adjustzoom;
+			var _cx = _W / 2 - adjustx;
+			var _cy = _H / 2 - adjusty;
+			context.save();
+			context.translate(_cx, _cy);
+			context.rotate(-angle);
+			context.translate(-_cx, -_cy);
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
+			var sRelX = brush.startPosition.x  - this.width/2, sRelY = brush.startPosition.y  - this.height/2;
+			var eRelX = brush.currentPosition.x - this.width/2, eRelY = brush.currentPosition.y - this.height/2;
+			sx = (cos*sRelX - sin*sRelY) * adjustzoom + halfW - adjustx;
+			sy = (sin*sRelX + cos*sRelY) * adjustzoom + halfH - adjusty;
+			ex = (cos*eRelX - sin*eRelY) * adjustzoom + halfW - adjustx;
+			ey = (sin*eRelX + cos*eRelY) * adjustzoom + halfH - adjusty;
+		} else {
+			sx = brush.startPosition.x  * adjustzoom - adjustx;
+			sy = brush.startPosition.y  * adjustzoom - adjusty;
+			ex = brush.currentPosition.x * adjustzoom - adjustx;
+			ey = brush.currentPosition.y * adjustzoom - adjusty;
+		}
+		context.globalAlpha=brush.currentAlpha;
+		context.lineJoin = 'miter';
+		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.fillRect(sx, sy, ex-sx, ey-sy);
+		if(angle){ context.restore(); }
+	}
+});
+
+//effectCallback
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-vector-line mdi-24px",
+	name: "line",
+	size: 3,
+	alpha: 1,
+	order: 9,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
+	activate: function(brush,context){
+
+	},
+	deactivate: function(brush,context){},
+	drawStart: function(brush,context,x,y,size,alpha,event){
+		context.globalCompositeOperation="source-over";
+		brush.currentAlpha = alpha;
+		brush.lineWidth = context.lineWidth = size;
+		brush.startPosition = {
+			"x" : x,
+			"y" : y
+		};
+		context.beginPath();
+		context.moveTo(x, y);
+		this.effectCallback = brush.effectCallback;
+		context.globalAlpha=alpha;
+		context.lineWidth = size;
+	},
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		context.globalAlpha=alpha;
+		context.lineJoin = 'miter';
+		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.lineTo(brush.currentPosition.x, brush.currentPosition.y);
+		context.stroke();
 
 		this.effectCallback = null;
 		return true;
@@ -1488,9 +1622,12 @@ jQuery.fn.drawr.register({
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
 		context.globalAlpha=brush.currentAlpha;
 		context.lineJoin = 'miter';
-		//context.lineWidth = this.brushSize;
-		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.fillRect((brush.startPosition.x*adjustzoom)-adjustx,(brush.startPosition.y*adjustzoom)-adjusty,(brush.currentPosition.x-brush.startPosition.x)*adjustzoom,(brush.currentPosition.y-brush.startPosition.y)*adjustzoom);
+		context.lineWidth = brush.lineWidth;
+		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.beginPath();
+		context.moveTo((brush.startPosition.x*adjustzoom)-adjustx, (brush.startPosition.y*adjustzoom)-adjusty);
+		context.lineTo((brush.currentPosition.x*adjustzoom)-adjustx, (brush.currentPosition.y*adjustzoom)-adjusty);
+		context.stroke();
 	}
 });
 
@@ -1700,6 +1837,90 @@ jQuery.fn.drawr.register({
 	}
 });
 jQuery.fn.drawr.register({
+
+	icon: "mdi mdi-rotate-right mdi-24px",
+	name: "rotate",
+	order: 11,
+
+	activate: function(brush,context){
+		$(this).parent().css({"cursor":"crosshair"});
+	},
+	deactivate: function(brush,context){
+		$(this).parent().css({"cursor":"default"});
+	},
+	//reads raw page coordinates to compute angle from canvas center.
+	drawStart: function(brush,context,x,y,size,alpha,event){
+
+
+		var self = this;
+		var parent = $(self).parent()[0];
+		var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
+		var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
+		var box = parent.getBoundingClientRect();
+
+		var eventX, eventY;
+		if(event.type=="touchmove" || event.type=="touchstart"){
+			eventX = event.originalEvent.touches[0].pageX;
+			eventY = event.originalEvent.touches[0].pageY;
+		} else {
+			eventX = event.pageX;
+			eventY = event.pageY;
+		}
+
+		//click position
+		var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
+		var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
+
+		//canvas center
+		var W = self.width * self.zoomFactor;
+		var H = self.height * self.zoomFactor;
+		var cx = W / 2 - self.scrollX;
+		var cy = H / 2 - self.scrollY;
+
+		brush.startAngle = Math.atan2(py - cy, px - cx);
+		brush.startRotation=self.rotationAngle || 0;
+
+	},
+
+	drawSpot: function(brush,context,x,y,size,alpha,event){
+
+		var self = this;
+		var parent = $(self).parent()[0];
+		/*
+		var rect = parent.getBoundingClientRect();
+		 
+		*/
+		var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
+		var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
+		var box = parent.getBoundingClientRect();
+
+		var eventX, eventY;
+		if(event.type=="touchmove" || event.type=="touchstart"){
+			eventX = event.originalEvent.touches[0].pageX;
+			eventY = event.originalEvent.touches[0].pageY;
+		} else {
+			eventX = event.pageX;
+			eventY = event.pageY;
+		}
+
+		var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
+		var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
+
+		var W = self.width * self.zoomFactor;
+		var H = self.height * self.zoomFactor;
+		var cx = W / 2 - self.scrollX;
+		var cy = H / 2 - self.scrollY;
+
+		var currentAngle = Math.atan2(py - cy, px - cx);
+		var delta = currentAngle - brush.startAngle;
+
+		self.plugin.apply_rotation.call(self, brush.startRotation + delta);
+
+	}
+
+});
+
+jQuery.fn.drawr.register({
 	icon: "mdi mdi-vector-square mdi-24px",
 	name: "square",
 	size: 3,
@@ -1727,7 +1948,24 @@ jQuery.fn.drawr.register({
 		context.lineJoin = 'miter';
 		context.lineWidth = size;
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.strokeRect(brush.startPosition.x,brush.startPosition.y,brush.currentPosition.x-brush.startPosition.x,brush.currentPosition.y-brush.startPosition.y);
+		var angle = this.rotationAngle || 0;
+		var sx = brush.startPosition.x, sy = brush.startPosition.y;
+		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
+		if(angle){
+			var cx = this.width/2, cy = this.height/2;
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			context.save();
+			context.translate(cx, cy);
+			context.rotate(-angle);
+			context.translate(-cx, -cy);
+			var dsx = sx-cx, dsy = sy-cy, dex = ex-cx, dey = ey-cy;
+			sx = cx + cos*dsx - sin*dsy;
+			sy = cy + sin*dsx + cos*dsy;
+			ex = cx + cos*dex - sin*dey;
+			ey = cy + sin*dex + cos*dey;
+		}
+		context.strokeRect(sx, sy, ex-sx, ey-sy);
+		if(angle){ context.restore(); }
 
 		this.effectCallback = null;
 		return true;
@@ -1739,11 +1977,37 @@ jQuery.fn.drawr.register({
 		};
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
-		context.globalAlpha = brush.currentAlpha;//brush.currentAlpha;
+		var angle = this.rotationAngle || 0;
+		var sx, sy, ex, ey;
+		if(angle){
+			var _W = this.width * adjustzoom;
+			var _H = this.height * adjustzoom;
+			var _cx = _W / 2 - adjustx;
+			var _cy = _H / 2 - adjusty;
+			context.save();
+			context.translate(_cx, _cy);
+			context.rotate(-angle);
+			context.translate(-_cx, -_cy);
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
+			var sRelX = brush.startPosition.x  - this.width/2, sRelY = brush.startPosition.y  - this.height/2;
+			var eRelX = brush.currentPosition.x - this.width/2, eRelY = brush.currentPosition.y - this.height/2;
+			sx = (cos*sRelX - sin*sRelY) * adjustzoom + halfW - adjustx;
+			sy = (sin*sRelX + cos*sRelY) * adjustzoom + halfH - adjusty;
+			ex = (cos*eRelX - sin*eRelY) * adjustzoom + halfW - adjustx;
+			ey = (sin*eRelX + cos*eRelY) * adjustzoom + halfH - adjusty;
+		} else {
+			sx = brush.startPosition.x  * adjustzoom - adjustx;
+			sy = brush.startPosition.y  * adjustzoom - adjusty;
+			ex = brush.currentPosition.x * adjustzoom - adjustx;
+			ey = brush.currentPosition.y * adjustzoom - adjusty;
+		}
+		context.globalAlpha = brush.currentAlpha;
 		context.lineWidth = brush.currentSize*adjustzoom;
 		context.lineJoin = 'miter';
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.strokeRect((brush.startPosition.x*adjustzoom)-adjustx,(brush.startPosition.y*adjustzoom)-adjusty,(brush.currentPosition.x-brush.startPosition.x)*adjustzoom,(brush.currentPosition.y-brush.startPosition.y)*adjustzoom);
+		context.strokeRect(sx, sy, ex-sx, ey-sy);
+		if(angle){ context.restore(); }
 	}
 });
 
@@ -1765,6 +2029,17 @@ jQuery.fn.drawr.register({
 			delete brush.$floatyBox;
 		}
 	},
+	canvasToViewport: function(x, y){
+		//helper to make translation a bit more readable
+		var angle = this.rotationAngle || 0;
+		var cx = this.width / 2, cy = this.height / 2;
+		var dx = x - cx, dy = y - cy;
+		var cos = Math.cos(angle), sin = Math.sin(angle);
+		return {
+			x: (cos*dx - sin*dy) * this.zoomFactor + cx*this.zoomFactor - this.scrollX,
+			y: (sin*dx + cos*dy) * this.zoomFactor + cy*this.zoomFactor - this.scrollY
+		};
+	},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		var self=this;
 		brush.currentPosition = {
@@ -1776,9 +2051,10 @@ jQuery.fn.drawr.register({
 			var fontSizeForDisplay= parseInt(20 * self.zoomFactor);
 			brush.$floatyBox = $('<div style="z-index:6;position:absolute;width:100px;height:20px;"><input style="background:transparent;border:0px;padding:0px;font-size:' + fontSizeForDisplay + 'px;font-family:sans-serif;" type="text" value=""><button class="ok"><i class="mdi mdi-check"></i></button><button class="cancel"><i class="mdi mdi-close"></i></button></div>');
 			$(brush.$floatyBox).insertAfter($(this).parent());
+			var vp = brush.canvasToViewport.call(self, x, y);
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + (x*self.zoomFactor) - this.scrollX,
-				top: $(this).parent().offset().top + (y*self.zoomFactor) - this.scrollY,
+				left: $(this).parent().offset().left + vp.x,
+				top: $(this).parent().offset().top + vp.y,
 			});
 			brush.$floatyBox.find("input").on("mousedown touchstart",function(e){
 				e.preventDefault();
@@ -1802,17 +2078,32 @@ jQuery.fn.drawr.register({
 				delete brush.$floatyBox;
 			});
 		} else {
+			var vp = brush.canvasToViewport.call(self, x, y);
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + (x*self.zoomFactor) - this.scrollX,
-				top: $(this).parent().offset().top + (y*self.zoomFactor) - this.scrollY,
+				left: $(this).parent().offset().left + vp.x,
+				top: $(this).parent().offset().top + vp.y,
 			});
 		}
 	},
 	applyText: function(context,brush,x,y,text){
 		context.font = "20px sans-serif";
-		context.textAlign = "left"; 
+		context.textAlign = "left";
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-		context.fillText(text, x-2, y+19);
+		var angle = this.rotationAngle || 0;
+		var drawX = x - 2, drawY = y + 19;
+		if(angle){
+			var cx = this.width / 2, cy = this.height / 2;
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			context.save();
+			context.translate(cx, cy);
+			context.rotate(-angle);
+			context.translate(-cx, -cy);
+			var dx = drawX - cx, dy = drawY - cy;
+			drawX = cx + cos*dx - sin*dy;
+			drawY = cy + sin*dx + cos*dy;
+		}
+		context.fillText(text, drawX, drawY);
+		if(angle){ context.restore(); }
 		this.plugin.record_undo_entry.call(this);
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
@@ -1820,15 +2111,16 @@ jQuery.fn.drawr.register({
 			"x" : x,
 			"y" : y
 		};
-		if(typeof brush.$floatyBox=="undefined"){
-
-		} else {
+		if(typeof brush.$floatyBox!=="undefined"){
+			var vp = brush.canvasToViewport.call(this, x, y);
 			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + (x*this.zoomFactor) - this.scrollX,
-				top: $(this).parent().offset().top + (y*this.zoomFactor) - this.scrollY,
+				left: $(this).parent().offset().left + vp.x,
+				top: $(this).parent().offset().top + vp.y,
 			});
 		}
 	}
 });
 
 //effectCallback
+  return $;
+}));

@@ -1,6 +1,6 @@
 /*!
 * jquery.drawr.js
-* https://github.com/lieuweprins/jquery-drawr
+* https://github.com/avokicchi/jquery-drawr
 * Copyright (c) 2019 Lieuwe Prins
 * Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
 */
@@ -88,8 +88,9 @@
 					top: 0 
 				};			
 			}
+			var x, y, pressure;
 			if(event.type=="touchmove" || event.type=="touchstart"){
-				var pressure = typeof event.originalEvent.touches[0].force!=="undefined" ? event.originalEvent.touches[0].force : 1;
+				pressure = typeof event.originalEvent.touches[0].force!=="undefined" ? event.originalEvent.touches[0].force : 1;
 				if(typeof event.originalEvent.touches[0].touchType!=="undefined" && event.originalEvent.touches[0].touchType=="stylus"){
 					this.pen_pressure=true;
 				} else {
@@ -101,10 +102,31 @@
 					}
 				}
 				if(pressure==0 && this.pen_pressure==false) pressure = 1;
-				return { x: (event.originalEvent.touches[0].pageX-bounding_box.left)/this.zoomFactor, y: (event.originalEvent.touches[0].pageY-bounding_box.top)/this.zoomFactor, pressure: this.pen_pressure ? pressure : 1 };
+				x = (event.originalEvent.touches[0].pageX-bounding_box.left)/this.zoomFactor;
+				y = (event.originalEvent.touches[0].pageY-bounding_box.top)/this.zoomFactor;
+				pressure = this.pen_pressure ? pressure : 1;
 			} else {
-				return { x: (event.pageX - bounding_box.left)/this.zoomFactor, y: (event.pageY-bounding_box.top)/this.zoomFactor, pressure: 1 };
+				x = (event.pageX - bounding_box.left)/this.zoomFactor;
+				y = (event.pageY-bounding_box.top)/this.zoomFactor;
+				pressure = 1;
 			}
+			//apply inverse canvas rotation 
+			if(typeof relativeTo!=="undefined" && relativeTo!==null && this.rotationAngle){
+				var angle = this.rotationAngle;
+                var W = this.width * this.zoomFactor;
+				var H = this.height * this.zoomFactor;
+				var dx = x * this.zoomFactor - W / 2;
+				var dy = y * this.zoomFactor - H / 2;
+				var cos = Math.cos(-angle);
+				var sin = Math.sin(-angle);
+				x= (dx * cos - dy * sin + W / 2)/this.zoomFactor;
+				y= (dx * sin + dy * cos + H / 2)/this.zoomFactor;
+			}
+			return { 
+				x: x,
+				 y: y, 
+				 pressure: pressure 
+			};
 		};
 		plugin.draw_hsl = function(hue,canvas){
 			var ctx = canvas.getContext('2d');
@@ -129,28 +151,25 @@
 			//used to check if an initial click or touch start event is valid inside the container
 			//and needs to be tracked through move/end events.
 			self.boundCheck = function(event){
+				//new rotation-aware hit test
 				var parent = $(self).parent()[0];
-
-				var box = self.getBoundingClientRect();
-				box.x += $(document).scrollLeft();
-				box.y += $(document).scrollTop();
-
-				var canvasRect = {
-					left: box.x,
-					top: box.y,
-					width: $(self).parent()[0].offsetWidth - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-right-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width")),
-					height: $(self).parent()[0].offsetHeight - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-bottom-width")) - parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"))
-				};
-				canvasRect.left += self.scrollX;
-				canvasRect.top += self.scrollY;
-				var mouse_data = plugin.get_mouse_data.call(self,event);
-
-				if(mouse_data.x*self.zoomFactor>canvasRect.left && mouse_data.x*self.zoomFactor<(canvasRect.left + canvasRect.width) && mouse_data.y*self.zoomFactor>canvasRect.top && mouse_data.y*self.zoomFactor<(canvasRect.top + canvasRect.height)){
-					return true;
-				} else {
-					return false;
-				}
-
+				var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
+				var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
+				var box = parent.getBoundingClientRect();
+				var eventX = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].pageX : event.pageX;
+				var eventY = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].pageY : event.pageY;
+				var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
+				var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
+				var W = self.width * self.zoomFactor;
+				var H = self.height * self.zoomFactor;
+				var angle = self.rotationAngle || 0;
+				var dx = px - (W / 2 - self.scrollX);
+				var dy = py - (H / 2 - self.scrollY);
+				var cos = Math.cos(-angle);
+				var sin = Math.sin(-angle);
+				var canvasX = (dx * cos - dy * sin + W / 2) / self.zoomFactor;
+				var canvasY = (dx * sin + dy * cos + H / 2) / self.zoomFactor;
+				return canvasX >= 0 && canvasX <= self.width && canvasY >= 0 && canvasY <= self.height;
 			};
 
 			//handles touchstart and mousedown. sets the important is_drawing flag if drawing started within the canvas area
@@ -268,7 +287,7 @@
 
 			$(window).bind("touchmove.drawr mousemove.drawr", self.drawMove);
 
-			//hanldes mouseup and touchend to finish drawing. disables is_drawing flag, 
+			//handles mouseup and touchend to finish drawing. disables is_drawing flag, 
 			//and on some tools finalizes transfer of what was drawn on the fx canvas to the main canvas
 			//stops toolbox drag
 			self.drawStop = function(e){
@@ -410,6 +429,7 @@
 			
 			if(reset==true){
 				this.zoomFactor = 1;
+				this.rotationAngle = 0;
 				if(typeof this.$zoomToolbox!=="undefined") this.$zoomToolbox.find("input").val(100).trigger("input");
 				plugin.apply_scroll.call(this,0,0,false);
 				$(this).width(width);
@@ -466,8 +486,8 @@
 
         };
 
-        //todo: document what this does. it is named strangely.
-        //at least seems to involve drawing the guide lines of where the drawing area ends.
+        //this is basically the animation/drawing loop. 
+        //involves drawing the guide lines of where the drawing area ends.
         //and the scroll indicators.
         plugin.draw_animations = function(){
         	if(!$(this).hasClass("active-drawr")) return;//end drawing loop
@@ -475,7 +495,16 @@
         	context.clearRect(0,0,this.$memoryCanvas[0].width,this.$memoryCanvas[0].height);
  
         	if(typeof this.effectCallback!=="undefined" && this.effectCallback!==null){
+        		var _W = this.width * this.zoomFactor;
+        		var _H = this.height * this.zoomFactor;
+        		var _cx = _W / 2 - this.scrollX;
+        		var _cy = _H / 2 - this.scrollY;
+        		context.save();
+        		context.translate(_cx, _cy);
+        		context.rotate(this.rotationAngle || 0);
+        		context.translate(-_cx, -_cy);
         		this.effectCallback.call(this,context,this.active_brush,this.scrollX,this.scrollY,this.zoomFactor);
+        		context.restore();
         	}
 
         	var container_width = $(this).parent().width();
@@ -486,27 +515,16 @@
 			context.lineJoin = context.lineCap = "round";
 			context.strokeStyle = "black";
 
-			//draw lines outlining canvas size
-
-			context.beginPath(); 
-			context.moveTo(0,-1-this.scrollY);
-			context.lineTo(this.width,-1-this.scrollY);
-			context.stroke();
-
-    		context.beginPath(); 
-			context.moveTo(0,(this.height*this.zoomFactor)-this.scrollY);
-			context.lineTo(this.width,(this.height*this.zoomFactor)-this.scrollY);
-			context.stroke();
-
-			context.beginPath(); 
-			context.moveTo(-1-this.scrollX,0);
-			context.lineTo(-1-this.scrollX,this.height);
-			context.stroke();
-
-    		context.beginPath(); 
-			context.moveTo((this.width*this.zoomFactor)-this.scrollX,0);
-			context.lineTo((this.width*this.zoomFactor)-this.scrollX,this.height);
-			context.stroke();
+			//draw lines outlining canvas size (rotated with canvas)
+			var _bW = this.width * this.zoomFactor;
+			var _bH = this.height * this.zoomFactor;
+			var _bcx = _bW / 2 - this.scrollX;
+			var _bcy = _bH / 2 - this.scrollY;
+			context.save();
+			context.translate(_bcx, _bcy);
+			context.rotate(this.rotationAngle || 0);
+			context.strokeRect(-_bW / 2, -_bH / 2, _bW, _bH);
+			context.restore();
 
 			//scroll indicators
 			if(this.scrollTimer>0){
@@ -592,12 +610,20 @@
         //todo: document what setTimer is
         plugin.apply_scroll = function(x,y,setTimer){
         	var self = this;
-        	$(self).css("transform","translate(" + -x + "px," + -y + "px)");
+        	var angle = self.rotationAngle || 0;
+        	$(self).css("transform","translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)");
         	self.scrollX = x;
         	self.scrollY = y;
         	if(setTimer==true){
         		self.scrollTimer= 250;
         	}
+        };
+
+        //call this to set canvas rotation angle (radians).
+        plugin.apply_rotation = function(angle){
+        	var self = this;
+        	self.rotationAngle = angle;
+        	$(self).css("transform","translate(" + -self.scrollX + "px," + -self.scrollY + "px) rotate(" + angle + "rad)");
         };
 
         //call this to set zoom. zoomFactor is between 0 and 4.
@@ -760,6 +786,7 @@
 				delete currentCanvas.zoomFactor;
 				delete currentCanvas.scrollX;
 				delete currentCanvas.scrollY;
+				delete currentCanvas.rotationAngle;
 				delete currentCanvas.brushSize;
 				delete currentCanvas.brushAlpha;
 				delete currentCanvas.pen_pressure;
@@ -813,6 +840,7 @@
 				currentCanvas.$memoryCanvas.insertBefore(currentCanvas);
 
 				currentCanvas.plugin = plugin;
+				currentCanvas.rotationAngle = 0;
 
 	        	//set up canvas
         		plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
