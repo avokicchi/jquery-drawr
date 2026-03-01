@@ -46,8 +46,8 @@ jQuery.fn.drawr.register({
 		context.lineWidth = brush.lineWidth;
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 		context.beginPath();
-		context.moveTo((brush.startPosition.x-adjustx)*adjustzoom, (brush.startPosition.y-adjusty)*adjustzoom);
-		context.lineTo((brush.currentPosition.x-adjustx)*adjustzoom, (brush.currentPosition.y-adjusty)*adjustzoom);
+		context.moveTo((brush.startPosition.x*adjustzoom)-adjustx, (brush.startPosition.y*adjustzoom)-adjusty);
+		context.lineTo((brush.currentPosition.x*adjustzoom)-adjustx, (brush.currentPosition.y*adjustzoom)-adjusty);
 		context.stroke();
 	}
 });
