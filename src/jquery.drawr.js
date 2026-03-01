@@ -1,6 +1,6 @@
 /*!
 * jquery.drawr.js
-* https://github.com/lieuweprins/jquery-drawr
+* https://github.com/avokicchi/jquery-drawr
 * Copyright (c) 2019 Lieuwe Prins
 * Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
 */

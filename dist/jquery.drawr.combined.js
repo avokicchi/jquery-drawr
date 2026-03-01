@@ -1,6 +1,18 @@
+(function (root, factory) {
+  if (typeof define === "function" && define.amd) {
+    define(["jquery"], factory);
+  } else if (typeof module === "object" && module.exports) {
+    module.exports = factory(require("jquery"));
+  } else {
+    factory(root.jQuery);
+  }
+}(typeof self !== "undefined" ? self : this, function ($) {
+  //"use strict";
+  if (!$) throw new Error("jquery-drawr requires jQuery");
+  var jQuery = $;
 /*!
 * jquery.drawr.js
-* https://github.com/lieuweprins/jquery-drawr
+* https://github.com/avokicchi/jquery-drawr
 * Copyright (c) 2019 Lieuwe Prins
 * Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
 */
@@ -955,7 +967,7 @@
 
 /*!
 * jquery.drawrpalette.js
-* https://github.com/lieuweprins/jquery-drawrpalette
+* https://github.com/avokicchi/jquery-drawrpalette
 * Copyright (c) 2019 Lieuwe Prins
 * Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
 */
@@ -2110,3 +2122,5 @@ jQuery.fn.drawr.register({
 });
 
 //effectCallback
+  return $;
+}));

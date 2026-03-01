@@ -1,26 +1,42 @@
 {
   "name": "jquery-drawr",
-  "version": "1.0.0",
+  "version": "0.5.1",
   "description": "Transform any canvas into a drawing area",
-  "main": "gulpfile.js",
-  "dependencies": {
-    "gulp": "^4.0.2"
-  },
-  "devDependencies": {
-    "gulp-concat": "^2.6.1",
-    "gulp-minify": "^3.1.0"
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "main": "dist/jquery.drawr.combined.js",
+  "unpkg": "dist/jquery.drawr.combined-min.js",
+  "jsdelivr": "dist/jquery.drawr.combined-min.js",
+  "keywords": [
+    "jquery",
+    "jquery-plugin",
+    "canvas",
+    "drawing"
+  ],
+  "license": "MIT",
+  "author": "Lieuwe Prins",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lieuweprins/jquery-drawr.git"
+    "url": "git+https://github.com/avokicchi/jquery-drawr.git"
   },
-  "author": "Lieuwe Prins",
-  "license": "MIT",
   "bugs": {
-    "url": "https://github.com/lieuweprins/jquery-drawr/issues"
+    "url": "https://github.com/avokicchi/jquery-drawr/issues"
   },
-  "homepage": "https://github.com/lieuweprins/jquery-drawr#readme"
+  "homepage": "https://github.com/avokicchi/jquery-drawr#readme",
+  "peerDependencies": {
+    "jquery": ">=1.7"
+  },
+  "devDependencies": {
+    "gulp": "^4.0.2",
+    "gulp-concat": "^2.6.1",
+    "gulp-rename": "^2.1.0",
+    "gulp-terser": "^2.1.0"
+  },
+  "scripts": {
+    "build": "gulp",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ]
 }
