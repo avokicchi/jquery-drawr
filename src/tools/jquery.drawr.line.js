@@ -43,7 +43,7 @@ jQuery.fn.drawr.register({
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
 		context.globalAlpha=brush.currentAlpha;
 		context.lineJoin = 'miter';
-		context.lineWidth = brush.lineWidth;
+		context.lineWidth = brush.lineWidth*adjustzoom;
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 		context.beginPath();
 		context.moveTo((brush.startPosition.x*adjustzoom)-adjustx, (brush.startPosition.y*adjustzoom)-adjusty);

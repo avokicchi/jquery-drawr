@@ -1,6 +1,6 @@
 {
   "name": "jquery-drawr",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Transform any canvas into a drawing area",
   "main": "dist/jquery.drawr.combined.js",
   "unpkg": "dist/jquery.drawr.combined-min.js",
