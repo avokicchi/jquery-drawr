@@ -3,7 +3,7 @@ JQuery dRawr is a jquery plugin to turn any canvas element into a drawing area w
 
 Screenshot:
 
-![screenshot of canvas](https://rawrfl.es/jquery-drawr/images/canvas.jpg "Screenshot of canvas with tools")
+![screenshot of canvas](https://rawrfl.es/jquery-drawr/images/canvas2.jpg "Screenshot of canvas with tools")
 
 Usage:
 
