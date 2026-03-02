@@ -7,23 +7,21 @@
 
 (function( $ ) {
  
-    $.fn.drawr = function( action, param ) {
-    	var plugin = this;
-    	//Image to represent transparency (two blocks of gray and white)
-    	var tspImg="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAIAAAAC64paAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAB3RJTUUH4wUIDDYyGYFdggAAAC5JREFUOMtjfPXqFQNuICoqikeWiYECMKp5ZGhm/P//Px7p169fjwbYqGZKNAMA5EEI4kUyPZcAAAAASUVORK5CYII=";
-    	plugin.distance_between = function(p1, p2) {
+	$.fn.drawr = function( action, param ) {
+		var plugin = this;
+		plugin.distance_between = function(p1, p2) {
 		  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
 		};
 		plugin.angle_between = function(p1, p2) {
 		  return Math.atan2( p2.x - p1.x, p2.y - p1.y );
 		};
 		plugin.hex_to_rgb = function (hex) {
-		    var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-		    return result ? {
-		        r: parseInt(result[1], 16),
-		        g: parseInt(result[2], 16),
-		        b: parseInt(result[3], 16)
-		    } : null;
+			var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+			return result ? {
+				r: parseInt(result[1], 16),
+				g: parseInt(result[2], 16),
+				b: parseInt(result[3], 16)
+			} : null;
 		};
 		//keeps track of last 25 mouse or stylus events to determine majority, and ignore unintended touches by wrist.
 		plugin.eventArr = [];
@@ -113,7 +111,7 @@
 			//apply inverse canvas rotation 
 			if(typeof relativeTo!=="undefined" && relativeTo!==null && this.rotationAngle){
 				var angle = this.rotationAngle;
-                var W = this.width * this.zoomFactor;
+				var W = this.width * this.zoomFactor;
 				var H = this.height * this.zoomFactor;
 				var dx = x * this.zoomFactor - W / 2;
 				var dy = y * this.zoomFactor - H / 2;
@@ -137,13 +135,13 @@
 				ctx.fillStyle=grad;
 				ctx.fillRect(0, row, 100, 1);
 			}	
-	    };
+		};
 		plugin.is_dragging = false;
 
 		//Binds touch event listeners to the canvas's parent container
-        plugin.bind_draw_events = function(){
-        	var self=this;
-        	var context = self.getContext("2d", { alpha: self.settings.enable_transparency });
+		plugin.bind_draw_events = function(){
+			var self=this;
+			var context = self.getContext("2d", { alpha: self.settings.enable_transparency });
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
 			$(self).parent().on("touchstart.drawr", function(e){ e.preventDefault(); });//cancel scroll.
 
@@ -172,6 +170,14 @@
 				return canvasX >= 0 && canvasX <= self.width && canvasY >= 0 && canvasY <= self.height;
 			};
 
+			self.containerBoundCheck = function(event){
+				var parent = $(self).parent()[0];
+				var box = parent.getBoundingClientRect();
+				var eventX = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].clientX : event.originalEvent.clientX;
+				var eventY = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].clientY : event.originalEvent.clientY;
+				return eventX >= box.left && eventX <= box.right && eventY >= box.top && eventY <= box.bottom;
+			};
+
 			//handles touchstart and mousedown. sets the important is_drawing flag if drawing started within the canvas area
 			//this is important as drawing continues even when you leave, as long as it started in a valid area. 
 			//calls plugin drawStart and drawSpot functions
@@ -179,28 +185,64 @@
 				var mouse_data = plugin.get_mouse_data.call(self,e);
 
 				if(plugin.check_ignore(e)==true) return;
+				//console.warn(e.button);
 
-				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true){//yay! We're drawing!
+				//right-mouse drag: enter paning mode
+				if(e.type === "mousedown" && e.button === 2){
+					if(self.containerBoundCheck.call(self, e)){
+						self.isRightDragging = true;
+						//console.warn("right drag: start");
+						self.rightDragStart = { x: e.pageX, y: e.pageY, scrollX: self.scrollX, scrollY: self.scrollY };
+					}
+					return;
+				}
+
+				//pinch: save snapshot and enter gesture mode
+				if(e.type === "touchstart" && e.originalEvent.touches.length >= 2){
+					//erase any dot drawn by the first touch before the gesture was detected
+					if(self._gestureAbortSnapshot){
+						context.putImageData(self._gestureAbortSnapshot, 0, 0);
+						self._gestureAbortSnapshot = null;
+					}
+					var t1 = e.originalEvent.touches[0], t2 = e.originalEvent.touches[1];
+					self.gestureStart = {
+						dist:	 plugin.distance_between({x:t1.pageX,y:t1.pageY},{x:t2.pageX,y:t2.pageY}),
+						angle:	Math.atan2(t2.pageY - t1.pageY, t2.pageX - t1.pageX),
+						zoom:	 self.zoomFactor,
+						rotation: self.rotationAngle || 0,
+						midX:	 (t1.pageX + t2.pageX) / 2,
+						midY:	 (t1.pageY + t2.pageY) / 2,
+						scrollX:  self.scrollX,
+						scrollY:  self.scrollY
+					};
+					self.isGesturing = true;
+					$(self).data("is_drawing", false);
+					return;
+				}
+
+				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true && self.containerBoundCheck.call(self,e)==true){//yay! We're drawing!
 					if(plugin.is_dragging==false){
 						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
+						//save snapshot so the next gesture detection can erase this stroke start
+						if(e.type === "touchstart") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
 					//	alert(context.lineCap);
 						context.lineCap = "round";context.lineJoin = 'round';
 
 						//calculate alpha
-	 					var calculatedAlpha = self.brushAlpha;
-	 					if(self.active_brush.pressure_affects_alpha==true){
-						 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
-						 	if(calculatedAlpha>1) calculatedAlpha = 1;
+						 var calculatedAlpha = self.brushAlpha;
+						 if(self.active_brush.pressure_affects_alpha==true){
+							 calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+							 if(calculatedAlpha>1) calculatedAlpha = 1;
 						}
 						var calculatedSize = self.active_brush.size;
-	 					if(self.active_brush.pressure_affects_size==true){
-						 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
-						 	if(calculatedSize<1) calculatedSize = 1;
+						 if(self.active_brush.pressure_affects_size==true){
+							 calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+							 if(calculatedSize<1) calculatedSize = 1;
 						}
 
 						//context.lineWidth
-	 					//context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
+						 //context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
 						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
@@ -213,10 +255,48 @@
 			//also handles toolbox dragging
 			self.drawMove = function(e){
 
-				var bound_check = self.boundCheck.call(self,e);
+				//apply pinch zoom and rotation while gesturing
+				if(self.isGesturing){
+					var touches = e.originalEvent && e.originalEvent.touches;
+					if(touches && touches.length >= 2){
+						var t1 = touches[0], t2 = touches[1];
+						var gs = self.gestureStart;
+						var newDist  = plugin.distance_between({x:t1.pageX,y:t1.pageY},{x:t2.pageX,y:t2.pageY});
+						var newAngle = Math.atan2(t2.pageY - t1.pageY, t2.pageX - t1.pageX);
+						var newZoom  = Math.max(0.1, Math.min(5, gs.zoom * (newDist / gs.dist)));
+						var newMidX  = (t1.pageX + t2.pageX) / 2;
+						var newMidY  = (t1.pageY + t2.pageY) / 2;
+						//console.warn(touches)
+						//console.warn(newDist,newAngle,newZoom,newMidX,newMidY)
+						/*keep the canvas point under the initial pinch centre pinned to the
+						current finger midpoint, conmbine zoom-centering and panning in one step */
+						var rect  = $(self).parent()[0].getBoundingClientRect();
+						var cLeft = rect.left + window.scrollX;
+						var cTop  = rect.top  + window.scrollY;
+						var newScrollX = (gs.midX - cLeft + gs.scrollX) * (newZoom / gs.zoom) - (newMidX - cLeft);
+						var newScrollY = (gs.midY - cTop  + gs.scrollY) * (newZoom / gs.zoom) - (newMidY - cTop);
+						self.zoomFactor = newZoom;
+						$(self).width(self.width * newZoom);
+						$(self).height(self.height * newZoom);
+						plugin.draw_checkerboard.call(self);
+						plugin.apply_scroll.call(self, newScrollX, newScrollY, true);
+						plugin.apply_rotation.call(self, gs.rotation + (newAngle - gs.angle));
+					}
+					return;
+				}
+
+				//right-mouse drag: pan the canvas
+				if(self.isRightDragging){
+					var dx = e.pageX - self.rightDragStart.x;
+					var dy = e.pageY - self.rightDragStart.y;
+					plugin.apply_scroll.call(self, self.rightDragStart.scrollX - dx, self.rightDragStart.scrollY - dy, false);
+					return;
+				}
+
+				var bound_check = self.boundCheck.call(self,e) && self.containerBoundCheck.call(self,e);
 
 				if(bound_check){
-					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue";
+					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue inset";
 				} else {
 					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="";
 				}
@@ -229,40 +309,41 @@
 					var currentSpot = {x:mouse_data.x,y:mouse_data.y};
 					var lastSpot=positions[positions.length-1];
 					var dist = plugin.distance_between(lastSpot, currentSpot);
- 					var angle = plugin.angle_between(lastSpot, currentSpot);
+					 var angle = plugin.angle_between(lastSpot, currentSpot);
 
- 					var calculatedAlpha = self.brushAlpha;
- 					if(self.active_brush.pressure_affects_alpha==true){
-					 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
-					 	if(calculatedAlpha>1) calculatedAlpha = 1;
+					 var calculatedAlpha = self.brushAlpha;
+					 if(self.active_brush.pressure_affects_alpha==true){
+						 calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+						 if(calculatedAlpha>1) calculatedAlpha = 1;
 					}
 					var calculatedSize = self.active_brush.size;
- 					if(self.active_brush.pressure_affects_size==true){
-					 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
-					 	if(calculatedSize<1) calculatedSize = 1;
+					 if(self.active_brush.pressure_affects_size==true){
+						 calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+						 if(calculatedSize<1) calculatedSize = 1;
 					}
 
- 					var stepSize = calculatedSize/6;
+					 var stepSize = calculatedSize/6;
 
- 					if(stepSize<1) stepSize = 1;
- 					//advance along the line between last spot and current spot using a^2 + b^2 = c^2 nonsense.
+					 if(stepSize<1) stepSize = 1;
+					 //advance along the line between last spot and current spot using a^2 + b^2 = c^2 nonsense.
 					for (var i = stepSize; i < dist; i+=stepSize) {
-					    x = lastSpot.x + (Math.sin(angle) * i);
-					    y = lastSpot.y + (Math.cos(angle) * i);
+						x = lastSpot.x + (Math.sin(angle) * i);
+						y = lastSpot.y + (Math.cos(angle) * i);
 						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,calculatedAlpha,e);
-					    positions.push({x:x,y:y});
+						positions.push({x:x,y:y});
 					}
 					$(self).data("positions",positions);
 				}
-				mouse_data = plugin.get_mouse_data.call(self,e);
+				var tbPageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
+				var tbPageY = e.pageY || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageY) || 0;
 				$(".drawr-toolbox").each(function(){
-	        		if($(this).data("dragging")==true){
-	        			$(this).offset({
-			                top: (mouse_data.y - $(this).data("offsety")) * self.zoomFactor,
-			                left: (mouse_data.x - $(this).data("offsetx")) * self.zoomFactor
-			            });
-	        		}
-	        	});
+					if($(this).data("dragging")==true){
+						$(this).offset({
+							top: tbPageY - $(this).data("offsety"),
+							left: tbPageX - $(this).data("offsetx")
+						});
+					}
+				});
 			};
 
 			if(this.settings.enable_scrollwheel_zooming==true){
@@ -277,13 +358,18 @@
 					}
 
 					var newZoomies = self.zoomFactor + delta;
-					plugin.apply_zoom.call(self,newZoomies);
+					var containerOffset = $(self).parent().offset();
+					var focalX = e.pageX - containerOffset.left;
+					var focalY = e.pageY - containerOffset.top;
+					//console.warn("zoomlevel: ",newZoomies);
+					plugin.apply_zoom.call(self, newZoomies, focalX, focalY);
 				};
 				$(self).parent().on("wheel.drawr", function(e){ 
 					e.preventDefault(); 
 					self.scrollWheel(e);
 				});
 			}
+			$(self).parent().on("contextmenu.drawr", function(e){ e.preventDefault(); });
 
 			$(window).bind("touchmove.drawr mousemove.drawr", self.drawMove);
 
@@ -291,20 +377,37 @@
 			//and on some tools finalizes transfer of what was drawn on the fx canvas to the main canvas
 			//stops toolbox drag
 			self.drawStop = function(e){
+
+				//end gesture mode when fewer than two touches remain
+				if(self.isGesturing){
+					var remaining = e.originalEvent && e.originalEvent.touches;
+					if(!remaining || remaining.length < 2) self.isGesturing = false;
+
+					return;
+				}
+
+				//right-mouse drag: end pan mode
+				if(self.isRightDragging){
+					
+					//console.warn("right drag: end");
+					self.isRightDragging = false;
+					return;
+				}
+
 				if($(self).data("is_drawing")==true){
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
 				
 					//if(plugin.check_ignore(e)==true) return;
 
- 					var calculatedAlpha = self.brushAlpha;
- 					if(self.active_brush.pressure_affects_alpha==true){
-					 	calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
-					 	if(calculatedAlpha>1) calculatedAlpha = 1;
+					 var calculatedAlpha = self.brushAlpha;
+					 if(self.active_brush.pressure_affects_alpha==true){
+						 calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
+						 if(calculatedAlpha>1) calculatedAlpha = 1;
 					}
 					var calculatedSize = self.active_brush.size;
- 					if(self.active_brush.pressure_affects_size==true){
-					 	calculatedSize = calculatedSize * (mouse_data.pressure * 2);
-					 	if(calculatedSize<1) calculatedSize = 1;
+					 if(self.active_brush.pressure_affects_size==true){
+						 calculatedSize = calculatedSize * (mouse_data.pressure * 2);
+						 if(calculatedSize<1) calculatedSize = 1;
 					}
 
 					var result=undefined;
@@ -313,116 +416,123 @@
 					//if there is an action to undo
 					if(typeof result!=="undefined"){
 						plugin.record_undo_entry.call(self);
-		      		}
+					  }
 	  
 				}
+				self._gestureAbortSnapshot = null;
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
 				$(".drawr-toolbox").data("dragging", false);
-    			plugin.is_dragging=false;
+				plugin.is_dragging=false;
 			};
 			$(window).bind("touchend.drawr mouseup.drawr", self.drawStop);
-        };
+		};
 
-        //function that can be called to clear the canvas from elsewhere in the plugin 
-        //as long as you call it with a "this" of the canvas
-        plugin.clear_canvas = function(record_undo){
-        	if(record_undo) {
+		//function that can be called to clear the canvas from elsewhere in the plugin 
+		//as long as you call it with a "this" of the canvas
+		plugin.clear_canvas = function(record_undo){
+			if(record_undo) {
 				this.plugin.record_undo_entry.call(this);
 			}
-        	var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
-        	if(this.settings.enable_transparency==false){
-    			context.fillStyle="white";
+			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
+			if(this.settings.enable_transparency==false){
+				context.fillStyle="white";
 				context.globalCompositeOperation="source-over";
 				context.globalAlpha=1;
-    			context.fillRect(0,0,this.width,this.height);
+				context.fillRect(0,0,this.width,this.height);
 			} else {
-    			context.clearRect(0,0,this.width,this.height);
+				context.clearRect(0,0,this.width,this.height);
 			}
-        };
+		};
 
-        //Call this before any canvas manipulation. it is automatically done with most tool plugins.
-        //works as long as you call it with a "this" of the canvas
-        plugin.record_undo_entry = function(){
-        	this.$undoButton.css("opacity",1);
-  			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
-  			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
-        };
+		//Call this before any canvas manipulation. it is automatically done with most tool plugins.
+		//works as long as you call it with a "this" of the canvas
+		plugin.record_undo_entry = function(){
+			this.$undoButton.css("opacity",1);
+			  this.undoStack.push({data: this.toDataURL("image/png"),current: true});
+			  if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
+		};
 
-        //calls a tool plugin's activate_brush call. 
-        plugin.select_button = function(button){
-        	var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
-        	this.$brushToolbox.find(".drawr-tool-btn.type-brush").each(function(){
-        		$(this).removeClass("active");
-        		$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
-        	});
-        	$(button).css({ "background" : "orange","color" : "white" });
-        	$(button).addClass("active");
-        	plugin.activate_brush.call(this,$(button).data("data"));
-        };
+		//calls a tool plugin's activate_brush call. 
+		plugin.select_button = function(button){
+			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
+			this.$brushToolbox.find(".drawr-tool-btn.type-brush").each(function(){
+				$(this).removeClass("active");
+				$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
+			});
+			$(button).css({ "background" : "orange","color" : "white" });
+			$(button).addClass("active");
+			plugin.activate_brush.call(this,$(button).data("data"));
+		};
 
-        //activates a brush ( a tool plugin ).
-        plugin.activate_brush = function(brush){
-        	var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
-        	if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
+		//activates a brush ( a tool plugin ).
+		plugin.activate_brush = function(brush){
+			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
+			if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
 				this.active_brush.deactivate.call(this,this.active_brush,context);
 			}
-        	this.active_brush = brush;
-        	this.brushSize = typeof brush.size!=="undefined" ? brush.size : this.brushSize;
-        	this.brushAlpha = typeof brush.alpha!=="undefined" ? brush.alpha : this.brushAlpha;
-        	if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-alpha").val(this.brushAlpha*100).trigger("input");
-        	if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-size").val(this.brushSize).trigger("input");
+			this.active_brush = brush;
+			this.brushSize = typeof brush.size!=="undefined" ? brush.size : this.brushSize;
+			this.brushAlpha = typeof brush.alpha!=="undefined" ? brush.alpha : this.brushAlpha;
+			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-alpha").val(this.brushAlpha*100).trigger("input");
+			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-size").val(this.brushSize).trigger("input");
 			this.active_brush.activate.call(this,this.active_brush,context);
-        };
+		};
 
-        /* Inserts a button into a toolbox */
-        plugin.create_button = function(toolbox,type,data,css){
-        	var self=this;
-        	var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
-    	    el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
-    		if(typeof css!=="undefined") el.css(css);
-    		el.addClass("type-" + type);
-        	el.data("data",data).data("type",type);
-    		el.on("mousedown.drawr touchstart.drawr", function(e){
-        		if($(this).data("type")=="brush") plugin.select_button.call(self,this);
-        		if($(this).data("type")=="toggle") {//toggle data attribute and select effect
-        			if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
-        			$(this).data("state",!$(this).data("state"));
-        			if($(this).data("state")==true){
-        				$(this).css({ "background" : "orange", "color" : "white" });
-        			} else {
-        				$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
-        			}
-        		}
-        		e.stopPropagation();
-        		e.preventDefault();
-        	});
-        	$(toolbox).append(el);
-        	return el;
-        };
+		/* Inserts a button into a toolbox */
+		plugin.create_button = function(toolbox,type,data,css){
+			var self=this;
+			var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
+			el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
+			if(typeof css!=="undefined") el.css(css);
+			el.addClass("type-" + type);
+			el.data("data",data).data("type",type);
+			el.on("mousedown.drawr touchstart.drawr", function(e){
+				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
+				if($(this).data("type")=="toggle") {//toggle data attribute and select effect
+					if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
+					$(this).data("state",!$(this).data("state"));
+					if($(this).data("state")==true){
+						$(this).css({ "background" : "orange", "color" : "white" });
+					} else {
+						$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
+					}
+				}
+				e.stopPropagation();
+				e.preventDefault();
+			});
+			$(toolbox).append(el);
+			return el;
+		};
 
-        /* create a slider */
-        plugin.create_slider = function(toolbox,title,min,max,value){
-        	var self=this;
-		    $(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
-	    	$(toolbox).find(".slider-" + title.toLowerCase()).on("mousedown touchstart",function(e){
-	    		e.stopPropagation();
-	    	}).on("input.drawr",function(e){
-	    		 $(this).next().text($(this).val());
-	    	});
-	    	return $(toolbox).find(".slider-" + title.toLowerCase());
-        }
+		/* create a slider */
+		plugin.create_slider = function(toolbox,title,min,max,value){
+			var self=this;
+			$(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
+			$(toolbox).find(".slider-" + title.toLowerCase()).on("mousedown touchstart",function(e){
+				e.stopPropagation();
+			}).on("input.drawr",function(e){
+				 $(this).next().text($(this).val());
+			});
+			return $(toolbox).find(".slider-" + title.toLowerCase());
+		}
 
-        //set some default settings. :)
-        plugin.initialize_canvas = function(width,height,reset){
+		//set some default settings. :)
+		plugin.initialize_canvas = function(width,height,reset){
 
-        	this.origStyles = plugin.get_styles(this);
-        	this.origParentStyles = plugin.get_styles($(this).parent()[0]);
-        	$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none" });
-        	$(this).parent().css({	"overflow": "hidden", "user-select": "none", "webkit-touch-callout": "none" });
+			this.origStyles = plugin.get_styles(this);
+			this.origParentStyles = plugin.get_styles($(this).parent()[0]);
+			$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none", "position": "relative", "z-index": 1 });
+			$(this).parent().css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none" });
 
-        	if(this.settings.enable_transparency_image==true) $(this).css({"background-image" : "url(" + tspImg + ")"});
+			if(this.settings.enable_transparency_image==true){
+				if(!this.$bgCanvas){
+					this.$bgCanvas = $("<canvas class='drawr-bg-canvas'></canvas>");
+					this.$bgCanvas.css({"position":"absolute","z-index":0,"top":0,"left":0,"pointer-events":"none"});
+					this.$bgCanvas.insertBefore(this);
+				}
+			}
 
-        	if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
+			if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
 				this.width=width;
 				this.height=height;
 			}
@@ -436,30 +546,28 @@
 				$(this).height(height);
 			}
 
-			$(currentCanvas).css({
-    			"background-size": (20*this.zoomFactor) + "px " + (20*this.zoomFactor) + "px "
-    		});
+			plugin.draw_checkerboard.call(this);
 
 			this.pen_pressure = false;//switches mode once it detects.
 			
 			var context = this.getContext("2d", { alpha: true });
-    		if(this.settings.clear_on_init==true){
-	    		if(this.settings.enable_transparency==false){
-	    			context.fillStyle="white";
-	    			context.fillRect(0,0,width,height);
+			if(this.settings.clear_on_init==true){
+				if(this.settings.enable_transparency==false){
+					context.fillStyle="white";
+					context.fillRect(0,0,width,height);
 				} else {
-	    			context.clearRect(0,0,width,height);
+					context.clearRect(0,0,width,height);
 				}
 			} else {
 				var is_blank = !new Uint32Array(context.getImageData(0, 0, width, height).data.buffer).some(x => x !== 0);
 				if(is_blank){
 					if(this.settings.clear_on_init==true){
-		    			context.fillStyle="white";
-		    			context.fillRect(0,0,width,height);
-		    		} else {
-	    				context.clearRect(0,0,width,height);
-		    		}
-	    		}
+						context.fillStyle="white";
+						context.fillRect(0,0,width,height);
+					} else {
+						context.clearRect(0,0,width,height);
+					}
+				}
 			}
 
 			//memory canvas
@@ -475,40 +583,42 @@
 				"z-index": 5,
 				"position":"absolute",
 				"width" : parent_width,
-				"height" : parent_height,
+				"height" : parent_height/*,
 				"top" : ($(this).parent().offset().top + borderTop) + "px",
 				"left" : ($(this).parent().offset().left + borderLeft) + "px"
+				position is now absolute inside relative parent.
+				*/
 			});
 			this.$memoryCanvas[0].width=parent_width;
 			this.$memoryCanvas[0].height=parent_height;
 			this.$memoryCanvas.width(parent_width);
 			this.$memoryCanvas.height(parent_height);
 
-        };
+		};
 
-        //this is basically the animation/drawing loop. 
-        //involves drawing the guide lines of where the drawing area ends.
-        //and the scroll indicators.
-        plugin.draw_animations = function(){
-        	if(!$(this).hasClass("active-drawr")) return;//end drawing loop
-        	var context = this.$memoryCanvas[0].getContext("2d");
-        	context.clearRect(0,0,this.$memoryCanvas[0].width,this.$memoryCanvas[0].height);
- 
-        	if(typeof this.effectCallback!=="undefined" && this.effectCallback!==null){
-        		var _W = this.width * this.zoomFactor;
-        		var _H = this.height * this.zoomFactor;
-        		var _cx = _W / 2 - this.scrollX;
-        		var _cy = _H / 2 - this.scrollY;
-        		context.save();
-        		context.translate(_cx, _cy);
-        		context.rotate(this.rotationAngle || 0);
-        		context.translate(-_cx, -_cy);
-        		this.effectCallback.call(this,context,this.active_brush,this.scrollX,this.scrollY,this.zoomFactor);
-        		context.restore();
-        	}
+		//this is basically the animation/drawing loop. 
+		//involves drawing the guide lines of where the drawing area ends.
+		//and the scroll indicators.
+		plugin.draw_animations = function(){
+			if(!this.classList.contains("active-drawr")) return;//end drawing loop
+			var context = this.memoryContext;
+			context.clearRect(0,0,this.$memoryCanvas[0].width,this.$memoryCanvas[0].height);
 
-        	var container_width = $(this).parent().width();
-        	var container_height = $(this).parent().height();
+			if(typeof this.effectCallback!=="undefined" && this.effectCallback!==null){
+				var _W = this.width * this.zoomFactor;
+				var _H = this.height * this.zoomFactor;
+				var _cx = _W / 2 - this.scrollX;
+				var _cy = _H / 2 - this.scrollY;
+				context.save();
+				context.translate(_cx, _cy);
+				context.rotate(this.rotationAngle || 0);
+				context.translate(-_cx, -_cy);
+				this.effectCallback.call(this,context,this.active_brush,this.scrollX,this.scrollY,this.zoomFactor);
+				context.restore();
+			}
+
+			var container_width = this.containerWidth;
+			var container_height = this.containerHeight;
 
 			context.globalAlpha = 0.5;//brush.currentAlpha;
 			context.lineWidth = 1;
@@ -577,13 +687,12 @@
 				context.stroke();
 			}
 
-        	//window.requestAnimationFrame(plugin.draw_animations);
-        	window.requestAnimationFrame(plugin.draw_animations.bind(this));
-        };
+			window.requestAnimationFrame(this.draw_animations_bound);
+		};
 
-        /* Create floating dialog and appends it hidden after the canvas */
-        plugin.create_toolbox = function(id,position,title,width){
-        	var self = this;
+		/* Create floating dialog and appends it hidden after the canvas */
+		plugin.create_toolbox = function(id,position,title,width){
+			var self = this;
 			var toolbox = document.createElement("div");
 			toolbox.innerHTML="<div style='padding:5px 0px 5px 0px'>" + title + "</div>";
 			toolbox.className = "drawr-toolbox drawr-toolbox-" + id;
@@ -595,169 +704,204 @@
 			});
 			$(toolbox).insertAfter($(this).parent());
 			$(toolbox).offset(position);
-        	$(toolbox).hide();
-	        $(toolbox).on("mousedown.drawr touchstart.drawr", function(e){
-	        	var ownerCanvas = this.ownerCanvas;
-				var mouse_data = plugin.get_mouse_data.call(ownerCanvas,e,this);
-	    		$(this).data("offsetx", mouse_data.x).data("offsety", mouse_data.y).data("dragging", true);
-	    		plugin.is_dragging=true;
-	    		e.preventDefault();
-	    	});
+			$(toolbox).hide();
+			$(toolbox).on("mousedown.drawr touchstart.drawr", function(e){
+				var tbOffset = $(this).offset();
+				var pageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
+				var pageY = e.pageY || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageY) || 0;
+				$(this).data("offsetx", pageX - tbOffset.left).data("offsety", pageY - tbOffset.top).data("dragging", true);
+				plugin.is_dragging=true;
+				e.preventDefault();
+			});
 			return $(toolbox);
-        };
+		};
 
-        //call this to change scroll
-        //todo: document what setTimer is
-        plugin.apply_scroll = function(x,y,setTimer){
-        	var self = this;
-        	var angle = self.rotationAngle || 0;
-        	$(self).css("transform","translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)");
-        	self.scrollX = x;
-        	self.scrollY = y;
-        	if(setTimer==true){
-        		self.scrollTimer= 250;
-        	}
-        };
+		//draw the transparency checkerboard onto the background canvas at fixed 20px squares
+		plugin.draw_checkerboard = function(){
+			var self = this;
+			if(!self.$bgCanvas) return;
+			var W = Math.ceil(self.width * self.zoomFactor);
+			var H = Math.ceil(self.height * self.zoomFactor);
+			self.$bgCanvas[0].width = W;
+			self.$bgCanvas[0].height = H;
+			self.$bgCanvas.width(W);
+			self.$bgCanvas.height(H);
+			var ctx = self.$bgCanvas[0].getContext('2d');
+			var sz = 20 * self.zoomFactor;
+			ctx.fillStyle = '#ffffff';
+			ctx.fillRect(0, 0, W, H);
+			ctx.fillStyle = '#cccccc';
+			for(var row = 0; row * sz < H; row++){
+				for(var col = row % 2; col * sz < W; col += 2){
+					ctx.fillRect(col * sz, row * sz, sz, sz);
+				}
+			}
+			var angle = self.rotationAngle || 0;
+			var sx = self.scrollX || 0;
+			var sy = self.scrollY || 0;
+			self.$bgCanvas.css("transform","translate(" + -sx + "px," + -sy + "px) rotate(" + angle + "rad)");
+		};
 
-        //call this to set canvas rotation angle (radians).
-        plugin.apply_rotation = function(angle){
-        	var self = this;
-        	self.rotationAngle = angle;
-        	$(self).css("transform","translate(" + -self.scrollX + "px," + -self.scrollY + "px) rotate(" + angle + "rad)");
-        };
+		//call this to change scroll
+		//if setTimer is set the scrollbars will show for a brief moment
+		//we should probably do that with more operations later on. rotation could affect scroll, so
+		plugin.apply_scroll = function(x,y,setTimer){
+			var self = this;
+			var angle = self.rotationAngle || 0;
+			var transform = "translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)";
+			$(self).css("transform",transform);
+			if(self.$bgCanvas) self.$bgCanvas.css("transform",transform);
+			self.scrollX = x;
+			self.scrollY = y;
+			if(setTimer==true){
+				self.scrollTimer= 250;
+			}
+		};
 
-        //call this to set zoom. zoomFactor is between 0 and 4.
-        plugin.apply_zoom = function(zoomFactor){
-        	var self = this;
+		//call this to set canvas rotation angle (radians).
+		plugin.apply_rotation = function(angle){
+			var self = this;
+			self.rotationAngle = angle;
+			var transform = "translate(" + -self.scrollX + "px," + -self.scrollY + "px) rotate(" + angle + "rad)";
+			$(self).css("transform",transform);
+			if(self.$bgCanvas) self.$bgCanvas.css("transform",transform);
+		};
 
-    		var zoomDiff=1+(zoomFactor-self.zoomFactor);
+		//call this to set zoom. valid zoomFactor values are between 0.1 and 5
+		//optional focalX,focalY: point relative to container to keep fixed during zoom. 
+		//so you don't scroll when zooming with pinch, and zoom to the mouse with mousewheel
+		plugin.apply_zoom = function(zoomFactor, focalX, focalY){
+			var self = this;
+			var oldZoom = self.zoomFactor;
+			zoomFactor = Math.max(0.1, Math.min(5, zoomFactor));
+			self.zoomFactor = zoomFactor;
+			$(self).width(self.width*zoomFactor);
+			$(self).height(self.height*zoomFactor);
+			plugin.draw_checkerboard.call(self);
+			if(oldZoom > 0 && zoomFactor !== oldZoom){
+				if(focalX !== undefined){
+					plugin.apply_scroll.call(self, (focalX + self.scrollX) * (zoomFactor / oldZoom) - focalX, (focalY + self.scrollY) * (zoomFactor / oldZoom) - focalY, true);
+				} else {
+					plugin.apply_scroll.call(self, self.scrollX * (zoomFactor / oldZoom), self.scrollY * (zoomFactor / oldZoom), true);
+				}
+			}
 
-    		self.zoomFactor = zoomFactor;
-    		$(self).width(self.width*zoomFactor);
-    		$(self).height(self.height*zoomFactor);
-    		$(self).css({
-    			"background-size": (20*zoomFactor) + "px " + (20*zoomFactor) + "px "
-    		});
-    		if(zoomDiff!==1){
-    			plugin.apply_scroll.call(self,self.scrollX * zoomDiff,self.scrollY * zoomDiff,true);
-    			//doesn't seem to work perfectly but it'll do for now
-    		}
+		};
 
-        };
+		//gets an objects' computed styles so they can be restored after plugin destruction
+		plugin.get_styles = function(el){
+			var inlineStyles = {};
+			for (var i = 0, l = el.style.length; i < l; i++){
+				var styleProperty = el.style[i];
+				var styleValue = getComputedStyle(el, null).getPropertyValue(styleProperty);
+				inlineStyles[styleProperty]=styleValue;
+			}
+			return inlineStyles;
+		};
 
-        //todo: document whatever this is
-        plugin.get_styles = function(el){
-    	    var inlineStyles = {};
-            for (var i = 0, l = el.style.length; i < l; i++){
-                var styleProperty = el.style[i];
-                var styleValue = getComputedStyle(el, null).getPropertyValue(styleProperty);
-                inlineStyles[styleProperty]=styleValue;
-            }
-            return inlineStyles;
-        };
+		//call with $(selector).drawr("export",mime)
+		//mime is optional, will default to png. returns a data url.
+		if ( action == "export" ) {
+			var currentCanvas = this.first()[0];
+			var mime = typeof param=="undefined" ? "image/png" : param;
+			return currentCanvas.toDataURL(mime);
+		} 
 
-        //call with $(selector).drawr("export",mime)
-        //mime is optional, will default to png. returns a data url.
-    	if ( action == "export" ) {
-	        var currentCanvas = this.first()[0];
-	        var mime = typeof param=="undefined" ? "image/png" : param;
-	        return currentCanvas.toDataURL(mime);
-	    } 
-
-    	/*
+		/*
 		this displays this level of the undo stack as a popup. handy for debugging undo problems.
-    	if ( action == "debug_undo" ) {
-	        var currentCanvas = this.first()[0];
-	        var level = typeof param=="undefined" ? 0 : param;
-	        var url = currentCanvas.undoStack[level].data;
-	        var img=document.createElement("img");
-	        img.src=url;
-	        img.className="undo-image";
-	        $(".undo-image").detach();
-	        $(document.body).append(img);
-	        $(".undo-image").css({
-	        	left:"50%",
-	        	top:"50%",
-	        	position:"absolute",
-	        	zIndex:1234134,
-	        	border:"1px dotted red",
-	        	boxShadow: "2px 2px 5px rgba(0,0,0,0.3)"
-	        });
-	        return null;
-	    }*/
+		if ( action == "debug_undo" ) {
+			var currentCanvas = this.first()[0];
+			var level = typeof param=="undefined" ? 0 : param;
+			var url = currentCanvas.undoStack[level].data;
+			var img=document.createElement("img");
+			img.src=url;
+			img.className="undo-image";
+			$(".undo-image").detach();
+			$(document.body).append(img);
+			$(".undo-image").css({
+				left:"50%",
+				top:"50%",
+				position:"absolute",
+				zIndex:1234134,
+				border:"1px dotted red",
+				boxShadow: "2px 2px 5px rgba(0,0,0,0.3)"
+			});
+			return null;
+		}*/
 
-	    //todo: document whatever this is 
-	    if( action == "button" ){
-	    	var collection = $();
-	    	this.each(function() {
-	    		var currentCanvas = this;
-	    		var newButton = plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",param);
-	    		collection=collection.add(newButton);
-	    	});
-	    	return collection;
-	    }
+		//todo: document whatever this is 
+		if( action == "button" ){
+			var collection = $();
+			this.each(function() {
+				var currentCanvas = this;
+				var newButton = plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",param);
+				collection=collection.add(newButton);
+			});
+			return collection;
+		}
 
-        //call with $(selector).drawr("clear") to clear the canvas.
-	    if( action == "clear" ){
-	    	this.each(function() {
-	    		var currentCanvas = this;
+		//call with $(selector).drawr("clear") to clear the canvas.
+		if( action == "clear" ){
+			this.each(function() {
+				var currentCanvas = this;
 				currentCanvas.plugin.clear_canvas.call(currentCanvas,true);
-	    	});
-	    }
+			});
+		}
 
-        //Initialize canvas or calling of methods
+		//Initialize canvas or calling of methods
 		this.each(function() {
 
 			var currentCanvas = this;	
 			if ( action === "start") {
 				if(!$(currentCanvas).hasClass("active-drawr")) {
-                    console.error("The element you are running this command on is not a drawr canvas.");
-                    return false;//can't start if not initialized.
-                }
-	            $(".drawr-toolbox").hide();
-	            $(".drawr-toolbox-brush").show();
-	            $(".drawr-toolbox-palette").show();
-				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").mousedown();	            
-	        } else if ( action === "stop" ) {
-	        	if(!$(currentCanvas).hasClass("active-drawr")) {
-                    console.error("The element you are running this command on is not a drawr canvas.");
-                    return false;//can't stop if not initialized.
-                }
-	        	//reset togglers
-	        	currentCanvas.$brushToolbox.find('.drawr-tool-btn.type-toggle').each(function(){
+					console.error("The element you are running this command on is not a drawr canvas.");
+					return false;//can't start if not initialized.
+				}
+				$(".drawr-toolbox").hide();
+				$(".drawr-toolbox-brush").show();
+				$(".drawr-toolbox-palette").show();
+				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").mousedown();				
+			} else if ( action === "stop" ) {
+				if(!$(currentCanvas).hasClass("active-drawr")) {
+					console.error("The element you are running this command on is not a drawr canvas.");
+					return false;//can't stop if not initialized.
+				}
+				//reset togglers
+				currentCanvas.$brushToolbox.find('.drawr-tool-btn.type-toggle').each(function(){
 					if($(this).data("state")==true){
 						$(this).trigger("mousedown");
 					}
 				});
-	            $(".drawr-toolbox").hide();
+				$(".drawr-toolbox").hide();
 
-	        //call with $(selector).drawr("load",something) to load an image.
-	        //todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
-	        } else if ( action === "load" ) {
-	        	if(!$(currentCanvas).hasClass("active-drawr")) {
-                    console.error("The element you are running this command on is not a drawr canvas.");
-                    return false;//can't load if not initialized.
-                }
-	        	var img = document.createElement("img");
-	        	img.crossOrigin = "Anonymous";
+			//call with $(selector).drawr("load",something) to load an image.
+			//todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
+			} else if ( action === "load" ) {
+				if(!$(currentCanvas).hasClass("active-drawr")) {
+					console.error("The element you are running this command on is not a drawr canvas.");
+					return false;//can't load if not initialized.
+				}
+				var img = document.createElement("img");
+				img.crossOrigin = "Anonymous";
 
-	        	img.onload = function(){
-	        		var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_transparency });
-	        		plugin.initialize_canvas.call(currentCanvas,img.width,img.height,true);
-	        		currentCanvas.undoStack = [{data: currentCanvas.toDataURL("image/png"),current:true}];
-        			context.drawImage(img,0,0);
-	        	};
-	        	img.src=param;
-	        //call with $(selector).drawr("destroy") 
-	        //should undo everything that was done to the canvas and its parent container, returning it to its original state.
-	        } else if ( action === "destroy" ) {
-	        	if(!$(currentCanvas).hasClass("active-drawr")) {
-                    console.error("The element you are running this command on is not a drawr canvas.");
-                    return false;//can't destroy if not initialized.
-                }
-	        	var parent = $(currentCanvas).parent();
+				img.onload = function(){
+					var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_transparency });
+					plugin.initialize_canvas.call(currentCanvas,img.width,img.height,true);
+					currentCanvas.undoStack = [{data: currentCanvas.toDataURL("image/png"),current:true}];
+					context.drawImage(img,0,0);
+				};
+				img.src=param;
+			//call with $(selector).drawr("destroy") 
+			//should undo everything that was done to the canvas and its parent container, returning it to its original state.
+			} else if ( action === "destroy" ) {
+				if(!$(currentCanvas).hasClass("active-drawr")) {
+					console.error("The element you are running this command on is not a drawr canvas.");
+					return false;//can't destroy if not initialized.
+				}
+				var parent = $(currentCanvas).parent();
 				parent.off("touchstart.drawr");
 				parent.off("wheel.drawr");
+				parent.off("contextmenu.drawr");
 				parent.find(".drawr-toolbox .drawr-tool-btn").off("mousedown.drawr touchstart.drawr");
 				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
 				parent.find(".drawr-toolbox").on("mousedown.drawr touchstart.drawr");
@@ -766,13 +910,20 @@
 				$(window).unbind("touchmove.drawr mousemove.drawr", currentCanvas.drawMove);
 				$(window).unbind("touchstart.drawr mousedown.drawr", currentCanvas.drawStart);
 				$(window).unbind("wheel.drawr mousedown.drawr", currentCanvas.scrollWheel);
-				
+				$(window).off("resize.drawr", currentCanvas.onWindowResize);
+
 				currentCanvas.$memoryCanvas.remove();
+				if(currentCanvas.$bgCanvas){ currentCanvas.$bgCanvas.remove(); delete currentCanvas.$bgCanvas; }
 				currentCanvas.$brushToolbox.remove();
 				currentCanvas.$settingsToolbox.remove();
 				currentCanvas.$zoomToolbox.remove();
 
 				delete currentCanvas.$memoryCanvas;
+				delete currentCanvas.memoryContext;
+				delete currentCanvas.draw_animations_bound;
+				delete currentCanvas.onWindowResize;
+				delete currentCanvas.containerWidth;
+				delete currentCanvas.containerHeight;
 				delete currentCanvas.$brushToolbox;
 				delete currentCanvas.$settingsToolbox;
 				delete currentCanvas.$zoomToolbox;
@@ -792,10 +943,11 @@
 				delete currentCanvas.pen_pressure;
 				delete currentCanvas.drawStart;
 				delete currentCanvas.boundCheck;
+				delete currentCanvas.containerBoundCheck;
 				delete currentCanvas.drawMove;
 				delete currentCanvas.drawStop;
 				delete currentCanvas.scrollWheel;
-				delete scrollTimer;
+				delete scrollTimer;//eh, this doesnt do anything
 
 				//reset css and visuals and scrolls
 
@@ -813,61 +965,73 @@
 				delete currentCanvas.origStyles;
 				delete currentCanvas.origParentStyles;
 
-	    		$(currentCanvas).removeClass("active-drawr");
+				$(currentCanvas).removeClass("active-drawr");
 				$(currentCanvas).parent().removeClass("drawr-container");
 			//not an action, but an init call
-	        } else if ( typeof action == "object" || typeof action =="undefined" ){
+			} else if ( typeof action == "object" || typeof action =="undefined" ){
 				if($(currentCanvas).hasClass("active-drawr")) return false;//prevent double init
 				currentCanvas.className = currentCanvas.className + " active-drawr";
 				$(currentCanvas).parent().addClass("drawr-container");
 
-	        	//determine settings
-		    	var defaultSettings = {
-		    		"enable_transparency" : true,
+				//determine settings
+				var defaultSettings = {
+					"enable_transparency" : true,
 					"enable_transparency_image" : true,
 					"enable_scrollwheel_zooming" : true,
-		    		"canvas_width" : $(currentCanvas).parent().innerWidth(),
-		    		"canvas_height" : $(currentCanvas).parent().innerHeight(),
-		    		"undo_max_levels" : 5,
-		    		"color_mode" : "picker",
-		    		"clear_on_init" : true
-		    	};
-	        	if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
-	        	currentCanvas.settings = defaultSettings;
+					"canvas_width" : $(currentCanvas).parent().innerWidth(),
+					"canvas_height" : $(currentCanvas).parent().innerHeight(),
+					"undo_max_levels" : 5,
+					"color_mode" : "picker",
+					"clear_on_init" : true
+				};
+				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
+				currentCanvas.settings = defaultSettings;
 
-	        	//set up special effects layer
+				//set up special effects layer
 				currentCanvas.$memoryCanvas=$("<canvas class='sfx-canvas'></canvas>");
 				currentCanvas.$memoryCanvas.insertBefore(currentCanvas);
+				currentCanvas.memoryContext = currentCanvas.$memoryCanvas[0].getContext("2d");
+
+				//cache container dimensions; kept up to date via resize handler
+				var _parent = $(currentCanvas).parent();
+				currentCanvas.containerWidth = _parent.width();
+				currentCanvas.containerHeight = _parent.height();
+				currentCanvas.onWindowResize = function() {
+					currentCanvas.containerWidth = _parent.width();
+					currentCanvas.containerHeight = _parent.height();
+				};
+				$(window).on("resize.drawr", currentCanvas.onWindowResize);
 
 				currentCanvas.plugin = plugin;
 				currentCanvas.rotationAngle = 0;
 
-	        	//set up canvas
-        		plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
-        		currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
-				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });			
+				//set up canvas
+				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
+				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
+				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
-				window.requestAnimationFrame(plugin.draw_animations.bind(currentCanvas));
+				currentCanvas.draw_animations_bound = plugin.draw_animations.bind(currentCanvas);
+				window.requestAnimationFrame(currentCanvas.draw_animations_bound);
 
 				//brush dialog
-        		currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",80);
+				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",80);
 
-        		$.fn.drawr.availableBrushes.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
+				$.fn.drawr.availableBrushes.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
 
 				$.each($.fn.drawr.availableBrushes,function(i,brush){
-	    			plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"brush",brush);
+					plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"brush",brush);
 				});
 				//currentCanvas.$brushToolbox.append("<div style='clear:both;border-top:2px solid #000;' class='seperator'></div>");
-	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-palette-outline mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
-	    			currentCanvas.$settingsToolbox.toggle();
-	    		});
-	    		plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-magnify mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
-	    			currentCanvas.$zoomToolbox.toggle();
-	    		});	    		
-	    		currentCanvas.$undoButton=plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",{"icon":"mdi mdi-undo-variant mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
-				    if(currentCanvas.undoStack.length>0){
-				    	//the current property is because of the way some tools work it is needed to always keep a copy of the canvas' latest state (AFTER last draw action was done) in the undo buffer. 
-				    	//obviously you want to go back to the previous version, not the current one, so that one is ignored.
+				plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-palette-outline mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
+					currentCanvas.$settingsToolbox.toggle();
+				});
+				plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-magnify mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
+					currentCanvas.$zoomToolbox.toggle();
+				});				
+				currentCanvas.$undoButton=plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",{"icon":"mdi mdi-undo-variant mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
+					if(currentCanvas.undoStack.length>0){
+						//the current property is because of the way some tools work it is needed to always keep a copy of the canvas' latest state (AFTER last draw action was done) in the undo buffer. 
+						//obviously you want to go back to the previous version, not the current one, so that one is ignored.
 						if(currentCanvas.undoStack[currentCanvas.undoStack.length-1].current==true){
 							currentCanvas.undoStack.pop();//ignore current version of canvas
 						}
@@ -893,62 +1057,62 @@
 						}
 						currentCanvas.undoStack.push({data:undo,current:true});
 					}
-	    		});
-	    		currentCanvas.$undoButton.css("opacity",0.5);
+				});
+				currentCanvas.$undoButton.css("opacity",0.5);
 				//color dialog
-        		currentCanvas.$settingsToolbox = plugin.create_toolbox.call(currentCanvas,"settings",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Settings",80);
+				currentCanvas.$settingsToolbox = plugin.create_toolbox.call(currentCanvas,"settings",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Settings",80);
 
-        		if(currentCanvas.settings.color_mode=="presets"){
-        			var colors = ["#FFFFFF","#0074D9","#2ECC40","#FFDC00","#FF4136","#111111"];
-		    		$.each(colors,function(i,color){
-			    		plugin.create_button.call(currentCanvas,currentCanvas.$settingsToolbox[0],"color",{"icon":""},{"background":color}).on("touchstart.drawr mousedown.drawr",function(){
-			    			currentCanvas.brushColor = plugin.hex_to_rgb(color);
+				if(currentCanvas.settings.color_mode=="presets"){
+					var colors = ["#FFFFFF","#0074D9","#2ECC40","#FFDC00","#FF4136","#111111"];
+					$.each(colors,function(i,color){
+						plugin.create_button.call(currentCanvas,currentCanvas.$settingsToolbox[0],"color",{"icon":""},{"background":color}).on("touchstart.drawr mousedown.drawr",function(){
+							currentCanvas.brushColor = plugin.hex_to_rgb(color);
 							if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
 							plugin.is_dragging=false;
-			    		});
-		    		});
-        		}else {
-	    			currentCanvas.$settingsToolbox.append("<input type='text' class='color-picker'/>");
+						});
+					});
+				}else {
+					currentCanvas.$settingsToolbox.append("<input type='text' class='color-picker'/>");
 					currentCanvas.$settingsToolbox.find('.color-picker').drawrpalette().on("choose.drawrpalette",function(event,hexcolor){
 						currentCanvas.brushColor = plugin.hex_to_rgb(hexcolor);
 						if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
 					});
 				}
-	    		plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"alpha", 0,100,parseInt(100*defaultSettings.inital_brush_alpha)).on("input.drawr",function(){
-		    		currentCanvas.brushAlpha = parseFloat(this.value/100);
-		    		currentCanvas.active_brush.alpha = parseFloat(this.value/100);;
-		    		plugin.is_dragging=false;
-        		});
-        		plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"size", 2,100,defaultSettings.inital_brush_size).on("input.drawr",function(){
-		    		currentCanvas.brushSize = this.value;
-		    		currentCanvas.active_brush.size = this.value;
-		    		plugin.is_dragging=false;
-        		});
-	    		//size dialog
-        		//zoom dialog
-        		currentCanvas.$zoomToolbox = plugin.create_toolbox.call(currentCanvas,"zoom",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Zoom",80);
-        		plugin.create_slider.call(currentCanvas, currentCanvas.$zoomToolbox,"zoom", 0,400,100).on("input.drawr",function(){
-		    		//currentCanvas.brushAlpha = parseFloat(this.value/100);
-		    		var cleaned = Math.ceil(this.value/10)*10;
-		    		$(this).next().text(cleaned);
+				plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"alpha", 0,100,parseInt(100*defaultSettings.inital_brush_alpha)).on("input.drawr",function(){
+					currentCanvas.brushAlpha = parseFloat(this.value/100);
+					currentCanvas.active_brush.alpha = parseFloat(this.value/100);;
+					plugin.is_dragging=false;
+				});
+				plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"size", 1,100,defaultSettings.inital_brush_size).on("input.drawr",function(){
+					currentCanvas.brushSize = this.value;
+					currentCanvas.active_brush.size = this.value;
+					plugin.is_dragging=false;
+				});
+				//size dialog
+				//zoom dialog
+				currentCanvas.$zoomToolbox = plugin.create_toolbox.call(currentCanvas,"zoom",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Zoom",80);
+				plugin.create_slider.call(currentCanvas, currentCanvas.$zoomToolbox,"zoom", 0,400,100).on("input.drawr",function(){
+					//currentCanvas.brushAlpha = parseFloat(this.value/100);
+					var cleaned = Math.ceil(this.value/10)*10;
+					$(this).next().text(cleaned);
 
-    				plugin.apply_zoom.call(currentCanvas,cleaned/100);
+					plugin.apply_zoom.call(currentCanvas,cleaned/100);
 
-        		});
+				});
 
 				plugin.bind_draw_events.call(currentCanvas);
 			}
 		});
 		return this;
  
-    };
+	};
 
-    /* Register a new brush */
-    $.fn.drawr.register = function (brush){
+	/* Register a new brush */
+	$.fn.drawr.register = function (brush){
 		if(typeof $.fn.drawr.availableBrushes=="undefined") $.fn.drawr.availableBrushes=[];
 		$.fn.drawr.availableBrushes.push(brush);
-    };
+	};
 
-    //go to center? do dis: plugin.apply_scroll.call(currentCanvas,((currentCanvas.width*currentCanvas.zoomFactor)-$(currentCanvas).parent().width())/2,((currentCanvas.height*currentCanvas.zoomFactor)-$(currentCanvas).parent().height())/2,true);
+	//go to center? do dis: plugin.apply_scroll.call(currentCanvas,((currentCanvas.width*currentCanvas.zoomFactor)-$(currentCanvas).parent().width())/2,((currentCanvas.height*currentCanvas.zoomFactor)-$(currentCanvas).parent().height())/2,true);
  
 }( jQuery ));

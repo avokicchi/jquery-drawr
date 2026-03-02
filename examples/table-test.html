@@ -62,6 +62,8 @@
 
 <script type="text/javascript">
 
+	window.addEventListener("contextmenu", function(evt){evt.preventDefault();return false;});//for demo purposes, context menus break interactivity, so.
+
 	function init_canvas1(){
 		$("#drawr-container .demo-canvas").drawr({
 		    "canvas_width" : 800,

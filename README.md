@@ -28,6 +28,7 @@ $("#canvas").drawr("start");
 - Text insertion
 - Undo
 - Ignores unintended touches
+- Rotation, pinch to zoom and dragging on mobile, right click to draw and mousewheel zooming on desktop
 
 **Methods**
 

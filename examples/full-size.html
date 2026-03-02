@@ -28,10 +28,9 @@
 <div id="drawr-container" style="width:100vw;height:100vh;">
 	<canvas class="demo-canvas drawr-test1"></canvas>
 </div>
-<input type="file" id="file-picker" style="display:none;">
-
-
 <script type="text/javascript">
+
+	//window.addEventListener("contextmenu", function(evt){evt.preventDefault();return false;});//for demo purposes, context menus break interactivity, so.
 
 	$("#drawr-container .demo-canvas").drawr({
 		"enable_transparency" : true,
@@ -39,14 +38,28 @@
 	});
 
 	$(".demo-canvas").drawr("start");
-	
-	//add custom save button.
-	var buttoncollection = $("#drawr-container .demo-canvas").drawr("button", {
+
+	//add custom load button. File input is overlaid directly on the button so iOS
+	//treats the tap as a direct user interaction with the input (required on iOS).
+	var loadButton = $("#drawr-container .demo-canvas").drawr("button", {
 		"icon":"mdi mdi-folder-open mdi-24px"
-	}).on("touchstart mousedown",function(){
-		//alert("demo of a custom button with your own functionality!");
-		$("#file-picker").click();
 	});
+	var filePicker = $('<input type="file" accept="image/*">').css({
+		position: 'absolute', top: 0, left: 0,
+		width: '100%', height: '100%',
+		opacity: 0, cursor: 'pointer'
+	});
+	loadButton.css('position', 'relative').append(filePicker);
+	filePicker[0].onchange = function(){
+		var file = filePicker[0].files[0];
+		if (!file || !file.type.startsWith('image/')){ return; }
+		var reader = new FileReader();
+		reader.onload = function(e) {
+			$("#drawr-container .demo-canvas").drawr("load",e.target.result);
+		};
+		reader.readAsDataURL(file);
+	};
+
 	var buttoncollection = $("#drawr-container .demo-canvas").drawr("button", {
 		"icon":"mdi mdi-content-save mdi-24px"
 	}).on("touchstart mousedown",function(){
@@ -59,15 +72,6 @@
 		element.click();
 		document.body.removeChild(element);
 	});
-	$("#file-picker")[0].onchange = function(){
-		var file = $("#file-picker")[0].files[0];
-		if (!file.type.startsWith('image/')){ return }
-		var reader = new FileReader();
-		reader.onload = function(e) { 
-			$("#drawr-container .demo-canvas").drawr("load",e.target.result);
-		};
-		reader.readAsDataURL(file);
-	};
 
 </script>
 
