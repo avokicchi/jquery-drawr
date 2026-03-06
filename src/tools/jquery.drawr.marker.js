@@ -13,19 +13,22 @@ jQuery.fn.drawr.register({
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
 		brush.currentAlpha = alpha;
+		brush.currentSize = size;
 		brush.startPosition = {
 			"x" : x,
 			"y" : y
 		};
+		brush._positions = [{x: x, y: y}];
 		this.effectCallback = brush.effectCallback;
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
 		context.globalAlpha=alpha;
-		
+
 		brush.currentSize = size;
 		brush.currentAlpha = alpha;
 
 		this.effectCallback = null;
+		brush._positions = null;
 		context.lineWidth = size;
 		context.lineJoin = context.lineCap = "round";
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
@@ -48,24 +51,21 @@ jQuery.fn.drawr.register({
 			"x" : x,
 			"y" : y
 		};
+		if(brush._positions) brush._positions.push({x: x, y: y});
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
-
-		context.globalAlpha = brush.currentAlpha;//brush.currentAlpha;
-		context.lineWidth = brush.currentSize*adjustzoom;
+		var positions = brush._positions;
+		if(!positions || positions.length < 2) return;
+		context.globalAlpha = brush.currentAlpha;
+		context.lineWidth = brush.currentSize * adjustzoom;
 		context.lineJoin = context.lineCap = "round";
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-
-		context.beginPath(); 
-		var positions = $(this).data("positions");
-		$.each(positions,function(i,position){
-			if(i>0){
-				context.moveTo((positions[i-1].x*adjustzoom)-adjustx,(positions[i-1].y*adjustzoom)-adjusty);
-				context.lineTo((position.x*adjustzoom)-adjustx,(position.y*adjustzoom)-adjusty);
-			}
-		});
+		context.beginPath();
+		for(var i = 1; i < positions.length; i++){
+			context.moveTo((positions[i-1].x * adjustzoom) - adjustx, (positions[i-1].y * adjustzoom) - adjusty);
+			context.lineTo((positions[i].x * adjustzoom) - adjustx, (positions[i].y * adjustzoom) - adjusty);
+		}
 		context.stroke();
-
 	}
 });
 

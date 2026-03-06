@@ -258,6 +258,7 @@
                         $(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
                         if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
                         if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+                        plugin.request_redraw.call(self);
                     }
                 }
             };
@@ -429,7 +430,7 @@
                     if(typeof result!=="undefined"){
                         plugin.record_undo_entry.call(self);
                       }
-      
+                    plugin.request_redraw.call(self);
                 }
                 self._gestureAbortSnapshot = null;
                 $(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
@@ -613,6 +614,7 @@
         //and the scroll indicators.
         plugin.draw_animations = function(){
             if(!this.classList.contains("active-drawr")) return;//end drawing loop
+            this._animFrameQueued = false;
             var context = this.memoryContext;
             context.clearRect(0,0,this.$memoryCanvas[0].width,this.$memoryCanvas[0].height);
 
@@ -699,7 +701,23 @@
                 context.stroke();
             }
 
-            window.requestAnimationFrame(this.draw_animations_bound);
+            // Only keep the loop alive when there is work to do (effectCallback preview or
+            // scroll indicators fading out). Everything else is triggered via request_redraw.
+            if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0){
+                this._animFrameQueued = true;
+                window.requestAnimationFrame(this.draw_animations_bound);
+            }
+        };
+
+        // Schedule one animation frame. No-ops if a frame is already queued.
+        // Call this whenever the memory canvas needs a one-shot refresh
+        // (border position changed due to scroll / rotation / zoom, or an
+        // effectCallback-using tool just started or stopped).
+        plugin.request_redraw = function(){
+            if(!this._animFrameQueued){
+                this._animFrameQueued = true;
+                window.requestAnimationFrame(this.draw_animations_bound);
+            }
         };
 
         /* Create floating dialog and appends it hidden after the canvas */
@@ -768,6 +786,7 @@
             if(setTimer==true){
                 self.scrollTimer= 250;
             }
+            plugin.request_redraw.call(self);
         };
 
         //call this to set canvas rotation angle (radians).
@@ -777,10 +796,11 @@
             var transform = "translate(" + -self.scrollX + "px," + -self.scrollY + "px) rotate(" + angle + "rad)";
             $(self).css("transform",transform);
             if(self.$bgCanvas) self.$bgCanvas.css("transform",transform);
+            plugin.request_redraw.call(self);
         };
 
         //call this to set zoom. valid zoomFactor values are between 0.1 and 5
-        //optional focalX,focalY: container-relative point to keep fixed during zoom. 
+        //optional focalX,focalY: point relative to container to keep fixed during zoom. 
         //so you don't scroll when zooming with pinch, and zoom to the mouse with mousewheel
         plugin.apply_zoom = function(zoomFactor, focalX, focalY){
             var self = this;
@@ -959,7 +979,7 @@
                 delete currentCanvas.drawMove;
                 delete currentCanvas.drawStop;
                 delete currentCanvas.scrollWheel;
-                delete scrollTimer;
+                delete scrollTimer;//eh, this doesnt do anything
 
                 //reset css and visuals and scrolls
 
@@ -1016,14 +1036,14 @@
 
                 currentCanvas.plugin = plugin;
                 currentCanvas.rotationAngle = 0;
+                currentCanvas.draw_animations_bound = plugin.draw_animations.bind(currentCanvas);
+                currentCanvas._animFrameQueued = false;
 
                 //set up canvas
                 plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
                 currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
                 var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
                 currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
-                currentCanvas.draw_animations_bound = plugin.draw_animations.bind(currentCanvas);
-                window.requestAnimationFrame(currentCanvas.draw_animations_bound);
 
                 //brush dialog
                 currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",80);
@@ -1550,7 +1570,10 @@ jQuery.fn.drawr.register({
 	order: 3,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
-	activate: function(brush,context){},
+	activate: function(brush,context){
+		brush._stampCache = null;
+		brush._stampCacheKey = null;
+	},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
@@ -1558,13 +1581,25 @@ jQuery.fn.drawr.register({
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
+		var brushSize = self.brushSize;
+		var cacheKey = brushSize + '|' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b;
+		if(brush._stampCacheKey !== cacheKey){
+			var buffer = document.createElement('canvas');
+			buffer.width = brushSize;
+			buffer.height = brushSize;
+			var bctx = buffer.getContext('2d');
+			var half = brushSize / 2;
+			var radgrad = bctx.createRadialGradient(half, half, 0, half, half, half);
+			radgrad.addColorStop(0, 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')');
+			radgrad.addColorStop(0.5, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0.5)');
+			radgrad.addColorStop(1, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0)');
+			bctx.fillStyle = radgrad;
+			bctx.fillRect(0, 0, brushSize, brushSize);
+			brush._stampCache = buffer;
+			brush._stampCacheKey = cacheKey;
+		}
 		context.globalAlpha = alpha;
-		var radgrad = context.createRadialGradient(x,y,0,x,y,this.brushSize/2);//non zero values for the gradient break globalAlpha unfortunately.
-		radgrad.addColorStop(0, 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')');
-		radgrad.addColorStop(0.5, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0.5)');
-		radgrad.addColorStop(1, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0)');
-		context.fillStyle = radgrad;
-		context.fillRect(x-(self.brushSize/2), y-(self.brushSize/2), self.brushSize, self.brushSize);
+		context.drawImage(brush._stampCache, x - brushSize / 2, y - brushSize / 2);
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
 		return true;
@@ -1578,21 +1613,36 @@ jQuery.fn.drawr.register({
 	order: 4,
 	pressure_affects_alpha: true,
 	pressure_affects_size: true,
-	activate: function(brush,context){},
+	activate: function(brush,context){
+		brush._stampCache = null;
+		brush._stampCacheKey = null;
+	},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
 		context.globalAlpha = alpha;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		var self=  this;
+		var self = this;
+		var cacheKey = size + '|' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b;
+		if(brush._stampCacheKey !== cacheKey){
+			var sz = Math.max(1, size);
+			var buffer = document.createElement('canvas');
+			buffer.width = sz;
+			buffer.height = sz;
+			var bctx = buffer.getContext('2d');
+			var half = sz / 2;
+			var radgrad = bctx.createRadialGradient(half, half, 0, half, half, half);
+			radgrad.addColorStop(0, 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')');
+			radgrad.addColorStop(0.5, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0.5)');
+			radgrad.addColorStop(1, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0)');
+			bctx.fillStyle = radgrad;
+			bctx.fillRect(0, 0, sz, sz);
+			brush._stampCache = buffer;
+			brush._stampCacheKey = cacheKey;
+		}
 		context.globalAlpha = alpha;
-		var radgrad = context.createRadialGradient(x,y,0,x,y,size/2);//non zero values for the gradient break globalAlpha unfortunately.
-		radgrad.addColorStop(0, 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')');
-		radgrad.addColorStop(0.5, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0.5)');
-		radgrad.addColorStop(1, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0)');
-		context.fillStyle = radgrad;
-		context.fillRect(x-(size/2), y-(size/2), size, size);
+		context.drawImage(brush._stampCache, x - size / 2, y - size / 2);
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
 		return true;
@@ -1606,7 +1656,10 @@ jQuery.fn.drawr.register({
 	order: 5,
 	pressure_affects_alpha: true,
 	pressure_affects_size: true,
-	activate: function(brush,context){},
+	activate: function(brush,context){
+		brush._stampCache = null;
+		brush._stampCacheKey = null;
+	},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		if(this.settings.enable_transparency==true){
@@ -1620,12 +1673,23 @@ jQuery.fn.drawr.register({
 		var self = this;
 		context.globalAlpha = alpha;
 		if(self.settings.enable_transparency==true){
-			var radgrad = context.createRadialGradient(x,y,0,x,y,size/2);//non zero values for the gradient break globalAlpha unfortunately.
-			radgrad.addColorStop(0, '#000');
-			radgrad.addColorStop(0.5, 'rgba(0,0,0,0.5)');
-			radgrad.addColorStop(1, 'rgba(0,0,0,0)');
-			context.fillStyle = radgrad;
-			context.fillRect(x-(size/2), y-(size/2), size, size);
+			if(brush._stampCacheKey !== size){
+				var sz = Math.max(1, size);
+				var buffer = document.createElement('canvas');
+				buffer.width = sz;
+				buffer.height = sz;
+				var bctx = buffer.getContext('2d');
+				var half = sz / 2;
+				var radgrad = bctx.createRadialGradient(half, half, 0, half, half, half);
+				radgrad.addColorStop(0, '#000');
+				radgrad.addColorStop(0.5, 'rgba(0,0,0,0.5)');
+				radgrad.addColorStop(1, 'rgba(0,0,0,0)');
+				bctx.fillStyle = radgrad;
+				bctx.fillRect(0, 0, sz, sz);
+				brush._stampCache = buffer;
+				brush._stampCacheKey = size;
+			}
+			context.drawImage(brush._stampCache, x - size / 2, y - size / 2);
 		} else {
 	    	context.fillStyle = 'white';
 			context.beginPath();
@@ -1811,19 +1875,22 @@ jQuery.fn.drawr.register({
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
 		brush.currentAlpha = alpha;
+		brush.currentSize = size;
 		brush.startPosition = {
 			"x" : x,
 			"y" : y
 		};
+		brush._positions = [{x: x, y: y}];
 		this.effectCallback = brush.effectCallback;
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
 		context.globalAlpha=alpha;
-		
+
 		brush.currentSize = size;
 		brush.currentAlpha = alpha;
 
 		this.effectCallback = null;
+		brush._positions = null;
 		context.lineWidth = size;
 		context.lineJoin = context.lineCap = "round";
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
@@ -1846,24 +1913,21 @@ jQuery.fn.drawr.register({
 			"x" : x,
 			"y" : y
 		};
+		if(brush._positions) brush._positions.push({x: x, y: y});
 	},
 	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
-
-		context.globalAlpha = brush.currentAlpha;//brush.currentAlpha;
-		context.lineWidth = brush.currentSize*adjustzoom;
+		var positions = brush._positions;
+		if(!positions || positions.length < 2) return;
+		context.globalAlpha = brush.currentAlpha;
+		context.lineWidth = brush.currentSize * adjustzoom;
 		context.lineJoin = context.lineCap = "round";
 		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
-
-		context.beginPath(); 
-		var positions = $(this).data("positions");
-		$.each(positions,function(i,position){
-			if(i>0){
-				context.moveTo((positions[i-1].x*adjustzoom)-adjustx,(positions[i-1].y*adjustzoom)-adjusty);
-				context.lineTo((position.x*adjustzoom)-adjustx,(position.y*adjustzoom)-adjusty);
-			}
-		});
+		context.beginPath();
+		for(var i = 1; i < positions.length; i++){
+			context.moveTo((positions[i-1].x * adjustzoom) - adjustx, (positions[i-1].y * adjustzoom) - adjusty);
+			context.lineTo((positions[i].x * adjustzoom) - adjustx, (positions[i].y * adjustzoom) - adjusty);
+		}
 		context.stroke();
-
 	}
 });
 

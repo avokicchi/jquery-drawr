@@ -246,6 +246,7 @@
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
 						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+						plugin.request_redraw.call(self);
 					}
 				}
 			};
@@ -417,7 +418,7 @@
 					if(typeof result!=="undefined"){
 						plugin.record_undo_entry.call(self);
 					  }
-	  
+					plugin.request_redraw.call(self);
 				}
 				self._gestureAbortSnapshot = null;
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
@@ -601,6 +602,7 @@
 		//and the scroll indicators.
 		plugin.draw_animations = function(){
 			if(!this.classList.contains("active-drawr")) return;//end drawing loop
+			this._animFrameQueued = false;
 			var context = this.memoryContext;
 			context.clearRect(0,0,this.$memoryCanvas[0].width,this.$memoryCanvas[0].height);
 
@@ -687,7 +689,20 @@
 				context.stroke();
 			}
 
-			window.requestAnimationFrame(this.draw_animations_bound);
+			//we only keep the loop alive when there is work to do (effectCallback preview or scroll indicators fading in n out). Everything else is triggered via request_redraw.
+			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0){
+				this._animFrameQueued = true;
+				window.requestAnimationFrame(this.draw_animations_bound);
+			}
+		};
+
+		//schedule one animation frame. ignored if a frame is already queued.
+		//we call this whenever the memory canvas needs a refresh (border position changed due to scroll / rotation / zoom, or an effectCallback-using tool just started or stopped).
+		plugin.request_redraw = function(){
+			if(!this._animFrameQueued){
+				this._animFrameQueued = true;
+				window.requestAnimationFrame(this.draw_animations_bound);
+			}
 		};
 
 		/* Create floating dialog and appends it hidden after the canvas */
@@ -756,6 +771,7 @@
 			if(setTimer==true){
 				self.scrollTimer= 250;
 			}
+			plugin.request_redraw.call(self);
 		};
 
 		//call this to set canvas rotation angle (radians).
@@ -765,6 +781,7 @@
 			var transform = "translate(" + -self.scrollX + "px," + -self.scrollY + "px) rotate(" + angle + "rad)";
 			$(self).css("transform",transform);
 			if(self.$bgCanvas) self.$bgCanvas.css("transform",transform);
+			plugin.request_redraw.call(self);
 		};
 
 		//call this to set zoom. valid zoomFactor values are between 0.1 and 5
@@ -1004,14 +1021,14 @@
 
 				currentCanvas.plugin = plugin;
 				currentCanvas.rotationAngle = 0;
+				currentCanvas.draw_animations_bound = plugin.draw_animations.bind(currentCanvas);
+				currentCanvas._animFrameQueued = false;
 
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
 				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
-				currentCanvas.draw_animations_bound = plugin.draw_animations.bind(currentCanvas);
-				window.requestAnimationFrame(currentCanvas.draw_animations_bound);
 
 				//brush dialog
 				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",80);

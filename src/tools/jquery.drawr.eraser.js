@@ -6,7 +6,10 @@ jQuery.fn.drawr.register({
 	order: 5,
 	pressure_affects_alpha: true,
 	pressure_affects_size: true,
-	activate: function(brush,context){},
+	activate: function(brush,context){
+		brush._stampCache = null;
+		brush._stampCacheKey = null;
+	},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		if(this.settings.enable_transparency==true){
@@ -20,12 +23,23 @@ jQuery.fn.drawr.register({
 		var self = this;
 		context.globalAlpha = alpha;
 		if(self.settings.enable_transparency==true){
-			var radgrad = context.createRadialGradient(x,y,0,x,y,size/2);//non zero values for the gradient break globalAlpha unfortunately.
-			radgrad.addColorStop(0, '#000');
-			radgrad.addColorStop(0.5, 'rgba(0,0,0,0.5)');
-			radgrad.addColorStop(1, 'rgba(0,0,0,0)');
-			context.fillStyle = radgrad;
-			context.fillRect(x-(size/2), y-(size/2), size, size);
+			if(brush._stampCacheKey !== size){
+				var sz = Math.max(1, size);
+				var buffer = document.createElement('canvas');
+				buffer.width = sz;
+				buffer.height = sz;
+				var bctx = buffer.getContext('2d');
+				var half = sz / 2;
+				var radgrad = bctx.createRadialGradient(half, half, 0, half, half, half);
+				radgrad.addColorStop(0, '#000');
+				radgrad.addColorStop(0.5, 'rgba(0,0,0,0.5)');
+				radgrad.addColorStop(1, 'rgba(0,0,0,0)');
+				bctx.fillStyle = radgrad;
+				bctx.fillRect(0, 0, sz, sz);
+				brush._stampCache = buffer;
+				brush._stampCacheKey = size;
+			}
+			context.drawImage(brush._stampCache, x - size / 2, y - size / 2);
 		} else {
 	    	context.fillStyle = 'white';
 			context.beginPath();
