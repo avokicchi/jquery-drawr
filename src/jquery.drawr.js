@@ -35,6 +35,13 @@
 				plugin.eventArr.shift();
 			}
 		};
+
+		plugin.debug = function(text){
+			if($("#debug-output").length>0){
+				$("#debug-output").append(text + "<br/>");
+			}
+		};
+
 		//checks if a drawing event should be ignored.
 		//rule: if the majority of the last 25 events is stylus, ignore touch. 
 		//if true, it should be ignored
@@ -94,7 +101,7 @@
 				} else {
 					//TODO: add support for 3D touch of apple and other devices (oddly enough, the fairphone 3 seems to support this)
 					if(typeof event.originalEvent.touches[0].force!=="undefined" && pressure > 0){
-						this.pen_pressure=true;//this works, but at least on fairphone, the values are too low. testing needed on iOS devices.
+						this.pen_pressure=false;//this works, but at least on fairphone, the values are too low. testing needed on iOS devices. [edit] yeeeah this breaks touch on iphone and it's for 3d touch, not touch pressure.
 					} else {
 						this.pen_pressure=false;
 					}

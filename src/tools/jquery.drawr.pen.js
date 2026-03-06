@@ -14,6 +14,7 @@ jQuery.fn.drawr.register({
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
+
 		context.globalAlpha=alpha;
     	context.fillStyle = 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')';
 		context.beginPath();
