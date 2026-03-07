@@ -36,7 +36,7 @@ $("#canvas").drawr("start");
 - stop: stops
 - load(data_url): loads a data url into the canvas, adjusting the size of the canvas to match.
 - export(mime_type): returns a data url in the given format of the current drawing
-- button(buttonconfig): creates a button
+- button(buttonconfig): creates a button. $("#drawr-container .demo-canvas").drawr("button", {"icon":"mdi mdi-folder-open mdi-24px" }).on("mousedown"...etc)
 - destroy: cleans everything up
 - clear: clears the canvas 
 - createtoolset(name,tools): see minimal.html. Creates a set of tools.
