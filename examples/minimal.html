@@ -15,11 +15,7 @@
 	<link href="https://cdnjs.cloudflare.com/ajax/libs/MaterialDesign-Webfont/3.6.95/css/materialdesignicons.css" rel="stylesheet">
 
 	<script type="text/javascript" src="https://code.jquery.com/jquery-3.4.1.slim.min.js"></script>
-	<script type="text/javascript" src="../src/jquery.drawr.js"></script>
-	<script type="text/javascript" src="../src/jquery.drawrpalette.js"></script>
-	<script type="text/javascript" src="../src/tools/jquery.drawr.pencil.js"></script>
-	<script type="text/javascript" src="../src/tools/jquery.drawr.move.js"></script>
-	<script type="text/javascript" src="../src/tools/jquery.drawr.save.js"></script>
+	<script type="text/javascript" src="../dist/jquery.drawr.combined.js"></script>
 
 </head>
 <body>
@@ -37,8 +33,11 @@
 			"enable_transparency" : false,
 		    "canvas_width" : 800,
 		    "canvas_height" : 800,
-		    "toolbox_cols" : 3
+		    "toolbox_cols" : 2
 		});
+		$("#drawr-container .demo-canvas").drawr("createtoolset","minimal",["pencil","settings"]);
+		$("#drawr-container .demo-canvas").drawr("loadtoolset","minimal");
+
 		$("#drawr-container .demo-canvas").drawr("start");
 	}
 	init_canvas1();

@@ -32,13 +32,15 @@ $("#canvas").drawr("start");
 
 **Methods**
 
-- start
-- stop
-- load
-- export
-- button
-- destroy
-- clear
+- start: starts the canvas draw loop and loads tools
+- stop: stops
+- load(data_url): loads a data url into the canvas, adjusting the size of the canvas to match.
+- export(mime_type): returns a data url in the given format of the current drawing
+- button(buttonconfig): creates a button
+- destroy: cleans everything up
+- clear: clears the canvas 
+- createtoolset(name,tools): see minimal.html. Creates a set of tools.
+- loadtoolset(name): see minimal.html. Loads a set of tools.
 
 **Options**
 
@@ -47,10 +49,10 @@ $("#canvas").drawr("start");
 - canvas_width
 - canvas_height
 - undo_max_levels(5)
-- color_mode("presets","picker")
-- clear_on_init(true)
+- color_mode("presets","picker"): defines the behaviour of the color picker.
+- clear_on_init(true): whether to erase the canvas when it is loaded.
 - enable_scrollwheel_zooming(true)
-- toolbox_cols(2)
+- toolbox_cols(2): configure the toolbox size
 
 [demos and docs at this link](https://rawrfl.es/jquery-drawr/ "demos and docs at this link")
 

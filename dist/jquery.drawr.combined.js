@@ -18,7 +18,7 @@
 
 (function( $ ) {
  
-	$.fn.drawr = function( action, param ) {
+	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
 		plugin.distance_between = function(p1, p2) {
 		  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
@@ -856,6 +856,46 @@
 			return inlineStyles;
 		};
 
+		//toolset is only a parameter for more helpful errors.
+		plugin.get_tool_by_name = function(toolset,toolname){
+			var found = null;
+			for(var tool of $.fn.drawr.availableTools){
+				if(tool.name == toolname){
+					found = tool;
+				}
+			}
+			if(found==null){
+				throw new Error("Tool " + toolname + " not found, as referenced in " + toolset);
+			}
+			return found;
+		};
+
+		plugin.load_toolset = function(toolset){
+			//console.warn("loading toolset",toolset);
+			var self = this;
+			self.current_toolset = toolset;
+
+			if(toolset=="default"){
+				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
+				$.each($.fn.drawr.availableTools,function(i,tool){
+					var type = "brush";
+					if(typeof tool.type!=="undefined"){
+						type=tool.type;
+					}
+					plugin.create_button.call(self,self.$brushToolbox[0],type,tool);
+				});
+			} else {
+				for(var tool_name of self.toolsets[toolset]){
+					var tool = plugin.get_tool_by_name(toolset,tool_name);
+					var type = "brush";
+					if(typeof tool.type!=="undefined"){
+						type=tool.type;
+					}
+					plugin.create_button.call(self,self.$brushToolbox[0],type,tool);
+				}
+			}
+		};
+
 		//call with $(selector).drawr("export",mime)
 		//mime is optional, will default to png. returns a data url.
 		if ( action == "export" ) {
@@ -914,6 +954,11 @@
 					console.error("The element you are running this command on is not a drawr canvas.");
 					return false;//can't start if not initialized.
 				}
+
+				if(typeof currentCanvas.current_toolset=="undefined" && currentCanvas.current_toolset!=="default"){
+					plugin.load_toolset.call(currentCanvas,"default");
+				}
+
 				$(".drawr-toolbox").hide();
 				$(".drawr-toolbox-brush").show();
 				$(".drawr-toolbox-palette").show();
@@ -930,6 +975,31 @@
 					}
 				});
 				$(".drawr-toolbox").hide();
+			} else if ( action === "createtoolset" ) {
+
+				if(typeof currentCanvas.toolsets=="undefined") currentCanvas.toolsets = {};
+				if(typeof param!=="string" || typeof param2!=="object" || Array.isArray(param2)==false){
+					throw new Error("Invalid parameters");
+				}
+				currentCanvas.toolsets[param] = param2;
+
+				console.warn("createtoolset called",currentCanvas.toolsets);
+
+			} else if ( action === "loadtoolset" ) {
+
+				if(typeof currentCanvas.toolsets=="undefined") currentCanvas.toolsets = {};
+
+				if(typeof param!=="string"){
+					throw new Error("Invalid parameters");
+				}
+
+				if(param in currentCanvas.toolsets){
+
+					plugin.load_toolset.call(currentCanvas,param);
+
+				} else {
+					throw new Error("Toolset not found");
+				}
 
 			//call with $(selector).drawr("load",something) to load an image.
 			//todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
@@ -1074,16 +1144,6 @@
 				var width = defaultSettings.toolbox_cols * 40;
 				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",width);
 
-				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
-
-				$.each($.fn.drawr.availableTools,function(i,tool){
-					var type = "brush";
-					if(typeof tool.type!=="undefined"){
-						type=tool.type;
-					}
-					plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],type,tool);
-				});
-	
 				plugin.bind_draw_events.call(currentCanvas);
 			}
 		});
