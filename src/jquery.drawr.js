@@ -1,9 +1,8 @@
 /*!
-* jquery.drawr.js
-* https://github.com/avokicchi/jquery-drawr
-* Copyright (c) 2019 Lieuwe Prins
-* Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
-*/
+ * jquery-drawr
+ * Copyright (c) 2019–present Lieuwe Prins
+ * Released under the MIT License
+ */
 
 (function( $ ) {
  
@@ -498,7 +497,7 @@
 
 			el.on("mousedown.drawr touchstart.drawr", function(e){
 				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
-				if($(this).data("type")=="action" && typeof data.action!=="undefined") {
+				if(typeof data.action!=="undefined") {
 					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
 					data.action.call(self,data,ctx);
 				}
@@ -954,11 +953,15 @@
 				$(window).unbind("wheel.drawr mousedown.drawr", currentCanvas.scrollWheel);
 				$(window).off("resize.drawr", currentCanvas.onWindowResize);
 
+				$.each($.fn.drawr.availableTools,function(i,tool){
+					if(typeof tool.cleanup!=="undefined"){
+						tool.cleanup.call(this);
+					}
+				});
+
 				currentCanvas.$memoryCanvas.remove();
 				if(currentCanvas.$bgCanvas){ currentCanvas.$bgCanvas.remove(); delete currentCanvas.$bgCanvas; }
 				currentCanvas.$brushToolbox.remove();
-				currentCanvas.$settingsToolbox.remove();
-				currentCanvas.$zoomToolbox.remove();
 
 				delete currentCanvas.$memoryCanvas;
 				delete currentCanvas.memoryContext;
@@ -967,14 +970,11 @@
 				delete currentCanvas.containerWidth;
 				delete currentCanvas.containerHeight;
 				delete currentCanvas.$brushToolbox;
-				delete currentCanvas.$settingsToolbox;
-				delete currentCanvas.$zoomToolbox;
 
 				delete currentCanvas.plugin;
 				delete currentCanvas.settings;
 				delete currentCanvas.undoStack;
 				delete currentCanvas.brushColor;
-				delete currentCanvas.$undoButton;
 				delete currentCanvas.active_brush;
 				delete currentCanvas.zoomFactor;
 				delete currentCanvas.scrollX;
@@ -989,13 +989,11 @@
 				delete currentCanvas.drawMove;
 				delete currentCanvas.drawStop;
 				delete currentCanvas.scrollWheel;
-				delete scrollTimer;//eh, this doesnt do anything
+				delete currentCanvas.scrollTimer;
 
 				//reset css and visuals and scrolls
-
 				$(currentCanvas).width(currentCanvas.width);
 				$(currentCanvas).height(currentCanvas.height);
-
 				$(currentCanvas).css("transform","translate(0px,0px)");
 
 				//reset styles to what they were.
@@ -1060,8 +1058,6 @@
 
 				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
 
-				//console.warn("available tools",$.fn.drawr.availableTools);
-
 				$.each($.fn.drawr.availableTools,function(i,tool){
 					var type = "brush";
 					if(typeof tool.type!=="undefined"){
@@ -1069,85 +1065,7 @@
 					}
 					plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],type,tool);
 				});
-				//currentCanvas.$brushToolbox.append("<div style='clear:both;border-top:2px solid #000;' class='seperator'></div>");
-				plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-palette-outline mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
-					currentCanvas.$settingsToolbox.toggle();
-				});
-				plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-magnify mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
-					currentCanvas.$zoomToolbox.toggle();
-				});				
-				currentCanvas.$undoButton=plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",{"icon":"mdi mdi-undo-variant mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
-					if(currentCanvas.undoStack.length>0){
-						//the current property is because of the way some tools work it is needed to always keep a copy of the canvas' latest state (AFTER last draw action was done) in the undo buffer. 
-						//obviously you want to go back to the previous version, not the current one, so that one is ignored.
-						if(currentCanvas.undoStack[currentCanvas.undoStack.length-1].current==true){
-							currentCanvas.undoStack.pop();//ignore current version of canvas
-						}
-						$.each(currentCanvas.undoStack,function(i,stackitem){
-							stackitem.current=false;
-						});
-						if(currentCanvas.undoStack.length>0) {//is there anything noncurrent 
-							var undo = currentCanvas.undoStack.pop().data;
-							var img = document.createElement("img");
-							img.crossOrigin = "Anonymous";
-
-							img.onload = function(){
-								currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
-								//currentCanvas.plugin.initialize_canvas.call(currentCanvas,img.width,img.height,false);
-								context.globalCompositeOperation="source-over";
-								context.globalAlpha = 1;
-								context.drawImage(img,0,0);
-							};
-							img.src=undo;
-						}
-						if(currentCanvas.undoStack.length==0) {//re-add current version of the canvas.
-							currentCanvas.$undoButton.css("opacity",0.5);
-						}
-						currentCanvas.undoStack.push({data:undo,current:true});
-					}
-				});
-				currentCanvas.$undoButton.css("opacity",0.5);
-				//color dialog
-				currentCanvas.$settingsToolbox = plugin.create_toolbox.call(currentCanvas,"settings",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Settings",80);
-
-				if(currentCanvas.settings.color_mode=="presets"){
-					var colors = ["#FFFFFF","#0074D9","#2ECC40","#FFDC00","#FF4136","#111111"];
-					$.each(colors,function(i,color){
-						plugin.create_button.call(currentCanvas,currentCanvas.$settingsToolbox[0],"color",{"icon":""},{"background":color}).on("touchstart.drawr mousedown.drawr",function(){
-							currentCanvas.brushColor = plugin.hex_to_rgb(color);
-							if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
-							plugin.is_dragging=false;
-						});
-					});
-				}else {
-					currentCanvas.$settingsToolbox.append("<input type='text' class='color-picker'/>");
-					currentCanvas.$settingsToolbox.find('.color-picker').drawrpalette().on("choose.drawrpalette",function(event,hexcolor){
-						currentCanvas.brushColor = plugin.hex_to_rgb(hexcolor);
-						if(typeof currentCanvas.active_brush.activate!=="undefined") currentCanvas.active_brush.activate.call(currentCanvas,currentCanvas.active_brush,context);
-					});
-				}
-				plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"alpha", 0,100,parseInt(100*defaultSettings.inital_brush_alpha)).on("input.drawr",function(){
-					currentCanvas.brushAlpha = parseFloat(this.value/100);
-					currentCanvas.active_brush.alpha = parseFloat(this.value/100);;
-					plugin.is_dragging=false;
-				});
-				plugin.create_slider.call(currentCanvas, currentCanvas.$settingsToolbox,"size", 1,100,defaultSettings.inital_brush_size).on("input.drawr",function(){
-					currentCanvas.brushSize = this.value;
-					currentCanvas.active_brush.size = this.value;
-					plugin.is_dragging=false;
-				});
-				//size dialog
-				//zoom dialog
-				currentCanvas.$zoomToolbox = plugin.create_toolbox.call(currentCanvas,"zoom",{ left: $(currentCanvas).parent().offset().left + $(currentCanvas).parent().innerWidth() - 80, top: $(currentCanvas).parent().offset().top },"Zoom",80);
-				plugin.create_slider.call(currentCanvas, currentCanvas.$zoomToolbox,"zoom", 0,400,100).on("input.drawr",function(){
-					//currentCanvas.brushAlpha = parseFloat(this.value/100);
-					var cleaned = Math.ceil(this.value/10)*10;
-					$(this).next().text(cleaned);
-
-					plugin.apply_zoom.call(currentCanvas,cleaned/100);
-
-				});
-
+	
 				plugin.bind_draw_events.call(currentCanvas);
 			}
 		});
@@ -1161,6 +1079,4 @@
 		$.fn.drawr.availableTools.push(tool);
 	};
 
-	//go to center? do dis: plugin.apply_scroll.call(currentCanvas,((currentCanvas.width*currentCanvas.zoomFactor)-$(currentCanvas).parent().width())/2,((currentCanvas.height*currentCanvas.zoomFactor)-$(currentCanvas).parent().height())/2,true);
- 
 }( jQuery ));

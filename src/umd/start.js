@@ -7,6 +7,6 @@
     factory(root.jQuery);
   }
 }(typeof self !== "undefined" ? self : this, function ($) {
-  //"use strict";
+  "use strict";
   if (!$) throw new Error("jquery-drawr requires jQuery");
   var jQuery = $;
