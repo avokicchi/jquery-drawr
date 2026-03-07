@@ -54,7 +54,7 @@ $("#canvas").drawr("start");
 - enable_scrollwheel_zooming(true)
 - toolbox_cols(2): configure the toolbox size
 
-Also available on npm. For installation,
+Also available [on npm](https://www.npmjs.com/package/jquery-drawr). For installation,
 
 npm install jquery-drawr
 
