@@ -3,7 +3,7 @@ jQuery.fn.drawr.register({
 	name: "marker",
 	size: 15,
 	alpha: 0.3,
-	order: 10,
+	order: 9,
 	pressure_affects_alpha: false,
 	pressure_affects_size: false,
 	activate: function(brush,context){

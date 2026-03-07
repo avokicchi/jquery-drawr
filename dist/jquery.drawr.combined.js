@@ -1908,7 +1908,7 @@ jQuery.fn.drawr.register({
 	name: "marker",
 	size: 15,
 	alpha: 0.3,
-	order: 10,
+	order: 9,
 	pressure_affects_alpha: false,
 	pressure_affects_size: false,
 	activate: function(brush,context){
@@ -1978,7 +1978,7 @@ jQuery.fn.drawr.register({
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-cursor-move mdi-24px",
 	name: "move",
-	order: 9,
+	order: 10,
 	activate: function(brush,context){
 		$(this).parent().css({"cursor":"move"});//"overflow":"scroll",
 	},
@@ -2198,7 +2198,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-content-save mdi-24px",
 	name: "pen",
 	type: "action",
-	order: 20,
+	order: 19,
 	action: function(brush,context){
 		var imagedata = $(this).drawr("export","image/png");
 		var element = document.createElement('a');
@@ -2525,7 +2525,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-magnify mdi-24px",
 	name: "zoom",
 	type: "toggle",
-	order: 12,
+	order: 21,
 	buttonCreated: function(brush,button){
 
 		var self = this;

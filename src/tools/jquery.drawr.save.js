@@ -2,7 +2,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-content-save mdi-24px",
 	name: "pen",
 	type: "action",
-	order: 20,
+	order: 19,
 	action: function(brush,context){
 		var imagedata = $(this).drawr("export","image/png");
 		var element = document.createElement('a');
