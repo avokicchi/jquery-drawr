@@ -134,7 +134,7 @@
 		};
 		plugin.draw_hsl = function(hue,canvas){
 			var ctx = canvas.getContext('2d');
-			for(row=0; row<100; row++){
+			for(var row=0; row<100; row++){
 				var grad = ctx.createLinearGradient(0, 0, 100,0);
 				grad.addColorStop(0, 'hsl('+hue+', 0%, '+(100-row)+'%)');
 				grad.addColorStop(1, 'hsl('+hue+', 100%, '+(50-row/2)+'%)');

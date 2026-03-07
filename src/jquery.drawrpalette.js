@@ -1,9 +1,8 @@
 /*!
-* jquery.drawrpalette.js
-* https://github.com/avokicchi/jquery-drawrpalette
-* Copyright (c) 2019 Lieuwe Prins
-* Licensed under the MIT license (http://www.opensource.org/licenses/mit-license.php)
-*/
+ * jquery-drawrpalette
+ * Copyright (c) 2019–present Lieuwe Prins
+ * Released under the MIT License
+ */
 
 (function( $ ) {
  
@@ -108,7 +107,7 @@
             ctx.clearRect(0,0,canvas.width,canvas.height);
 
             //draw hsl color space
-			for(row=0; row<size; row++){
+			for(var row=0; row<size; row++){
 				var grad = ctx.createLinearGradient(0, 0, size,0);               
                 var value = (size-row)/size;
                 
@@ -121,7 +120,7 @@
 				ctx.fillRect(plugin.offset, row+plugin.offset, size, 1);
 			}	
             //draw hue
-            for(row=0; row<size; row++){
+            for(var row=0; row<size; row++){
                 ctx.fillStyle="hsl(" + ((360/size)*row) + ", 100%, 50%)";
                 ctx.fillRect(size+plugin.offset+5, row+plugin.offset, 40, 1);
             }	
