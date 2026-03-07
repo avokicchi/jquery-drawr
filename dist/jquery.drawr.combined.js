@@ -501,25 +501,53 @@
 		/* Inserts a button into a toolbox */
 		plugin.create_button = function(toolbox,type,data,css){
 			var self=this;
+
 			var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
 			el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
 			if(typeof css!=="undefined") el.css(css);
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
-			el.on("mousedown.drawr touchstart.drawr", function(e){
-				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
-				if($(this).data("type")=="toggle") {//toggle data attribute and select effect
-					if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
-					$(this).data("state",!$(this).data("state"));
-					if($(this).data("state")==true){
-						$(this).css({ "background" : "orange", "color" : "white" });
-					} else {
-						$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
+
+			if(type=="file"){//special case
+				var filePicker = $('<input type="file" class="drawr-filepicker-fix" accept="image/*">').css({
+					position: 'absolute', 
+					top: 0, 
+					left: 0,
+					width: "100%",
+					height: "100%",
+					opacity: 0,
+					cursor: 'pointer'
+				});
+				el.css({
+					'position' : 'relative'
+				}).append(filePicker);
+				filePicker[0].onchange = function(){
+					debugit("filepicker changed");
+					var file = filePicker[0].files[0];
+					if (!file || !file.type.startsWith('image/')){ return; }
+					var reader = new FileReader();
+					reader.onload = function(e) {
+						$(self).drawr("load",e.target.result);//hacky, but works
+					};
+					reader.readAsDataURL(file);
+				};
+			} else {
+
+				el.on("mousedown.drawr touchstart.drawr", function(e){
+					if($(this).data("type")=="brush") plugin.select_button.call(self,this);
+					if($(this).data("type")=="toggle") {//toggle data attribute and select effect
+						if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
+						$(this).data("state",!$(this).data("state"));
+						if($(this).data("state")==true){
+							$(this).css({ "background" : "orange", "color" : "white" });
+						} else {
+							$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
+						}
 					}
-				}
-				e.stopPropagation();
-				e.preventDefault();
-			});
+					e.stopPropagation();
+					e.preventDefault();
+				});
+			}
 			$(toolbox).append(el);
 			return el;
 		};
@@ -543,6 +571,14 @@
 			this.origParentStyles = plugin.get_styles($(this).parent()[0]);
 			$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none", "position": "relative", "z-index": 1 });
 			$(this).parent().css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none" });
+
+			const style = document.createElement('style');
+			style.textContent = `
+			.drawr-filepicker-fix::-webkit-file-upload-button {
+			    width: 38px;
+			}
+			`;
+			document.head.appendChild(style);//hacky, but I don't know another way to do this. 
 
 			if(this.settings.enable_transparency_image==true){
 				if(!this.$bgCanvas){
@@ -870,7 +906,7 @@
 			var collection = $();
 			this.each(function() {
 				var currentCanvas = this;
-				var newButton = plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"action",param);
+				var newButton = plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],typeof param.type=="undefined" ? "action" : param.type,param);
 				collection=collection.add(newButton);
 			});
 			return collection;

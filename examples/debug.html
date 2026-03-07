@@ -16,11 +16,11 @@
 	}
 	</style>
 	<link href="https://cdnjs.cloudflare.com/ajax/libs/MaterialDesign-Webfont/3.6.95/css/materialdesignicons.css" rel="stylesheet">
-	<link href='http://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
+	<link href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
 	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
 
 	<script type="text/javascript" src="https://code.jquery.com/jquery-3.4.1.slim.min.js"></script>
-	<script type="text/javascript" src="../dist/jquery.drawr.combined.js"></script>
+	<script type="text/javascript" src="../dist/jquery.drawr.combined.js?v=2"></script>
 
 </head>
 <body>
@@ -39,7 +39,11 @@
 
 <script type="text/javascript">
 
-	window.addEventListener("contextmenu", function(evt){evt.preventDefault();return false;});//for demo purposes, context menus break interactivity, so.
+	function debugit(text){
+		$("#debug-output").append(text + "<br/>");
+	}
+
+	//window.addEventListener("contextmenu", function(evt){evt.preventDefault();return false;});//for demo purposes, context menus break interactivity, so.
 
 	$("#drawr-container3 .demo-canvas").drawr({ "enable_transparency" : true, enable_transparency_image: true });
 
@@ -48,27 +52,14 @@
 	//add custom load button. File input is overlaid directly on the button so iOS
 	//treats the tap as a direct user interaction with the input (required on iOS).
 	var loadButton = $("#drawr-container3 .demo-canvas").drawr("button", {
-		"icon":"mdi mdi-folder-open mdi-24px"
+		"icon":"mdi mdi-folder-open mdi-24px",
+		"type":"file"
 	});
-	var filePicker = $('<input type="file" accept="image/*">').css({
-		position: 'absolute', top: 0, left: 0,
-		width: '100%', height: '100%',
-		opacity: 0, cursor: 'pointer'
-	});
-	loadButton.css('position', 'relative').append(filePicker);
-	filePicker[0].onchange = function(){
-		var file = filePicker[0].files[0];
-		if (!file || !file.type.startsWith('image/')){ return; }
-		var reader = new FileReader();
-		reader.onload = function(e) {
-			$("#drawr-container3 .demo-canvas").drawr("load",e.target.result);
-		};
-		reader.readAsDataURL(file);
-	};
 
 	var buttoncollection = $("#drawr-container3 .demo-canvas").drawr("button", {
 		"icon":"mdi mdi-content-save mdi-24px"
 	}).on("touchstart mousedown",function(){
+		debugit("the save button gets events");
 		var imagedata = $("#drawr-container3 .demo-canvas").drawr("export","image/png");
 		var element = document.createElement('a');
 		element.setAttribute('href', imagedata);// 'data:text/plain;charset=utf-8,' + encodeURIComponent("sillytext"));
