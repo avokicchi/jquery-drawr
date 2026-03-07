@@ -508,50 +508,29 @@
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
 
-			if(type=="file"){//special case
-				var filePicker = $('<input type="file" class="drawr-filepicker-fix" accept="image/*">').css({
-					position: 'absolute', 
-					top: 0, 
-					left: 0,
-					width: "100%",
-					height: "100%",
-					opacity: 0,
-					cursor: 'pointer'
-				});
-				el.css({
-					'position' : 'relative'
-				}).append(filePicker);
-				filePicker[0].onchange = function(){
-					var file = filePicker[0].files[0];
-					if (!file || !file.type.startsWith('image/')){ return; }
-					var reader = new FileReader();
-					reader.onload = function(e) {
-						$(self).drawr("load",e.target.result);//hacky, but works
-					};
-					reader.readAsDataURL(file);
-				};
-			} else {
+			el.on("mousedown.drawr touchstart.drawr", function(e){
+				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
+				if($(this).data("type")=="action" && typeof data.action!=="undefined") {
+					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
+					data.action.call(self,data,ctx);
+				}
+				if($(this).data("type")=="toggle") {//toggle data attribute and select effect
+					if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
+					$(this).data("state",!$(this).data("state"));
+					if($(this).data("state")==true){
+						$(this).css({ "background" : "orange", "color" : "white" });
+					} else {
+						$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
+					}
+				}
+				e.stopPropagation();
+				e.preventDefault();
+			});
 
-				el.on("mousedown.drawr touchstart.drawr", function(e){
-					if($(this).data("type")=="brush") plugin.select_button.call(self,this);
-					if($(this).data("type")=="action") {
-						var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
-						data.action.call(self,data,ctx);
-					}
-					if($(this).data("type")=="toggle") {//toggle data attribute and select effect
-						if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
-						$(this).data("state",!$(this).data("state"));
-						if($(this).data("state")==true){
-							$(this).css({ "background" : "orange", "color" : "white" });
-						} else {
-							$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
-						}
-					}
-					e.stopPropagation();
-					e.preventDefault();
-				});
-			}
 			$(toolbox).append(el);
+			if(typeof data.buttonCreated!=="undefined"){
+				data.buttonCreated.call(self,data,el);
+			}
 			return el;
 		};
 
@@ -1093,7 +1072,7 @@
 
 				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
 
-				console.warn("available tools",$.fn.drawr.availableTools);
+				//console.warn("available tools",$.fn.drawr.availableTools);
 
 				$.each($.fn.drawr.availableTools,function(i,tool){
 					var type = "brush";
@@ -1912,9 +1891,34 @@ jQuery.fn.drawr.register({
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-folder-open mdi-24px",
 	name: "load",
-	type: "file",
+	type: "action",
 	order: 20,
-	action: function(brush,context){
+	buttonCreated: function(brush,button){
+
+		var self = this;
+
+		var filePicker = $('<input type="file" class="drawr-filepicker-fix" accept="image/*">').css({
+			position: 'absolute', 
+			top: 0, 
+			left: 0,
+			width: "100%",
+			height: "100%",
+			opacity: 0,
+			cursor: 'pointer'
+		});
+		button.css({
+			'position' : 'relative'
+		}).append(filePicker);
+		filePicker[0].onchange = function(){
+			var file = filePicker[0].files[0];
+			if (!file || !file.type.startsWith('image/')){ return; }
+			var reader = new FileReader();
+			reader.onload = function(e) {
+				$(self).drawr("load",e.target.result);//hacky, but works
+			};
+			reader.readAsDataURL(file);
+		};
+
 	}
 
 });
