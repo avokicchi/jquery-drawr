@@ -466,9 +466,11 @@
 		//Call this before any canvas manipulation. it is automatically done with most tool plugins.
 		//works as long as you call it with a "this" of the canvas
 		plugin.record_undo_entry = function(){
-			this.$undoButton.css("opacity",1);
-			  this.undoStack.push({data: this.toDataURL("image/png"),current: true});
-			  if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
+			if(typeof this.$undoButton!=="undefined"){
+				this.$undoButton.css("opacity",1);
+			}
+			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
+			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
 		};
 
 		//calls a tool plugin's activate_brush call. 
@@ -501,8 +503,10 @@
 		plugin.create_button = function(toolbox,type,data,css){
 			var self=this;
 
+
+			var button_width = 100/self.settings.toolbox_cols;
 			var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
-			el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : "50%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
+			el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : button_width + "%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
 			if(typeof css!=="undefined") el.css(css);
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
@@ -1034,7 +1038,8 @@
 					"canvas_height" : $(currentCanvas).parent().innerHeight(),
 					"undo_max_levels" : 5,
 					"color_mode" : "picker",
-					"clear_on_init" : true
+					"clear_on_init" : true,
+					"toolbox_cols" : 2
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
@@ -1066,7 +1071,8 @@
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
 
 				//brush dialog
-				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",80);
+				var width = defaultSettings.toolbox_cols * 40;
+				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",width);
 
 				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
 

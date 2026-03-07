@@ -50,6 +50,7 @@ $("#canvas").drawr("start");
 - color_mode("presets","picker")
 - clear_on_init(true)
 - enable_scrollwheel_zooming(true)
+- toolbox_cols(2)
 
 [demos and docs at this link](https://rawrfl.es/jquery-drawr/ "demos and docs at this link")
 
