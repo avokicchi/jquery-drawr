@@ -39,26 +39,6 @@
 
 	$("#drawr-container3 .demo-canvas").drawr("start");
 
-	//add custom load button. File input is overlaid directly on the button so iOS
-	//treats the tap as a direct user interaction with the input (required on iOS).
-	var loadButton = $("#drawr-container3 .demo-canvas").drawr("button", {
-		"icon":"mdi mdi-folder-open mdi-24px",
-		"type":"file"
-	});
-
-	var buttoncollection = $("#drawr-container3 .demo-canvas").drawr("button", {
-		"icon":"mdi mdi-content-save mdi-24px"
-	}).on("touchstart mousedown",function(){
-		var imagedata = $("#drawr-container3 .demo-canvas").drawr("export","image/png");
-		var element = document.createElement('a');
-		element.setAttribute('href', imagedata);// 'data:text/plain;charset=utf-8,' + encodeURIComponent("sillytext"));
-		element.setAttribute('download', "test.png");
-		element.style.display = 'none';
-		document.body.appendChild(element);
-		element.click();
-		document.body.removeChild(element);
-	});
-
 </script>
 
 </body>

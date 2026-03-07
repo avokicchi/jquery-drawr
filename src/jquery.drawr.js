@@ -510,7 +510,6 @@
 					'position' : 'relative'
 				}).append(filePicker);
 				filePicker[0].onchange = function(){
-					debugit("filepicker changed");
 					var file = filePicker[0].files[0];
 					if (!file || !file.type.startsWith('image/')){ return; }
 					var reader = new FileReader();
@@ -523,6 +522,10 @@
 
 				el.on("mousedown.drawr touchstart.drawr", function(e){
 					if($(this).data("type")=="brush") plugin.select_button.call(self,this);
+					if($(this).data("type")=="action") {
+						var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
+						data.action.call(self,data,ctx);
+					}
 					if($(this).data("type")=="toggle") {//toggle data attribute and select effect
 						if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
 						$(this).data("state",!$(this).data("state"));
@@ -1076,10 +1079,16 @@
 				//brush dialog
 				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",80);
 
-				$.fn.drawr.availableBrushes.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
+				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
 
-				$.each($.fn.drawr.availableBrushes,function(i,brush){
-					plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"brush",brush);
+				console.warn("available tools",$.fn.drawr.availableTools);
+
+				$.each($.fn.drawr.availableTools,function(i,tool){
+					var type = "brush";
+					if(typeof tool.type!=="undefined"){
+						type=tool.type;
+					}
+					plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],type,tool);
 				});
 				//currentCanvas.$brushToolbox.append("<div style='clear:both;border-top:2px solid #000;' class='seperator'></div>");
 				plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],"toggle",{"icon":"mdi mdi-palette-outline mdi-24px"}).on("touchstart.drawr mousedown.drawr",function(){
@@ -1167,10 +1176,10 @@
  
 	};
 
-	/* Register a new brush */
-	$.fn.drawr.register = function (brush){
-		if(typeof $.fn.drawr.availableBrushes=="undefined") $.fn.drawr.availableBrushes=[];
-		$.fn.drawr.availableBrushes.push(brush);
+	/* Register a new tool */
+	$.fn.drawr.register = function (tool){
+		if(typeof $.fn.drawr.availableTools=="undefined") $.fn.drawr.availableTools=[];
+		$.fn.drawr.availableTools.push(tool);
 	};
 
 	//go to center? do dis: plugin.apply_scroll.call(currentCanvas,((currentCanvas.width*currentCanvas.zoomFactor)-$(currentCanvas).parent().width())/2,((currentCanvas.height*currentCanvas.zoomFactor)-$(currentCanvas).parent().height())/2,true);
