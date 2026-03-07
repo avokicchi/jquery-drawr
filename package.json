@@ -1,6 +1,6 @@
 {
   "name": "jquery-drawr",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "Transform any canvas into a drawing area",
   "main": "dist/jquery.drawr.combined.js",
   "unpkg": "dist/jquery.drawr.combined-min.js",
@@ -31,7 +31,7 @@
     "gulp-terser": "^2.1.0"
   },
   "scripts": {
-    "build": "gulp",
+    "build": "gulp scripts",
     "prepublishOnly": "npm run build"
   },
   "files": [
