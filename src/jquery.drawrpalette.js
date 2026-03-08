@@ -190,6 +190,7 @@
                 $(window).unbind("mousedown.drawrpalette touchstart.drawrpalette",currentPicker.paletteStart);
                 $(window).unbind("mousemove.drawrpalette touchmove.drawrpalette",currentPicker.paletteMove);
                 $(window).unbind("mouseup.drawrpalette touchend.drawrpalette",currentPicker.paletteStop);
+                currentPicker.$dropdown.off("mouseup.drawrpalette touchstop.drawrpalette");
 
                 //show original input
                 $(currentPicker).show();
@@ -236,6 +237,7 @@
 		    	var defaultSettings = {
 		    		"enable_alpha" : false,
                     "append_to" : currentPicker,
+                    "auto_apply" : false
 		    	};
 	        	if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 	        	currentPicker.settings = defaultSettings;
@@ -270,12 +272,14 @@
                 var canvas_height = plugin.pickerSize+(plugin.offset*2);
                 var canvas_width = plugin.pickerSize+40+(plugin.offset*2)+5;
 				currentPicker.$dropdown=$("<div><canvas style='display:block;' class='drawrpallete-canvas' width=" + canvas_width + " height=" + canvas_height + " style='height:" + canvas_height + "px;width:" + canvas_width + "px;'></canvas></div>");
-                currentPicker.$dropdown.append('<div style="height:28px;text-align:right;margin-top:-2px;padding:0px 5px;"><button class="cancel">cancel</button><button style="margin-left:5px;width:40px;" class="ok">ok</button></div>');
+                if(currentPicker.settings.auto_apply==false){
+                    currentPicker.$dropdown.append('<div style="height:28px;text-align:right;margin-top:-2px;padding:0px 5px;"><button class="cancel">cancel</button><button style="margin-left:5px;width:40px;" class="ok">ok</button></div>');
+                }
 				this.$wrapper.append(currentPicker.$dropdown);
                 currentPicker.$dropdown.css({
                    "background" : "#eee",
                    "width" : canvas_width + "px",
-                   "height" : (canvas_height+ 28) + "px",
+                   "height" : (currentPicker.settings.auto_apply ? canvas_height : (canvas_height+ 28)) + "px",
                    "position" : "absolute",
                    "z-index" : 8
                 });
@@ -316,6 +320,20 @@
                     e.preventDefault();
                     e.stopPropagation();
                 });
+                currentPicker.$dropdown.on("mouseup.drawrpalette touchstop.drawrpalette",function(e){
+                    var mouse_data = plugin.get_mouse_value(e,currentPicker.$dropdown);
+                    if(mouse_data.x>0 && mouse_data.x<plugin.pickerSize && mouse_data.y>0 && mouse_data.y<plugin.pickerSize){
+                        if(currentPicker.settings.auto_apply==true){
+                            plugin.update_value.call(currentPicker);
+                            $(currentPicker).trigger("choose.drawrpalette",$(currentPicker).val());
+                            currentPicker.$dropdown.hide();
+                            $(currentPicker).trigger("close.drawrpalette");
+                        }
+                    }
+                });
+
+
+
 				currentPicker.$dropdown.hide();
                
                 currentPicker.$button.on("mousedown.drawrpalette touchstart.drawrpalette",function(e){

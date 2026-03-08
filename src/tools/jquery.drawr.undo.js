@@ -1,6 +1,6 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-undo-variant mdi-24px",
-	name: "zoom",
+	name: "undo",
 	type: "action",
 	order: 12,
 	buttonCreated: function(brush,button){

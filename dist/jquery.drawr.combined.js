@@ -1351,6 +1351,7 @@
                 $(window).unbind("mousedown.drawrpalette touchstart.drawrpalette",currentPicker.paletteStart);
                 $(window).unbind("mousemove.drawrpalette touchmove.drawrpalette",currentPicker.paletteMove);
                 $(window).unbind("mouseup.drawrpalette touchend.drawrpalette",currentPicker.paletteStop);
+                currentPicker.$dropdown.off("mouseup.drawrpalette touchstop.drawrpalette");
 
                 //show original input
                 $(currentPicker).show();
@@ -1397,6 +1398,7 @@
 		    	var defaultSettings = {
 		    		"enable_alpha" : false,
                     "append_to" : currentPicker,
+                    "auto_apply" : false
 		    	};
 	        	if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 	        	currentPicker.settings = defaultSettings;
@@ -1431,12 +1433,14 @@
                 var canvas_height = plugin.pickerSize+(plugin.offset*2);
                 var canvas_width = plugin.pickerSize+40+(plugin.offset*2)+5;
 				currentPicker.$dropdown=$("<div><canvas style='display:block;' class='drawrpallete-canvas' width=" + canvas_width + " height=" + canvas_height + " style='height:" + canvas_height + "px;width:" + canvas_width + "px;'></canvas></div>");
-                currentPicker.$dropdown.append('<div style="height:28px;text-align:right;margin-top:-2px;padding:0px 5px;"><button class="cancel">cancel</button><button style="margin-left:5px;width:40px;" class="ok">ok</button></div>');
+                if(currentPicker.settings.auto_apply==false){
+                    currentPicker.$dropdown.append('<div style="height:28px;text-align:right;margin-top:-2px;padding:0px 5px;"><button class="cancel">cancel</button><button style="margin-left:5px;width:40px;" class="ok">ok</button></div>');
+                }
 				this.$wrapper.append(currentPicker.$dropdown);
                 currentPicker.$dropdown.css({
                    "background" : "#eee",
                    "width" : canvas_width + "px",
-                   "height" : (canvas_height+ 28) + "px",
+                   "height" : (currentPicker.settings.auto_apply ? canvas_height : (canvas_height+ 28)) + "px",
                    "position" : "absolute",
                    "z-index" : 8
                 });
@@ -1477,6 +1481,20 @@
                     e.preventDefault();
                     e.stopPropagation();
                 });
+                currentPicker.$dropdown.on("mouseup.drawrpalette touchstop.drawrpalette",function(e){
+                    var mouse_data = plugin.get_mouse_value(e,currentPicker.$dropdown);
+                    if(mouse_data.x>0 && mouse_data.x<plugin.pickerSize && mouse_data.y>0 && mouse_data.y<plugin.pickerSize){
+                        if(currentPicker.settings.auto_apply==true){
+                            plugin.update_value.call(currentPicker);
+                            $(currentPicker).trigger("choose.drawrpalette",$(currentPicker).val());
+                            currentPicker.$dropdown.hide();
+                            $(currentPicker).trigger("close.drawrpalette");
+                        }
+                    }
+                });
+
+
+
 				currentPicker.$dropdown.hide();
                
                 currentPicker.$button.on("mousedown.drawrpalette touchstart.drawrpalette",function(e){
@@ -1616,7 +1634,7 @@ jQuery.fn.drawr.register({
 });
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-brush mdi-24px",
-	name: "pen",
+	name: "brush",
 	size: 6,
 	alpha: 0.5,
 	order: 4,
@@ -1712,15 +1730,30 @@ jQuery.fn.drawr.register({
 });
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-eyedropper mdi-24px",
-	name: "pen",
+	name: "eyedropper",
 	order: 6,
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,event){},
-	drawSpot: function(brush,context,x,y,pressure,event) {
+	drawStart: function(brush,context,x,y,size,alpha,event){
+
+		var rgb_to_hex = function(r, g, b) {
+            var rgb = b | (g << 8) | (r << 16);
+            return '#' + (0x1000000 + rgb).toString(16).slice(1)
+        };
+
 		var self = this;
 		var raw = context.getImageData(x, y, 1, 1).data; 
 		self.brushColor={ r: raw[0], g: raw[1], b: raw[2]};
+
+		var picker = self.$settingsToolbox.find('.color-picker.active-drawrpalette');
+		var hex = rgb_to_hex(raw[0], raw[1], raw[2]);
+
+		picker.drawrpalette("set",hex);
+
+	},
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
+
+		
 	}
 });
 jQuery.fn.drawr.register({
@@ -2196,7 +2229,7 @@ jQuery.fn.drawr.register({
 
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-content-save mdi-24px",
-	name: "pen",
+	name: "save",
 	type: "action",
 	order: 19,
 	action: function(brush,context){
@@ -2220,6 +2253,7 @@ jQuery.fn.drawr.register({
 	buttonCreated: function(brush,button){
 
 		var self = this;
+		var context = self.getContext('2d');
 
 		//color dialog
 		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() - 80, top: $(self).parent().offset().top },"Settings",80);
@@ -2235,7 +2269,7 @@ jQuery.fn.drawr.register({
 			});
 		}else {
 			self.$settingsToolbox.append("<input type='text' class='color-picker'/>");
-			self.$settingsToolbox.find('.color-picker').drawrpalette().on("choose.drawrpalette",function(event,hexcolor){
+			self.$settingsToolbox.find('.color-picker').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
 				self.brushColor = self.plugin.hex_to_rgb(hexcolor);
 				if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
 			});
@@ -2470,7 +2504,7 @@ jQuery.fn.drawr.register({
 //effectCallback
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-undo-variant mdi-24px",
-	name: "zoom",
+	name: "undo",
 	type: "action",
 	order: 12,
 	buttonCreated: function(brush,button){

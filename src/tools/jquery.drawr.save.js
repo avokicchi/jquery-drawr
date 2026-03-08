@@ -1,6 +1,6 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-content-save mdi-24px",
-	name: "pen",
+	name: "save",
 	type: "action",
 	order: 19,
 	action: function(brush,context){

@@ -6,6 +6,7 @@ jQuery.fn.drawr.register({
 	buttonCreated: function(brush,button){
 
 		var self = this;
+		var context = self.getContext('2d');
 
 		//color dialog
 		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() - 80, top: $(self).parent().offset().top },"Settings",80);
@@ -21,7 +22,7 @@ jQuery.fn.drawr.register({
 			});
 		}else {
 			self.$settingsToolbox.append("<input type='text' class='color-picker'/>");
-			self.$settingsToolbox.find('.color-picker').drawrpalette().on("choose.drawrpalette",function(event,hexcolor){
+			self.$settingsToolbox.find('.color-picker').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
 				self.brushColor = self.plugin.hex_to_rgb(hexcolor);
 				if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
 			});
