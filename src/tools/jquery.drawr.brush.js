@@ -1,6 +1,6 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-brush mdi-24px",
-	name: "pen",
+	name: "brush",
 	size: 6,
 	alpha: 0.5,
 	order: 4,
