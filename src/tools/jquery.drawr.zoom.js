@@ -2,7 +2,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-magnify mdi-24px",
 	name: "zoom",
 	type: "toggle",
-	order: 21,
+	order: 14,
 	buttonCreated: function(brush,button){
 
 		var self = this;

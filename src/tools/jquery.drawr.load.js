@@ -2,7 +2,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-folder-open mdi-24px",
 	name: "load",
 	type: "action",
-	order: 20,
+	order: 28,
 	buttonCreated: function(brush,button){
 
 		var self = this;

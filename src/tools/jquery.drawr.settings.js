@@ -2,7 +2,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-tune mdi-24px",
 	name: "settings",
 	type: "toggle",
-	order: 12,
+	order: 33,
 	buttonCreated: function(brush,button){
 
 		var self = this;

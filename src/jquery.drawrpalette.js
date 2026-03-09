@@ -349,7 +349,7 @@
                     currentPicker.$dropdown.show();
 
                     if(elementRight < viewportRight){//falls within viewport in normal mode
-                       // position normally     
+                       //position normally     
                         currentPicker.$dropdown.offset({
                             "top" : currentPicker.$button.offset().top + currentPicker.$button.outerHeight(),
                             "left" : currentPicker.$button.offset().left
@@ -401,6 +401,12 @@
                         var hex = plugin.rgb_to_hex.call(currentPicker,rgb.r,rgb.g,rgb.b);
                         $(currentPicker).trigger("preview.drawrpalette",hex);
                     }
+
+                    if(currentPicker.settings.auto_apply==true){
+                        plugin.update_value.call(currentPicker);
+                        $(currentPicker).trigger("choose.drawrpalette",$(currentPicker).val());
+                    }
+
                 };
                 $(window).bind("mousemove.drawrpalette touchmove.drawrpalette",currentPicker.paletteMove);
                 currentPicker.paletteStop = function(e){

@@ -471,6 +471,11 @@
 			}
 			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
 			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
+			//new drawing action invalidates redo history
+			this.redoStack = [];
+			if(typeof this.$redoButton!=="undefined"){
+				this.$redoButton.css("opacity",0.5);
+			}
 		};
 
 		//calls a tool plugin's activate_brush call. 
@@ -1060,6 +1065,7 @@
 				delete currentCanvas.plugin;
 				delete currentCanvas.settings;
 				delete currentCanvas.undoStack;
+			delete currentCanvas.redoStack;
 				delete currentCanvas.brushColor;
 				delete currentCanvas.active_brush;
 				delete currentCanvas.zoomFactor;
@@ -1109,7 +1115,7 @@
 					"undo_max_levels" : 5,
 					"color_mode" : "picker",
 					"clear_on_init" : true,
-					"toolbox_cols" : 2
+					"toolbox_cols" : 3
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
@@ -1137,12 +1143,13 @@
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
 				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
+			currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
 
 				//brush dialog
 				var width = defaultSettings.toolbox_cols * 40;
-				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",width);
+				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"<i class='mdi mdi-tools'><//i>",width);
 
 				plugin.bind_draw_events.call(currentCanvas);
 			}
@@ -1510,7 +1517,7 @@
                     currentPicker.$dropdown.show();
 
                     if(elementRight < viewportRight){//falls within viewport in normal mode
-                       // position normally     
+                       //position normally     
                         currentPicker.$dropdown.offset({
                             "top" : currentPicker.$button.offset().top + currentPicker.$button.outerHeight(),
                             "left" : currentPicker.$button.offset().left
@@ -1562,6 +1569,12 @@
                         var hex = plugin.rgb_to_hex.call(currentPicker,rgb.r,rgb.g,rgb.b);
                         $(currentPicker).trigger("preview.drawrpalette",hex);
                     }
+
+                    if(currentPicker.settings.auto_apply==true){
+                        plugin.update_value.call(currentPicker);
+                        $(currentPicker).trigger("choose.drawrpalette",$(currentPicker).val());
+                    }
+
                 };
                 $(window).bind("mousemove.drawrpalette touchmove.drawrpalette",currentPicker.paletteMove);
                 currentPicker.paletteStop = function(e){
@@ -1633,6 +1646,73 @@ jQuery.fn.drawr.register({
 	}
 });
 jQuery.fn.drawr.register({
+	icon: "mdi mdi-blur mdi-24px",
+	name: "blur",
+	size: 20,
+	alpha: 0.8,
+	order: 16,
+	pressure_affects_alpha: true,
+	pressure_affects_size: true,
+	activate: function(brush, context) {},
+	deactivate: function(brush, context) {},
+	drawStart: function(brush, context, x, y, size, alpha, event) {},
+	drawSpot: function(brush, context, x, y, size, alpha, event) {
+		var radius      = Math.max(2, Math.round(size / 2));
+		var diameter    = radius * 2;
+		var kernelRadius = Math.max(2, Math.round(radius / 4));
+
+		var ox = Math.round(x) - radius;
+		var oy = Math.round(y) - radius;
+
+		var imageData = context.getImageData(ox, oy, diameter, diameter);
+		var data      = imageData.data;
+
+		//work from a snapshot so we never blur already-blurred pixels in this pass
+		var src = new Uint8ClampedArray(data);
+
+		for (var row = 0; row < diameter; row++) {
+			for (var col = 0; col < diameter; col++) {
+				var dx   = col - radius + 0.5;
+				var dy   = row - radius + 0.5;
+				var dist = Math.sqrt(dx * dx + dy * dy);
+				if (dist >= radius) continue;
+
+				//taper off strength from centre
+				var t     = 1 - dist / radius;
+				var blend = alpha * t * t;
+
+				//box blur: average kernel-sized neighbourhood from the snapshot
+				var sumR = 0, sumG = 0, sumB = 0, sumA = 0, count = 0;
+				for (var ky = -kernelRadius; ky <= kernelRadius; ky++) {
+					for (var kx = -kernelRadius; kx <= kernelRadius; kx++) {
+						var nr = row + ky;
+						var nc = col + kx;
+						if (nr < 0 || nr >= diameter || nc < 0 || nc >= diameter) continue;
+						var ki = (nr * diameter + nc) * 4;
+						sumR += src[ki];
+						sumG += src[ki + 1];
+						sumB += src[ki + 2];
+						sumA += src[ki + 3];
+						count++;
+					}
+				}
+
+				var i = (row * diameter + col) * 4;
+				data[i]     = src[i]     + (sumR / count - src[i])     * blend;
+				data[i + 1] = src[i + 1] + (sumG / count - src[i + 1]) * blend;
+				data[i + 2] = src[i + 2] + (sumB / count - src[i + 2]) * blend;
+				data[i + 3] = src[i + 3] + (sumA / count - src[i + 3]) * blend;
+			}
+		}
+
+		context.putImageData(imageData, ox, oy);
+	},
+	drawStop: function(brush, context, x, y, size, alpha, event) {
+		return true;
+	}
+});
+
+jQuery.fn.drawr.register({
 	icon: "mdi mdi-brush mdi-24px",
 	name: "brush",
 	size: 6,
@@ -1675,6 +1755,194 @@ jQuery.fn.drawr.register({
 		return true;
 	}
 });
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-fire mdi-24px",
+	name: "burn",
+	size: 20,
+	alpha: 0.5,
+	order: 16,
+	pressure_affects_alpha: true,
+	pressure_affects_size: true,
+	activate: function(brush, context) {},
+	deactivate: function(brush, context) {},
+	drawStart: function(brush, context, x, y, size, alpha, event) {},
+	drawSpot: function(brush, context, x, y, size, alpha, event) {
+		var radius   = Math.max(2, Math.round(size / 2));
+		var diameter = radius * 2;
+
+		var ox = Math.round(x) - radius;
+		var oy = Math.round(y) - radius;
+
+		var imageData = context.getImageData(ox, oy, diameter, diameter);
+		var data      = imageData.data;
+
+		for (var row = 0; row < diameter; row++) {
+			for (var col = 0; col < diameter; col++) {
+				var dx   = col - radius + 0.5;
+				var dy   = row - radius + 0.5;
+				var dist = Math.sqrt(dx * dx + dy * dy);
+				if (dist >= radius) continue;
+
+				//taper off strength from centre
+				var t     = 1 - dist / radius;
+				var blend = alpha * t * t;
+
+				var i = (row * diameter + col) * 4;
+				//burn: push each channel toward 0
+				data[i]     = data[i]     * (1 - blend);
+				data[i + 1] = data[i + 1] * (1 - blend);
+				data[i + 2] = data[i + 2] * (1 - blend);
+				//alpha channel unchanged
+			}
+		}
+
+		context.putImageData(imageData, ox, oy);
+	},
+	drawStop: function(brush, context, x, y, size, alpha, event) {
+		return true;
+	}
+});
+
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-lightbulb-on mdi-24px",
+	name: "dodge",
+	size: 20,
+	alpha: 0.5,
+	order: 16,
+	pressure_affects_alpha: true,
+	pressure_affects_size: true,
+	activate: function(brush, context) {},
+	deactivate: function(brush, context) {},
+	drawStart: function(brush, context, x, y, size, alpha, event) {},
+	drawSpot: function(brush, context, x, y, size, alpha, event) {
+		var radius   = Math.max(2, Math.round(size / 2));
+		var diameter = radius * 2;
+
+		var ox = Math.round(x) - radius;
+		var oy = Math.round(y) - radius;
+
+		var imageData = context.getImageData(ox, oy, diameter, diameter);
+		var data      = imageData.data;
+
+		for (var row = 0; row < diameter; row++) {
+			for (var col = 0; col < diameter; col++) {
+				var dx   = col - radius + 0.5;
+				var dy   = row - radius + 0.5;
+				var dist = Math.sqrt(dx * dx + dy * dy);
+				if (dist >= radius) continue;
+
+				//taper off strength from centre
+				var t     = 1 - dist / radius;
+				var blend = alpha * t * t;
+
+				var i = (row * diameter + col) * 4;
+				//dodge: push each channel toward 255
+				data[i]     = data[i]     + (255 - data[i])     * blend;
+				data[i + 1] = data[i + 1] + (255 - data[i + 1]) * blend;
+				data[i + 2] = data[i + 2] + (255 - data[i + 2]) * blend;
+				//alpha channel unchanged
+			}
+		}
+
+		context.putImageData(imageData, ox, oy);
+	},
+	drawStop: function(brush, context, x, y, size, alpha, event) {
+		return true;
+	}
+});
+
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-circle-outline mdi-24px",
+	name: "ellipse",
+	size: 3,
+	alpha: 1,
+	order: 10,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
+	activate: function(brush, context) {},
+	deactivate: function(brush, context) {},
+	drawStart: function(brush, context, x, y, size, alpha, event) {
+		context.globalCompositeOperation = "source-over";
+		brush.currentAlpha = alpha;
+		brush.currentSize = size;
+		brush.startPosition = { x: x, y: y };
+		this.effectCallback = brush.effectCallback;
+		context.globalAlpha = alpha;
+	},
+	drawStop: function(brush, context, x, y, size, alpha, event) {
+		context.globalAlpha = alpha;
+		context.lineWidth = size;
+		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		var angle = this.rotationAngle || 0;
+		var sx = brush.startPosition.x, sy = brush.startPosition.y;
+		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
+		if (angle) {
+			var cx = this.width / 2, cy = this.height / 2;
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			context.save();
+			context.translate(cx, cy);
+			context.rotate(-angle);
+			context.translate(-cx, -cy);
+			var dsx = sx - cx, dsy = sy - cy, dex = ex - cx, dey = ey - cy;
+			sx = cx + cos * dsx - sin * dsy;
+			sy = cy + sin * dsx + cos * dsy;
+			ex = cx + cos * dex - sin * dey;
+			ey = cy + sin * dex + cos * dey;
+		}
+		var ecx = (sx + ex) / 2, ecy = (sy + ey) / 2;
+		var rx = Math.abs(ex - sx) / 2, ry = Math.abs(ey - sy) / 2;
+		if (rx > 0 && ry > 0) {
+			context.beginPath();
+			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
+			context.stroke();
+		}
+		if (angle) { context.restore(); }
+		this.effectCallback = null;
+		return true;
+	},
+	drawSpot: function(brush, context, x, y, size, alpha, event) {
+		brush.currentPosition = { x: x, y: y };
+	},
+	effectCallback: function(context, brush, adjustx, adjusty, adjustzoom) {
+		var angle = this.rotationAngle || 0;
+		var sx, sy, ex, ey;
+		if (angle) {
+			var _W = this.width * adjustzoom;
+			var _H = this.height * adjustzoom;
+			var _cx = _W / 2 - adjustx;
+			var _cy = _H / 2 - adjusty;
+			context.save();
+			context.translate(_cx, _cy);
+			context.rotate(-angle);
+			context.translate(-_cx, -_cy);
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
+			var sRelX = brush.startPosition.x  - this.width / 2, sRelY = brush.startPosition.y  - this.height / 2;
+			var eRelX = brush.currentPosition.x - this.width / 2, eRelY = brush.currentPosition.y - this.height / 2;
+			sx = (cos * sRelX - sin * sRelY) * adjustzoom + halfW - adjustx;
+			sy = (sin * sRelX + cos * sRelY) * adjustzoom + halfH - adjusty;
+			ex = (cos * eRelX - sin * eRelY) * adjustzoom + halfW - adjustx;
+			ey = (sin * eRelX + cos * eRelY) * adjustzoom + halfH - adjusty;
+		} else {
+			sx = brush.startPosition.x  * adjustzoom - adjustx;
+			sy = brush.startPosition.y  * adjustzoom - adjusty;
+			ex = brush.currentPosition.x * adjustzoom - adjustx;
+			ey = brush.currentPosition.y * adjustzoom - adjusty;
+		}
+		var ecx = (sx + ex) / 2, ecy = (sy + ey) / 2;
+		var rx = Math.abs(ex - sx) / 2, ry = Math.abs(ey - sy) / 2;
+		if (rx > 0 && ry > 0) {
+			context.globalAlpha = brush.currentAlpha;
+			context.lineWidth = brush.currentSize * adjustzoom;
+			context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+			context.beginPath();
+			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
+			context.stroke();
+		}
+		if (angle) { context.restore(); }
+	}
+});
+
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-eraser mdi-24px",
 	name: "eraser",
@@ -1731,7 +1999,7 @@ jQuery.fn.drawr.register({
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-eyedropper mdi-24px",
 	name: "eyedropper",
-	order: 6,
+	order: 30,
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
@@ -1756,6 +2024,179 @@ jQuery.fn.drawr.register({
 		
 	}
 });
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-format-color-fill mdi-24px",
+	name: "fill",
+	size: 1,
+	alpha: 1,
+	order: 9,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
+	activate: function(brush, context) {},
+	deactivate: function(brush, context) {},
+	drawStart: function(brush, context, x, y, size, alpha, event) {
+		var self = this;
+		var canvas = context.canvas;
+		var width = canvas.width;
+		var height = canvas.height;
+
+		x = Math.floor(x);
+		y = Math.floor(y);
+
+		if (x < 0 || x >= width || y < 0 || y >= height) return;
+
+		var imageData = context.getImageData(0, 0, width, height);
+		var data = imageData.data;
+
+		var idx = (y * width + x) * 4;
+		var targetR = data[idx];
+		var targetG = data[idx + 1];
+		var targetB = data[idx + 2];
+		var targetA = data[idx + 3];
+
+		var fillR = self.brushColor.r;
+		var fillG = self.brushColor.g;
+		var fillB = self.brushColor.b;
+		var fillA = Math.round(alpha * 255);
+
+		//nothing to do if the seed pixel is already the fill color
+		if (targetR === fillR && targetG === fillG && targetB === fillB && targetA === fillA) return;
+
+		var tolerance = 10;
+
+		function colorMatch(i) {
+			var dr = data[i]     - targetR;
+			var dg = data[i + 1] - targetG;
+			var db = data[i + 2] - targetB;
+			var da = data[i + 3] - targetA;
+			return (dr * dr + dg * dg + db * db + da * da) <= tolerance * tolerance;
+		}
+
+		var visited = new Uint8Array(width * height);
+		//use a typed array as a stack for better performance on large canvases
+		var stack = new Int32Array(width * height);
+		var stackSize = 0;
+		stack[stackSize++] = y * width + x;
+
+		while (stackSize > 0) {
+			var pos = stack[--stackSize];
+			if (visited[pos]) continue;
+
+			var i = pos * 4;
+			if (!colorMatch(i)) continue;
+
+			visited[pos] = 1;
+			data[i]     = fillR;
+			data[i + 1] = fillG;
+			data[i + 2] = fillB;
+			data[i + 3] = fillA;
+
+			var px = pos % width;
+			var py = (pos / width) | 0;
+
+			if (px > 0)          stack[stackSize++] = pos - 1;
+			if (px < width - 1)  stack[stackSize++] = pos + 1;
+			if (py > 0)          stack[stackSize++] = pos - width;
+			if (py < height - 1) stack[stackSize++] = pos + width;
+		}
+
+		context.putImageData(imageData, 0, 0);
+	},
+	drawSpot: function(brush, context, x, y, size, alpha, event) {},
+	drawStop: function(brush, context, x, y, size, alpha, event) {
+		return true;
+	}
+});
+
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-circle mdi-24px",
+	name: "filledellipse",
+	size: 3,
+	alpha: 1,
+	order: 11,
+	pressure_affects_alpha: false,
+	pressure_affects_size: false,
+	activate: function(brush, context) {},
+	deactivate: function(brush, context) {},
+	drawStart: function(brush, context, x, y, size, alpha, event) {
+		context.globalCompositeOperation = "source-over";
+		brush.currentAlpha = alpha;
+		brush.startPosition = { x: x, y: y };
+		this.effectCallback = brush.effectCallback;
+		context.globalAlpha = alpha;
+	},
+	drawStop: function(brush, context, x, y, size, alpha, event) {
+		context.globalAlpha = alpha;
+		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		var angle = this.rotationAngle || 0;
+		var sx = brush.startPosition.x, sy = brush.startPosition.y;
+		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
+		if (angle) {
+			var cx = this.width / 2, cy = this.height / 2;
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			context.save();
+			context.translate(cx, cy);
+			context.rotate(-angle);
+			context.translate(-cx, -cy);
+			var dsx = sx - cx, dsy = sy - cy, dex = ex - cx, dey = ey - cy;
+			sx = cx + cos * dsx - sin * dsy;
+			sy = cy + sin * dsx + cos * dsy;
+			ex = cx + cos * dex - sin * dey;
+			ey = cy + sin * dex + cos * dey;
+		}
+		var ecx = (sx + ex) / 2, ecy = (sy + ey) / 2;
+		var rx = Math.abs(ex - sx) / 2, ry = Math.abs(ey - sy) / 2;
+		if (rx > 0 && ry > 0) {
+			context.beginPath();
+			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
+			context.fill();
+		}
+		if (angle) { context.restore(); }
+		this.effectCallback = null;
+		return true;
+	},
+	drawSpot: function(brush, context, x, y, size, alpha, event) {
+		brush.currentPosition = { x: x, y: y };
+	},
+	effectCallback: function(context, brush, adjustx, adjusty, adjustzoom) {
+		var angle = this.rotationAngle || 0;
+		var sx, sy, ex, ey;
+		if (angle) {
+			var _W = this.width * adjustzoom;
+			var _H = this.height * adjustzoom;
+			var _cx = _W / 2 - adjustx;
+			var _cy = _H / 2 - adjusty;
+			context.save();
+			context.translate(_cx, _cy);
+			context.rotate(-angle);
+			context.translate(-_cx, -_cy);
+			var cos = Math.cos(angle), sin = Math.sin(angle);
+			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
+			var sRelX = brush.startPosition.x  - this.width / 2, sRelY = brush.startPosition.y  - this.height / 2;
+			var eRelX = brush.currentPosition.x - this.width / 2, eRelY = brush.currentPosition.y - this.height / 2;
+			sx = (cos * sRelX - sin * sRelY) * adjustzoom + halfW - adjustx;
+			sy = (sin * sRelX + cos * sRelY) * adjustzoom + halfH - adjusty;
+			ex = (cos * eRelX - sin * eRelY) * adjustzoom + halfW - adjustx;
+			ey = (sin * eRelX + cos * eRelY) * adjustzoom + halfH - adjusty;
+		} else {
+			sx = brush.startPosition.x  * adjustzoom - adjustx;
+			sy = brush.startPosition.y  * adjustzoom - adjusty;
+			ex = brush.currentPosition.x * adjustzoom - adjustx;
+			ey = brush.currentPosition.y * adjustzoom - adjusty;
+		}
+		var ecx = (sx + ex) / 2, ecy = (sy + ey) / 2;
+		var rx = Math.abs(ex - sx) / 2, ry = Math.abs(ey - sy) / 2;
+		if (rx > 0 && ry > 0) {
+			context.globalAlpha = brush.currentAlpha;
+			context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+			context.beginPath();
+			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
+			context.fill();
+		}
+		if (angle) { context.restore(); }
+	}
+});
+
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-square mdi-24px",
 	name: "filledsquare",
@@ -1906,7 +2347,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-folder-open mdi-24px",
 	name: "load",
 	type: "action",
-	order: 20,
+	order: 28,
 	buttonCreated: function(brush,button){
 
 		var self = this;
@@ -2011,7 +2452,7 @@ jQuery.fn.drawr.register({
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-cursor-move mdi-24px",
 	name: "move",
-	order: 10,
+	order: 13,
 	activate: function(brush,context){
 		$(this).parent().css({"cursor":"move"});//"overflow":"scroll",
 	},
@@ -2144,8 +2585,64 @@ jQuery.fn.drawr.register({
 	}
 });
 jQuery.fn.drawr.register({
+	icon: "mdi mdi-redo-variant mdi-24px",
+	name: "redo",
+	type: "action",
+	order: 31,
+	buttonCreated: function(brush,button){
 
-	icon: "mdi mdi-rotate-right mdi-24px",
+		var self = this;
+
+		button.css("opacity",0.5);
+		self.$redoButton = button;
+
+	},
+	action: function(brush,context){
+		var self = this;
+
+		if(self.redoStack.length>0){
+			var redo = self.redoStack.pop();
+
+			//mark the current undoStack entry as a regular history entry
+			//so undo can step back through it after this redo
+			if(self.undoStack.length>0 && self.undoStack[self.undoStack.length-1].current==true){
+				self.undoStack[self.undoStack.length-1].current = false;
+			}
+
+			var img = document.createElement("img");
+			img.crossOrigin = "Anonymous";
+
+			img.onload = function(){
+				self.plugin.clear_canvas.call(self,false);
+				context.globalCompositeOperation="source-over";
+				context.globalAlpha = 1;
+				context.drawImage(img,0,0);
+
+				//we push the restored state as the new current so undo knows where we are
+				self.undoStack.push({data:redo,current:true});
+				if(self.undoStack.length>(self.settings.undo_max_levels+1)) self.undoStack.shift();
+
+				if(typeof self.$undoButton!=="undefined"){
+					self.$undoButton.css("opacity",1);
+				}
+				if(self.redoStack.length==0){
+					self.$redoButton.css("opacity",0.5);
+				}
+			};
+			img.src=redo;
+		}
+
+	},
+	cleanup: function(){
+		var self = this;
+		delete self.$redoButton;
+	}
+
+});
+
+jQuery.fn.drawr.register({
+
+	icon: "mdi mdi-rotate-3d mdi-24px",
 	name: "rotate",
 	order: 11,
 
@@ -2231,7 +2728,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-content-save mdi-24px",
 	name: "save",
 	type: "action",
-	order: 19,
+	order: 30,
 	action: function(brush,context){
 		var imagedata = $(this).drawr("export","image/png");
 		var element = document.createElement('a');
@@ -2249,7 +2746,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-tune mdi-24px",
 	name: "settings",
 	type: "toggle",
-	order: 12,
+	order: 33,
 	buttonCreated: function(brush,button){
 
 		var self = this;
@@ -2298,6 +2795,161 @@ jQuery.fn.drawr.register({
 		delete self.$settingsToolbox;
 	}
 
+});
+
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-blur-off mdi-24px",
+	name: "sharpen",
+	size: 20,
+	alpha: 0.8,
+	order: 17,
+	pressure_affects_alpha: true,
+	pressure_affects_size: true,
+	activate: function(brush, context) {},
+	deactivate: function(brush, context) {},
+	drawStart: function(brush, context, x, y, size, alpha, event) {},
+	drawSpot: function(brush, context, x, y, size, alpha, event) {
+		var radius       = Math.max(2, Math.round(size / 2));
+		var diameter     = radius * 2;
+		var kernelRadius = Math.max(2, Math.round(radius / 4));
+
+		var ox = Math.round(x) - radius;
+		var oy = Math.round(y) - radius;
+
+		var imageData = context.getImageData(ox, oy, diameter, diameter);
+		var data      = imageData.data;
+
+		//work from a snapshot so we never sharpen already-sharpened pixels in this pass
+		var src = new Uint8ClampedArray(data);
+
+		for (var row = 0; row < diameter; row++) {
+			for (var col = 0; col < diameter; col++) {
+				var dx   = col - radius + 0.5;
+				var dy   = row - radius + 0.5;
+				var dist = Math.sqrt(dx * dx + dy * dy);
+				if (dist >= radius) continue;
+
+				//taper off strength from centre
+				var t     = 1 - dist / radius;
+				var blend = alpha * t * t;
+
+				//box blur: average kernel-sized neighbourhood from the snapshot
+				var sumR = 0, sumG = 0, sumB = 0, count = 0;
+				for (var ky = -kernelRadius; ky <= kernelRadius; ky++) {
+					for (var kx = -kernelRadius; kx <= kernelRadius; kx++) {
+						var nr = row + ky;
+						var nc = col + kx;
+						if (nr < 0 || nr >= diameter || nc < 0 || nc >= diameter) continue;
+						var ki = (nr * diameter + nc) * 4;
+						sumR += src[ki];
+						sumG += src[ki + 1];
+						sumB += src[ki + 2];
+						count++;
+					}
+				}
+
+				var i = (row * diameter + col) * 4;
+				var blurR = sumR / count;
+				var blurG = sumG / count;
+				var blurB = sumB / count;
+
+				//unsharp mask: push pixel away from the blurred average
+				data[i]     = src[i]     + (src[i]     - blurR) * blend;
+				data[i + 1] = src[i + 1] + (src[i + 1] - blurG) * blend;
+				data[i + 2] = src[i + 2] + (src[i + 2] - blurB) * blend;
+				//alpha channel unchanged
+			}
+		}
+
+		context.putImageData(imageData, ox, oy);
+	},
+	drawStop: function(brush, context, x, y, size, alpha, event) {
+		return true;
+	}
+});
+
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-cursor-pointer mdi-24px",
+	name: "smudge",
+	size: 20,
+	alpha: 1,
+	order: 13,
+	pressure_affects_alpha: false,
+	pressure_affects_size: true,
+	activate: function(brush, context) {},
+	deactivate: function(brush, context) {
+		brush._smudge = null;
+	},
+	drawStart: function(brush, context, x, y, size, alpha, event) {
+		var radius   = Math.max(2, Math.round(size / 2));
+		var diameter = radius * 2;
+		var imageData = context.getImageData(
+			Math.round(x) - radius,
+			Math.round(y) - radius,
+			diameter, diameter
+		);
+		brush._smudge = {
+			buf:      new Float32Array(imageData.data),
+			radius:   radius,
+			diameter: diameter,
+			strength: alpha
+		};
+	},
+	drawSpot: function(brush, context, x, y, size, alpha, event) {
+		var s = brush._smudge;
+		if (!s) return;
+
+		var radius   = s.radius;
+		var diameter = s.diameter;
+		var buf      = s.buf;
+		var strength = s.strength;
+
+		var ox = Math.round(x) - radius;
+		var oy = Math.round(y) - radius;
+
+		var imageData = context.getImageData(ox, oy, diameter, diameter);
+		var data      = imageData.data;
+
+		for (var row = 0; row < diameter; row++) {
+			for (var col = 0; col < diameter; col++) {
+				var dx   = col - radius + 0.5;
+				var dy   = row - radius + 0.5;
+				var dist = Math.sqrt(dx * dx + dy * dy);
+				if (dist >= radius) continue;
+
+				//full strength at centre, zero at edge
+				var t     = 1 - dist / radius;
+				var blend = strength * t * t;
+
+				var i = (row * diameter + col) * 4;
+
+				//save original canvas pixel before we overwrite it
+				var origR = data[i];
+				var origG = data[i + 1];
+				var origB = data[i + 2];
+				var origA = data[i + 3];
+
+				//push smudge pixel (including alpha) onto canvas
+				data[i]     = origR + (buf[i]     - origR) * blend;
+				data[i + 1] = origG + (buf[i + 1] - origG) * blend;
+				data[i + 2] = origB + (buf[i + 2] - origB) * blend;
+				data[i + 3] = origA + (buf[i + 3] - origA) * blend;
+
+				//gradually pick up the original canvas pixel into the buffer so the smear trail slowly transitions to the underlying colour
+				var pickup  = 0.18 * t;
+				buf[i]     += (origR - buf[i])     * pickup;
+				buf[i + 1] += (origG - buf[i + 1]) * pickup;
+				buf[i + 2] += (origB - buf[i + 2]) * pickup;
+				buf[i + 3] += (origA - buf[i + 3]) * pickup;
+			}
+		}
+
+		context.putImageData(imageData, ox, oy);
+	},
+	drawStop: function(brush, context, x, y, size, alpha, event) {
+		brush._smudge = null;
+		return true;
+	}
 });
 
 jQuery.fn.drawr.register({
@@ -2397,7 +3049,7 @@ jQuery.fn.drawr.register({
 	name: "text",
 	size: 22,
 	alpha: 1,
-	order: 22,
+	order: 14,
 	pressure_affects_alpha: false,
 	pressure_affects_size: false,
 	activate: function(brush,context){
@@ -2506,7 +3158,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-undo-variant mdi-24px",
 	name: "undo",
 	type: "action",
-	order: 12,
+	order: 30,
 	buttonCreated: function(brush,button){
 
 		var self = this;
@@ -2520,16 +3172,24 @@ jQuery.fn.drawr.register({
 		var self = this;
 
 		if(self.undoStack.length>0){
-			//the current property is because of the way some tools work it is needed to always keep a copy of the canvas' latest state (AFTER last draw action was done) in the undo buffer. 
+			//the current property is because of the way some tools work it is needed to always keep a copy of the canvas' latest state (AFTER last draw action was done) in the undo buffer.
 			//obviously you want to go back to the previous version, not the current one, so that one is ignored.
+			var currentData = null;
 			if(self.undoStack[self.undoStack.length-1].current==true){
-				self.undoStack.pop();//ignore current version of canvas
+				currentData = self.undoStack.pop().data;//save current canvas state for redo
 			}
 			$.each(self.undoStack,function(i,stackitem){
 				stackitem.current=false;
 			});
-			if(self.undoStack.length>0) {//is there anything noncurrent 
+			if(self.undoStack.length>0) {//is there anything noncurrent
 				var undo = self.undoStack.pop().data;
+				//push current state onto redo stack before restoring
+				if(currentData!==null){
+					self.redoStack.push(currentData);
+					if(typeof self.$redoButton!=="undefined"){
+						self.$redoButton.css("opacity",1);
+					}
+				}
 				var img = document.createElement("img");
 				img.crossOrigin = "Anonymous";
 
@@ -2559,7 +3219,7 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-magnify mdi-24px",
 	name: "zoom",
 	type: "toggle",
-	order: 21,
+	order: 14,
 	buttonCreated: function(brush,button){
 
 		var self = this;

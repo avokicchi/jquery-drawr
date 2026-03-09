@@ -459,6 +459,11 @@
 			}
 			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
 			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
+			//new drawing action invalidates redo history
+			this.redoStack = [];
+			if(typeof this.$redoButton!=="undefined"){
+				this.$redoButton.css("opacity",0.5);
+			}
 		};
 
 		//calls a tool plugin's activate_brush call. 
@@ -1048,6 +1053,7 @@
 				delete currentCanvas.plugin;
 				delete currentCanvas.settings;
 				delete currentCanvas.undoStack;
+			delete currentCanvas.redoStack;
 				delete currentCanvas.brushColor;
 				delete currentCanvas.active_brush;
 				delete currentCanvas.zoomFactor;
@@ -1097,7 +1103,7 @@
 					"undo_max_levels" : 5,
 					"color_mode" : "picker",
 					"clear_on_init" : true,
-					"toolbox_cols" : 2
+					"toolbox_cols" : 3
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
@@ -1125,12 +1131,13 @@
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
 				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
+			currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
 
 				//brush dialog
 				var width = defaultSettings.toolbox_cols * 40;
-				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Brushes",width);
+				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"<i class='mdi mdi-tools'><//i>",width);
 
 				plugin.bind_draw_events.call(currentCanvas);
 			}

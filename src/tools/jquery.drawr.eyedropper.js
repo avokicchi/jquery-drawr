@@ -1,7 +1,7 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-eyedropper mdi-24px",
 	name: "eyedropper",
-	order: 6,
+	order: 30,
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){

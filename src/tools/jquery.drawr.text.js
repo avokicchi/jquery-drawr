@@ -3,7 +3,7 @@ jQuery.fn.drawr.register({
 	name: "text",
 	size: 22,
 	alpha: 1,
-	order: 22,
+	order: 14,
 	pressure_affects_alpha: false,
 	pressure_affects_size: false,
 	activate: function(brush,context){

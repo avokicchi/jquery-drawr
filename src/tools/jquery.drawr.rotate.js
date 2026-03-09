@@ -1,6 +1,6 @@
 jQuery.fn.drawr.register({
 
-	icon: "mdi mdi-rotate-right mdi-24px",
+	icon: "mdi mdi-rotate-3d mdi-24px",
 	name: "rotate",
 	order: 11,
 
