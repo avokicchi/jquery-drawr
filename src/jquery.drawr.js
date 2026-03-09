@@ -461,6 +461,8 @@
 			this.brushAlpha = typeof brush.alpha!=="undefined" ? brush.alpha : this.brushAlpha;
 			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-alpha").val(this.brushAlpha*100).trigger("input");
 			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-size").val(this.brushSize).trigger("input");
+			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".checkbox-pressure-alpha").prop("checked", !!brush.pressure_affects_alpha);
+			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".checkbox-pressure-size").prop("checked",  !!brush.pressure_affects_size);
 			this.active_brush.activate.call(this,this.active_brush,context);
 		};
 
@@ -495,6 +497,32 @@
 				data.buttonCreated.call(self,data,el);
 			}
 			return el;
+		};
+
+		/* create a checkbox */
+		plugin.create_checkbox = function(toolbox, title, checked){
+			var key = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+			$(toolbox).append(
+				'<div style="clear:both;text-align:left;padding:4px 8px;">' +
+				'<label style="cursor:pointer;user-select:none;">' +
+				'<input type="checkbox" class="checkbox-component checkbox-' + key + '"' + (checked ? ' checked' : '') + ' style="margin-right:5px;">' +
+				title +
+				'</label></div>'
+			);
+			$(toolbox).find('.checkbox-' + key).on('mousedown touchstart', function(e){
+				e.stopPropagation();
+			});
+			return $(toolbox).find('.checkbox-' + key);
+		};
+
+		//create a label
+		plugin.create_label = function(toolbox, title){
+			$(toolbox).append(
+				'<label style="text-align:center;padding:4px 8px;font-weight:bold;">' +
+				title +
+				'</label>'
+			);
+			return $(toolbox).find('label:last');
 		};
 
 		/* create a slider */

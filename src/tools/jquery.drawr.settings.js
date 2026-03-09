@@ -37,11 +37,26 @@ jQuery.fn.drawr.register({
 			self.active_brush.size = this.value;
 			self.plugin.is_dragging=false;
 		});
-		//size dialog
+
+		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Pressure affects");
+
+		self.$cbPressureAlpha = self.plugin.create_checkbox.call(self, self.$settingsToolbox, "Alpha", false);
+		self.$cbPressureAlpha.on("change.drawr", function(){
+			self.active_brush.pressure_affects_alpha = this.checked;
+			self.plugin.is_dragging = false;
+		});
+
+		self.$cbPressureSize = self.plugin.create_checkbox.call(self, self.$settingsToolbox, "Size", false);
+		self.$cbPressureSize.on("change.drawr", function(){
+			self.active_brush.pressure_affects_size = this.checked;
+			self.plugin.is_dragging = false;
+		});
 
 	},
 	action: function(brush,context){
 		var self = this;
+		if(self.$cbPressureAlpha) self.$cbPressureAlpha.prop("checked", !!self.active_brush.pressure_affects_alpha);
+		if(self.$cbPressureSize)  self.$cbPressureSize.prop("checked",  !!self.active_brush.pressure_affects_size);
 		self.$settingsToolbox.toggle();
 
 	},
