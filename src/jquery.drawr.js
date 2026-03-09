@@ -1137,7 +1137,7 @@
 
 				//brush dialog
 				var width = defaultSettings.toolbox_cols * 40;
-				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"<i class='mdi mdi-tools'><//i>",width);
+				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Tools",width);
 
 				plugin.bind_draw_events.call(currentCanvas);
 			}
