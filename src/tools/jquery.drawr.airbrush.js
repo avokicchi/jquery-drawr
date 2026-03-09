@@ -4,6 +4,7 @@ jQuery.fn.drawr.register({
 	size: 40,
 	alpha: 0.2,
 	order: 3,
+	brush_fade_in: 10,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
 	activate: function(brush,context){

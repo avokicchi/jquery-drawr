@@ -8,12 +8,15 @@
  
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
+		//returns the euclidean distance between two {x,y} points.
 		plugin.distance_between = function(p1, p2) {
 		  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
 		};
+		//returns the angle in radians from p1 to p2, measured clockwise from the downward Y axis.
 		plugin.angle_between = function(p1, p2) {
 		  return Math.atan2( p2.x - p1.x, p2.y - p1.y );
 		};
+		//converts a CSS hex color string to an {r, g, b} object. returns null if the input is invalid.
 		plugin.hex_to_rgb = function (hex) {
 			var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
 			return result ? {
@@ -35,34 +38,17 @@
 			}
 		};
 
-		plugin.debug = function(text){
-			if($("#debug-output").length>0){
-				$("#debug-output").append(text + "<br/>");
-			}
-		};
-
 		//checks if a drawing event should be ignored.
-		//rule: if the majority of the last 25 events is stylus, ignore touch. 
+		//rule: if the majority of the last 25 events is stylus, ignore touch.
 		//if true, it should be ignored
 		plugin.check_ignore = function(event){
-			var other = 0;
-			var stylus = 0;
-			$.each(plugin.eventArr,function(i,ev){
-				if((ev.type=="touchmove" || ev.type=="touchstart") && ev.touchtype=="stylus"){
-					stylus++;
-				} else {
-					other++;
-				}
+			var other = 0, stylus = 0;
+			$.each(plugin.eventArr, function(i, ev){
+				((ev.type=="touchmove" || ev.type=="touchstart") && ev.touchtype=="stylus") ? stylus++ : other++;
 			});
-			//$("#debug").val($("#debug").val()+"\n" + JSON.stringify({"other":other,"stylus":stylus}));
-			//$("#debug").val($("#debug").val()+"\n" + JSON.stringify({"test":event.type,"test2":event.originalEvent.touches[0].touchType}));
-			//$("#debug")[0].scrollTop = $("#debug")[0].scrollHeight;
-			if(stylus>other){
-				if((event.type=="touchmove" || event.type=="touchstart") && typeof event.originalEvent.touches[0].touchType!=="undefined" && event.originalEvent.touches[0].touchType=="stylus"){
-					return false;
-				} else {
-					return true;
-				}
+			if(stylus > other){
+				var t = event.originalEvent.touches[0];
+				return !((event.type=="touchmove" || event.type=="touchstart") && typeof t.touchType!=="undefined" && t.touchType=="stylus");
 			}
 			return false;
 		};
@@ -73,8 +59,7 @@
 			if(event.type!=="touchend") plugin.record_event(event);
 
 			if(typeof relativeTo!=="undefined" && relativeTo!==null){
-				var borderTop = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-top-width"));
-				var borderLeft = parseInt(window.getComputedStyle(relativeTo, null).getPropertyValue("border-left-width"));
+				var border = plugin.get_border(relativeTo);
 				var translate_x = typeof scrollEl!=="undefined" ? scrollEl.scrollX : 0;
 				var translate_y = typeof scrollEl!=="undefined" ? scrollEl.scrollY : 0;
 
@@ -82,8 +67,8 @@
 				box.x += $(document).scrollLeft();
 				box.y += $(document).scrollTop();
 				bounding_box = {
-					left: box.x - translate_x + borderLeft,
-					top: box.y - translate_y + borderTop 
+					left: box.x - translate_x + border.left,
+					top: box.y - translate_y + border.top
 				};
 
 			} else {
@@ -94,20 +79,13 @@
 			}
 			var x, y, pressure;
 			if(event.type=="touchmove" || event.type=="touchstart"){
-				pressure = typeof event.originalEvent.touches[0].force!=="undefined" ? event.originalEvent.touches[0].force : 1;
-				if(typeof event.originalEvent.touches[0].touchType!=="undefined" && event.originalEvent.touches[0].touchType=="stylus"){
-					this.pen_pressure=true;
-				} else {
-					//TODO: add support for 3D touch of apple and other devices (oddly enough, the fairphone 3 seems to support this)
-					if(typeof event.originalEvent.touches[0].force!=="undefined" && pressure > 0){
-						this.pen_pressure=false;//this works, but at least on fairphone, the values are too low. testing needed on iOS devices. [edit] yeeeah this breaks touch on iphone and it's for 3d touch, not touch pressure.
-					} else {
-						this.pen_pressure=false;
-					}
-				}
+				var t0 = event.originalEvent.touches[0];
+				pressure = typeof t0.force!=="undefined" ? t0.force : 1;
+				//TODO: add support for 3D touch of apple and other devices (oddly enough, the fairphone 3 seems to support this)
+				this.pen_pressure = typeof t0.touchType!=="undefined" && t0.touchType=="stylus";
 				if(pressure==0 && this.pen_pressure==false) pressure = 1;
-				x = (event.originalEvent.touches[0].pageX-bounding_box.left)/this.zoomFactor;
-				y = (event.originalEvent.touches[0].pageY-bounding_box.top)/this.zoomFactor;
+				x = (t0.pageX - bounding_box.left) / this.zoomFactor;
+				y = (t0.pageY - bounding_box.top) / this.zoomFactor;
 				pressure = this.pen_pressure ? pressure : 1;
 			} else {
 				x = (event.pageX - bounding_box.left)/this.zoomFactor;
@@ -132,17 +110,35 @@
 				 pressure: pressure 
 			};
 		};
-		plugin.draw_hsl = function(hue,canvas){
-			var ctx = canvas.getContext('2d');
-			for(var row=0; row<100; row++){
-				var grad = ctx.createLinearGradient(0, 0, 100,0);
-				grad.addColorStop(0, 'hsl('+hue+', 0%, '+(100-row)+'%)');
-				grad.addColorStop(1, 'hsl('+hue+', 100%, '+(50-row/2)+'%)');
-				ctx.fillStyle=grad;
-				ctx.fillRect(0, row, 100, 1);
-			}	
-		};
 		plugin.is_dragging = false;
+
+		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
+		plugin.calc_brush_params = function(brush, brushAlpha, pressure){
+			return {
+				alpha: brush.pressure_affects_alpha ? Math.min(1, brushAlpha * pressure * 2) : brushAlpha,
+				size:  brush.pressure_affects_size  ? Math.max(1, brush.size * pressure * 2) : brush.size
+			};
+		};
+
+		//returns the CSS transform string shared by the canvas and background canvas.
+		plugin.canvas_transform = function(x, y, angle){
+			return "translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)";
+		};
+
+		//reads border-top and border-left pixel widths from an element's computed style.
+		plugin.get_border = function(el){
+			var cs = window.getComputedStyle(el, null);
+			return {
+				top:  parseInt(cs.getPropertyValue("border-top-width")),
+				left: parseInt(cs.getPropertyValue("border-left-width"))
+			};
+		};
+
+		//sets the active (orange) or inactive (grey) visual state of a toolbox button.
+		plugin.set_button_state = function(el, active){
+			$(el).css(active ? { "background": "orange", "color": "white" }
+							 : { "background": "#eeeeee", "color": "#000000" });
+		};
 
 		//Binds touch event listeners to the canvas's parent container
 		plugin.bind_draw_events = function(){
@@ -157,13 +153,12 @@
 			self.boundCheck = function(event){
 				//new rotation-aware hit test
 				var parent = $(self).parent()[0];
-				var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
-				var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
+				var border = plugin.get_border(parent);
 				var box = parent.getBoundingClientRect();
 				var eventX = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].pageX : event.pageX;
 				var eventY = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].pageY : event.pageY;
-				var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
-				var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
+				var px = eventX - (box.x + $(document).scrollLeft()) - border.left;
+				var py = eventY - (box.y + $(document).scrollTop()) - border.top;
 				var W = self.width * self.zoomFactor;
 				var H = self.height * self.zoomFactor;
 				var angle = self.rotationAngle || 0;
@@ -176,6 +171,9 @@
 				return canvasX >= 0 && canvasX <= self.width && canvasY >= 0 && canvasY <= self.height;
 			};
 
+			//simple AABB hit test against the container's bounding rect (no rotation awareness).
+			//returns true if the event's pointer is within the container element.
+			//used for right-drag pan initiation and hover highlight, where an approximate test is sufficient.
 			self.containerBoundCheck = function(event){
 				var parent = $(self).parent()[0];
 				var box = parent.getBoundingClientRect();
@@ -197,7 +195,6 @@
 				if(e.type === "mousedown" && e.button === 2){
 					if(self.containerBoundCheck.call(self, e)){
 						self.isRightDragging = true;
-						//console.warn("right drag: start");
 						self.rightDragStart = { x: e.pageX, y: e.pageY, scrollX: self.scrollX, scrollY: self.scrollY };
 					}
 					return;
@@ -232,26 +229,23 @@
 						//save snapshot so the next gesture detection can erase this stroke start
 						if(e.type === "touchstart") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
-					//	alert(context.lineCap);
 						context.lineCap = "round";context.lineJoin = 'round';
 
-						//calculate alpha
-						 var calculatedAlpha = self.brushAlpha;
-						 if(self.active_brush.pressure_affects_alpha==true){
-							 calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
-							 if(calculatedAlpha>1) calculatedAlpha = 1;
-						}
-						var calculatedSize = self.active_brush.size;
-						 if(self.active_brush.pressure_affects_size==true){
-							 calculatedSize = calculatedSize * (mouse_data.pressure * 2);
-							 if(calculatedSize<1) calculatedSize = 1;
-						}
+						//reset fade-in counter at start of stroke
+						self._fadeInSpotCount = 0;
 
-						//context.lineWidth
-						 //context.globalAlpha = calculatedAlpha < 1 ? calculatedAlpha : 1;
+						//calculate alpha and size, scaled by pressure if the brush supports it
+						var bp = plugin.calc_brush_params(self.active_brush, self.brushAlpha, mouse_data.pressure);
+						var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
+
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
-						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+						var startAlpha = calculatedAlpha;
+						if(self.active_brush.brush_fade_in){
+							self._fadeInSpotCount++;
+							startAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
+						}
+						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e);
 						plugin.request_redraw.call(self);
 					}
 				}
@@ -273,8 +267,6 @@
 						var newZoom  = Math.max(0.1, Math.min(5, gs.zoom * (newDist / gs.dist)));
 						var newMidX  = (t1.pageX + t2.pageX) / 2;
 						var newMidY  = (t1.pageY + t2.pageY) / 2;
-						//console.warn(touches)
-						//console.warn(newDist,newAngle,newZoom,newMidX,newMidY)
 						/*keep the canvas point under the initial pinch centre pinned to the
 						current finger midpoint, conmbine zoom-centering and panning in one step */
 						var rect  = $(self).parent()[0].getBoundingClientRect();
@@ -318,16 +310,8 @@
 					var dist = plugin.distance_between(lastSpot, currentSpot);
 					 var angle = plugin.angle_between(lastSpot, currentSpot);
 
-					 var calculatedAlpha = self.brushAlpha;
-					 if(self.active_brush.pressure_affects_alpha==true){
-						 calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
-						 if(calculatedAlpha>1) calculatedAlpha = 1;
-					}
-					var calculatedSize = self.active_brush.size;
-					 if(self.active_brush.pressure_affects_size==true){
-						 calculatedSize = calculatedSize * (mouse_data.pressure * 2);
-						 if(calculatedSize<1) calculatedSize = 1;
-					}
+					var bp = plugin.calc_brush_params(self.active_brush, self.brushAlpha, mouse_data.pressure);
+					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 
 					 var stepSize = calculatedSize/6;
 
@@ -336,7 +320,12 @@
 					for (var i = stepSize; i < dist; i+=stepSize) {
 						x = lastSpot.x + (Math.sin(angle) * i);
 						y = lastSpot.y + (Math.cos(angle) * i);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,calculatedAlpha,e);
+						var spotAlpha = calculatedAlpha;
+						if(self.active_brush.brush_fade_in){
+							self._fadeInSpotCount++;
+							spotAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
+						}
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,spotAlpha,e);
 						positions.push({x:x,y:y});
 					}
 					$(self).data("positions",positions);
@@ -354,21 +343,15 @@
 			};
 
 			if(this.settings.enable_scrollwheel_zooming==true){
-				//handles scrollwheel zooming
+				//zooms the canvas in or out in response to a mouse wheel event, keeping the pointer position stationary
+				//delta is clamped to 0.1 per tick to prevent runaway zoom on hires trackpads
 				self.scrollWheel = function(e){
-					var delta = new Number(e.originalEvent.deltaY * -0.005);
-
-					if(delta<0){
-						if(delta<-0.1) delta=-0.1;
-					} else if(delta>0){
-						if(delta>0.1) delta=0.1;
-					}
+					var delta = Math.max(-0.1, Math.min(0.1, e.originalEvent.deltaY * -0.005));
 
 					var newZoomies = self.zoomFactor + delta;
 					var containerOffset = $(self).parent().offset();
 					var focalX = e.pageX - containerOffset.left;
 					var focalY = e.pageY - containerOffset.top;
-					//console.warn("zoomlevel: ",newZoomies);
 					plugin.apply_zoom.call(self, newZoomies, focalX, focalY);
 				};
 				$(self).parent().on("wheel.drawr", function(e){ 
@@ -405,19 +388,9 @@
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
 				
 					//if(plugin.check_ignore(e)==true) return;
-
-					 var calculatedAlpha = self.brushAlpha;
-					 if(self.active_brush.pressure_affects_alpha==true){
-						 calculatedAlpha = calculatedAlpha * (mouse_data.pressure * 2);
-						 if(calculatedAlpha>1) calculatedAlpha = 1;
-					}
-					var calculatedSize = self.active_brush.size;
-					 if(self.active_brush.pressure_affects_size==true){
-						 calculatedSize = calculatedSize * (mouse_data.pressure * 2);
-						 if(calculatedSize<1) calculatedSize = 1;
-					}
-
-					var result=undefined;
+					var bp = plugin.calc_brush_params(self.active_brush, self.brushAlpha, mouse_data.pressure);
+					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
+					var result;
 
 					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					//if there is an action to undo
@@ -468,14 +441,13 @@
 
 		//calls a tool plugin's activate_brush call. 
 		plugin.select_button = function(button){
-			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
 			this.$brushToolbox.find(".drawr-tool-btn.type-brush").each(function(){
 				$(this).removeClass("active");
-				$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
+				plugin.set_button_state(this, false);
 			});
-			$(button).css({ "background" : "orange","color" : "white" });
 			$(button).addClass("active");
-			plugin.activate_brush.call(this,$(button).data("data"));
+			plugin.set_button_state(button, true);
+			plugin.activate_brush.call(this, $(button).data("data"));
 		};
 
 		//activates a brush ( a tool plugin ).
@@ -496,7 +468,6 @@
 		plugin.create_button = function(toolbox,type,data,css){
 			var self=this;
 
-
 			var button_width = 100/self.settings.toolbox_cols;
 			var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
 			el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : button_width + "%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
@@ -513,11 +484,7 @@
 				if($(this).data("type")=="toggle") {//toggle data attribute and select effect
 					if(typeof $(this).data("state")=="undefined") $(this).data("state",false);
 					$(this).data("state",!$(this).data("state"));
-					if($(this).data("state")==true){
-						$(this).css({ "background" : "orange", "color" : "white" });
-					} else {
-						$(this).css({ "background" : "#eeeeee", "color" : "#000000" });
-					}
+					plugin.set_button_state(this, $(this).data("state"));
 				}
 				e.stopPropagation();
 				e.preventDefault();
@@ -552,9 +519,9 @@
 
 			const style = document.createElement('style');
 			style.textContent = `
-			.drawr-filepicker-fix::-webkit-file-upload-button {
-			    width: 38px;
-			}
+				.drawr-filepicker-fix::-webkit-file-upload-button {
+					width: 38px;
+				}
 			`;
 			document.head.appendChild(style);//hacky, but I don't know another way to do this. 
 
@@ -610,18 +577,12 @@
 			context.fillRect(0,0,width,height);
 			var parent_width = $(this).parent().innerWidth();
 			var parent_height = $(this).parent().innerHeight();
-			var borderTop = parseInt(window.getComputedStyle($(this).parent()[0], null).getPropertyValue("border-top-width"));
-			var borderLeft = parseInt(window.getComputedStyle($(this).parent()[0], null).getPropertyValue("border-left-width"));
 
 			this.$memoryCanvas.css({
 				"z-index": 5,
 				"position":"absolute",
 				"width" : parent_width,
-				"height" : parent_height/*,
-				"top" : ($(this).parent().offset().top + borderTop) + "px",
-				"left" : ($(this).parent().offset().left + borderLeft) + "px"
-				position is now absolute inside relative parent.
-				*/
+				"height" : parent_height
 			});
 			this.$memoryCanvas[0].width=parent_width;
 			this.$memoryCanvas[0].height=parent_height;
@@ -709,7 +670,6 @@
 				if(visible_scroll_y<0) visible_scroll_y = 0;	
 				var percentage = 100/(this.height*this.zoomFactor) * visible_scroll_y;
 				var scroll_bar_height= max_bar_height / 100 * percentage;
-			//	scroll_bar_height/=this.zoomFactor;
 				if(scroll_bar_height<1) scroll_bar_height = 1;
 
 				var position_percentage = (100/((this.width*this.zoomFactor)-container_height))*this.scrollY;	
@@ -787,7 +747,7 @@
 			var angle = self.rotationAngle || 0;
 			var sx = self.scrollX || 0;
 			var sy = self.scrollY || 0;
-			self.$bgCanvas.css("transform","translate(" + -sx + "px," + -sy + "px) rotate(" + angle + "rad)");
+			self.$bgCanvas.css("transform", plugin.canvas_transform(sx, sy, angle));
 		};
 
 		//call this to change scroll
@@ -796,9 +756,9 @@
 		plugin.apply_scroll = function(x,y,setTimer){
 			var self = this;
 			var angle = self.rotationAngle || 0;
-			var transform = "translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)";
-			$(self).css("transform",transform);
-			if(self.$bgCanvas) self.$bgCanvas.css("transform",transform);
+			var transform = plugin.canvas_transform(x, y, angle);
+			$(self).css("transform", transform);
+			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
 			self.scrollX = x;
 			self.scrollY = y;
 			if(setTimer==true){
@@ -811,9 +771,9 @@
 		plugin.apply_rotation = function(angle){
 			var self = this;
 			self.rotationAngle = angle;
-			var transform = "translate(" + -self.scrollX + "px," + -self.scrollY + "px) rotate(" + angle + "rad)";
-			$(self).css("transform",transform);
-			if(self.$bgCanvas) self.$bgCanvas.css("transform",transform);
+			var transform = plugin.canvas_transform(self.scrollX, self.scrollY, angle);
+			$(self).css("transform", transform);
+			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
 			plugin.request_redraw.call(self);
 		};
 
@@ -850,76 +810,40 @@
 		};
 
 		//toolset is only a parameter for more helpful errors.
-		plugin.get_tool_by_name = function(toolset,toolname){
-			var found = null;
-			for(var tool of $.fn.drawr.availableTools){
-				if(tool.name == toolname){
-					found = tool;
-				}
-			}
-			if(found==null){
-				throw new Error("Tool " + toolname + " not found, as referenced in " + toolset);
-			}
+		plugin.get_tool_by_name = function(toolset, toolname){
+			var found = $.fn.drawr.availableTools.find(function(t){ return t.name == toolname; });
+			if(!found) throw new Error("Tool " + toolname + " not found, as referenced in " + toolset);
 			return found;
 		};
 
+		//instantiates and inserts toolbar buttons for the named toolset.
+		//pass "default" to load all registered tools sorted by their order property,
+		//or a custom toolset name previously defined via the "createtoolset" action.
 		plugin.load_toolset = function(toolset){
-			//console.warn("loading toolset",toolset);
 			var self = this;
 			self.current_toolset = toolset;
 
 			if(toolset=="default"){
-				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} ); 
-				$.each($.fn.drawr.availableTools,function(i,tool){
-					var type = "brush";
-					if(typeof tool.type!=="undefined"){
-						type=tool.type;
-					}
-					plugin.create_button.call(self,self.$brushToolbox[0],type,tool);
+				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} );
+				$.each($.fn.drawr.availableTools, function(i, tool){
+					plugin.create_button.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
 				});
 			} else {
 				for(var tool_name of self.toolsets[toolset]){
-					var tool = plugin.get_tool_by_name(toolset,tool_name);
-					var type = "brush";
-					if(typeof tool.type!=="undefined"){
-						type=tool.type;
-					}
-					plugin.create_button.call(self,self.$brushToolbox[0],type,tool);
+					var tool = plugin.get_tool_by_name(toolset, tool_name);
+					plugin.create_button.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
 				}
 			}
 		};
 
-		//call with $(selector).drawr("export",mime)
-		//mime is optional, will default to png. returns a data url.
+		//call with $(selector).drawr("export",mime). mime is optional, will default to png. returns a data url.
 		if ( action == "export" ) {
 			var currentCanvas = this.first()[0];
 			var mime = typeof param=="undefined" ? "image/png" : param;
 			return currentCanvas.toDataURL(mime);
 		} 
 
-		/*
-		this displays this level of the undo stack as a popup. handy for debugging undo problems.
-		if ( action == "debug_undo" ) {
-			var currentCanvas = this.first()[0];
-			var level = typeof param=="undefined" ? 0 : param;
-			var url = currentCanvas.undoStack[level].data;
-			var img=document.createElement("img");
-			img.src=url;
-			img.className="undo-image";
-			$(".undo-image").detach();
-			$(document.body).append(img);
-			$(".undo-image").css({
-				left:"50%",
-				top:"50%",
-				position:"absolute",
-				zIndex:1234134,
-				border:"1px dotted red",
-				boxShadow: "2px 2px 5px rgba(0,0,0,0.3)"
-			});
-			return null;
-		}*/
-
-		//todo: document whatever this is 
+		//dynamically add a button, and return it so they can add event listeners to it etc.
 		if( action == "button" ){
 			var collection = $();
 			this.each(function() {
@@ -969,31 +893,21 @@
 				});
 				$(".drawr-toolbox").hide();
 			} else if ( action === "createtoolset" ) {
-
 				if(typeof currentCanvas.toolsets=="undefined") currentCanvas.toolsets = {};
 				if(typeof param!=="string" || typeof param2!=="object" || Array.isArray(param2)==false){
 					throw new Error("Invalid parameters");
 				}
 				currentCanvas.toolsets[param] = param2;
-
-				//console.warn("createtoolset called",currentCanvas.toolsets);
-
 			} else if ( action === "loadtoolset" ) {
-
 				if(typeof currentCanvas.toolsets=="undefined") currentCanvas.toolsets = {};
-
 				if(typeof param!=="string"){
 					throw new Error("Invalid parameters");
 				}
-
 				if(param in currentCanvas.toolsets){
-
 					plugin.load_toolset.call(currentCanvas,param);
-
 				} else {
 					throw new Error("Toolset not found");
 				}
-
 			//call with $(selector).drawr("load",something) to load an image.
 			//todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
 			} else if ( action === "load" ) {
@@ -1034,7 +948,7 @@
 
 				$.each($.fn.drawr.availableTools,function(i,tool){
 					if(typeof tool.cleanup!=="undefined"){
-						tool.cleanup.call(this);
+						tool.cleanup.call(currentCanvas);
 					}
 				});
 
@@ -1049,11 +963,10 @@
 				delete currentCanvas.containerWidth;
 				delete currentCanvas.containerHeight;
 				delete currentCanvas.$brushToolbox;
-
 				delete currentCanvas.plugin;
 				delete currentCanvas.settings;
 				delete currentCanvas.undoStack;
-			delete currentCanvas.redoStack;
+				delete currentCanvas.redoStack;
 				delete currentCanvas.brushColor;
 				delete currentCanvas.active_brush;
 				delete currentCanvas.zoomFactor;
@@ -1131,7 +1044,7 @@
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
 				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
-			currentCanvas.redoStack = [];
+				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
 
