@@ -988,7 +988,7 @@
 				}
 				currentCanvas.toolsets[param] = param2;
 
-				console.warn("createtoolset called",currentCanvas.toolsets);
+				//console.warn("createtoolset called",currentCanvas.toolsets);
 
 			} else if ( action === "loadtoolset" ) {
 
