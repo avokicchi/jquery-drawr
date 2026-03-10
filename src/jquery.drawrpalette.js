@@ -1,6 +1,6 @@
 /*!
  * jquery-drawrpalette
- * Copyright (c) 2019–present Lieuwe Prins
+ * Copyright (c) 2019–present Avokicchi
  * Released under the MIT License
  */
 

@@ -1,6 +1,6 @@
 /*!
  * jquery-drawr
- * Copyright (c) 2019–present Lieuwe Prins
+ * Copyright (c) 2019–present Avokicchi
  * Released under the MIT License
  */
 
@@ -459,11 +459,19 @@
 			this.active_brush = brush;
 			this.brushSize = typeof brush.size!=="undefined" ? brush.size : this.brushSize;
 			this.brushAlpha = typeof brush.alpha!=="undefined" ? brush.alpha : this.brushAlpha;
+
+
 			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-alpha").val(this.brushAlpha*100).trigger("input");
 			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-size").val(this.brushSize).trigger("input");
-			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".checkbox-pressure-alpha").prop("checked", !!brush.pressure_affects_alpha);
-			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".checkbox-pressure-size").prop("checked",  !!brush.pressure_affects_size);
+			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".checkbox-alpha").prop("checked", !!brush.pressure_affects_alpha);
+			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".checkbox-size").prop("checked",  !!brush.pressure_affects_size);
+
 			this.active_brush.activate.call(this,this.active_brush,context);
+
+			if(typeof this.$settingsToolbox!=="undefined"){
+				var settings_brush = plugin.get_tool_by_name("default","settings");
+				settings_brush.update.call(this);
+			}
 		};
 
 		/* Inserts a button into a toolbox */
@@ -1010,6 +1018,7 @@
 				delete currentCanvas.drawMove;
 				delete currentCanvas.drawStop;
 				delete currentCanvas.scrollWheel;
+				delete currentCanvas.current_toolset;
 				delete currentCanvas.scrollTimer;
 
 				//reset css and visuals and scrolls

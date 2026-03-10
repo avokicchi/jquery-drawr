@@ -1,7 +1,7 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-brush mdi-24px",
 	name: "brush",
-	size: 2,
+	size: 3,
 	alpha: 0.5,
 	order: 4,
 	pressure_affects_alpha: true,
