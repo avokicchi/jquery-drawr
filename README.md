@@ -20,7 +20,7 @@ $("#canvas").drawr("start");
 - Custom buttons
 - Loading and saving images
 - Excellent mobile support
-- Basic pen pressure support for Samsung and Apple devices
+- Basic pen pressure support for Samsung / Apple devices / Wacom
 - Text insertion
 - Undo
 - Ignores unintended touches

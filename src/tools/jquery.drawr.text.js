@@ -4,8 +4,6 @@ jQuery.fn.drawr.register({
 	size: 22,
 	alpha: 1,
 	order: 14,
-	pressure_affects_alpha: false,
-	pressure_affects_size: false,
 	activate: function(brush,context){
 		
 	},
@@ -42,7 +40,7 @@ jQuery.fn.drawr.register({
 				left: $(this).parent().offset().left + vp.x,
 				top: $(this).parent().offset().top + vp.y,
 			});
-			brush.$floatyBox.find("input").on("mousedown touchstart",function(e){
+			brush.$floatyBox.find("input").on("pointerdown",function(e){
 				e.preventDefault();
 				e.stopPropagation();
 				brush.$floatyBox.find("input").focus();
@@ -50,14 +48,14 @@ jQuery.fn.drawr.register({
 			brush.$floatyBox.find("input").focus();
 			event.preventDefault();
 			event.stopPropagation();
-			brush.$floatyBox.find(".ok").on("mousedown touchstart",function(e){
+			brush.$floatyBox.find(".ok").on("pointerdown",function(e){
 				e.preventDefault();
 				e.stopPropagation();
 				brush.applyText.call(self,context,brush,brush.currentPosition.x,brush.currentPosition.y,brush.$floatyBox.find("input").val());
 				brush.$floatyBox.remove();
 				delete brush.$floatyBox;
 			});
-			brush.$floatyBox.find(".cancel").on("mousedown touchstart",function(e){
+			brush.$floatyBox.find(".cancel").on("pointerdown",function(e){
 				e.preventDefault();
 				e.stopPropagation();
 				brush.$floatyBox.remove();

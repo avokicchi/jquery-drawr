@@ -30,7 +30,7 @@
 		plugin.record_event = function(event){
 			var fakeevent = {
 				"type" : event.type,
-				"touchtype" : (event.type=="touchmove" || event.type=="touchstart" || event.type=="touchend") && typeof event.originalEvent.touches[0].touchType!=="undefined" ? event.originalEvent.touches[0].touchType : "direct"
+				"touchtype" : (event.type=="disabledtouchmove" || event.type=="disabledtouchstart" || event.type=="disabledtouchend") && typeof event.originalEvent.touches[0].touchType!=="undefined" ? event.originalEvent.touches[0].touchType : "direct"
 			};
 			plugin.eventArr.push(fakeevent);
 			if(plugin.eventArr.length>25){
@@ -44,11 +44,11 @@
 		plugin.check_ignore = function(event){
 			var other = 0, stylus = 0;
 			$.each(plugin.eventArr, function(i, ev){
-				((ev.type=="touchmove" || ev.type=="touchstart") && ev.touchtype=="stylus") ? stylus++ : other++;
+				((ev.type=="disabledtouchmove" || ev.type=="disabledtouchstart") && ev.touchtype=="stylus") ? stylus++ : other++;
 			});
 			if(stylus > other){
 				var t = event.originalEvent.touches[0];
-				return !((event.type=="touchmove" || event.type=="touchstart") && typeof t.touchType!=="undefined" && t.touchType=="stylus");
+				return !((event.type=="disabledtouchmove" || event.type=="disabledtouchstart") && typeof t.touchType!=="undefined" && t.touchType=="stylus");
 			}
 			return false;
 		};
@@ -56,7 +56,7 @@
 		//It can get it relative to body, or another component
 		plugin.get_mouse_data = function (event,relativeTo,scrollEl) {
 			
-			if(event.type!=="touchend") plugin.record_event(event);
+			if(event.type!=="disabledtouchend") plugin.record_event(event);
 
 			if(typeof relativeTo!=="undefined" && relativeTo!==null){
 				var border = plugin.get_border(relativeTo);
@@ -78,7 +78,7 @@
 				};			
 			}
 			var x, y, pressure;
-			if(event.type=="touchmove" || event.type=="touchstart"){
+			if(event.type=="disabledtouchmove" || event.type=="disabledtouchstart"){
 				var t0 = event.originalEvent.touches[0];
 				pressure = typeof t0.force!=="undefined" ? t0.force : 1;
 				//TODO: add support for 3D touch of apple and other devices (oddly enough, the fairphone 3 seems to support this)
@@ -88,9 +88,10 @@
 				y = (t0.pageY - bounding_box.top) / this.zoomFactor;
 				pressure = this.pen_pressure ? pressure : 1;
 			} else {
+				this.pen_pressure = event.originalEvent.pointerType=="pen";
+				pressure = this.pen_pressure ? event.originalEvent.pressure : 1;
 				x = (event.pageX - bounding_box.left)/this.zoomFactor;
 				y = (event.pageY-bounding_box.top)/this.zoomFactor;
-				pressure = 1;
 			}
 			//apply inverse canvas rotation 
 			if(typeof relativeTo!=="undefined" && relativeTo!==null && this.rotationAngle){
@@ -114,9 +115,10 @@
 
 		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
 		plugin.calc_brush_params = function(brush, brushAlpha, pressure){
+			var s = typeof brush.size!=="undefined" ? brush.size : 1;
 			return {
 				alpha: brush.pressure_affects_alpha ? Math.min(1, brushAlpha * pressure * 2) : brushAlpha,
-				size:  brush.pressure_affects_size  ? Math.max(1, brush.size * pressure * 2) : brush.size
+				size:  parseFloat(brush.pressure_affects_size  ? Math.max(1, s * pressure * 2) : s)
 			};
 		};
 
@@ -155,8 +157,8 @@
 				var parent = $(self).parent()[0];
 				var border = plugin.get_border(parent);
 				var box = parent.getBoundingClientRect();
-				var eventX = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].pageX : event.pageX;
-				var eventY = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].pageY : event.pageY;
+				var eventX = (event.type=="disabledtouchmove"||event.type=="disabledtouchstart") ? event.originalEvent.touches[0].pageX : event.pageX;
+				var eventY = (event.type=="disabledtouchmove"||event.type=="disabledtouchstart") ? event.originalEvent.touches[0].pageY : event.pageY;
 				var px = eventX - (box.x + $(document).scrollLeft()) - border.left;
 				var py = eventY - (box.y + $(document).scrollTop()) - border.top;
 				var W = self.width * self.zoomFactor;
@@ -177,12 +179,12 @@
 			self.containerBoundCheck = function(event){
 				var parent = $(self).parent()[0];
 				var box = parent.getBoundingClientRect();
-				var eventX = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].clientX : event.originalEvent.clientX;
-				var eventY = (event.type=="touchmove"||event.type=="touchstart") ? event.originalEvent.touches[0].clientY : event.originalEvent.clientY;
+				var eventX = (event.type=="disabledtouchmove"||event.type=="disabledtouchstart") ? event.originalEvent.touches[0].clientX : event.originalEvent.clientX;
+				var eventY = (event.type=="disabledtouchmove"||event.type=="disabledtouchstart") ? event.originalEvent.touches[0].clientY : event.originalEvent.clientY;
 				return eventX >= box.left && eventX <= box.right && eventY >= box.top && eventY <= box.bottom;
 			};
 
-			//handles touchstart and mousedown. sets the important is_drawing flag if drawing started within the canvas area
+			//handles disabledtouchstart and pointerdown. sets the important is_drawing flag if drawing started within the canvas area
 			//this is important as drawing continues even when you leave, as long as it started in a valid area. 
 			//calls plugin drawStart and drawSpot functions
 			self.drawStart = function(e){
@@ -192,7 +194,7 @@
 				//console.warn(e.button);
 
 				//right-mouse drag: enter paning mode
-				if(e.type === "mousedown" && e.button === 2){
+				if(e.type === "pointerdown" && e.button === 2){
 					if(self.containerBoundCheck.call(self, e)){
 						self.isRightDragging = true;
 						self.rightDragStart = { x: e.pageX, y: e.pageY, scrollX: self.scrollX, scrollY: self.scrollY };
@@ -201,7 +203,7 @@
 				}
 
 				//pinch: save snapshot and enter gesture mode
-				if(e.type === "touchstart" && e.originalEvent.touches.length >= 2){
+				if(e.type === "disabledtouchstart" && e.originalEvent.touches.length >= 2){
 					//erase any dot drawn by the first touch before the gesture was detected
 					if(self._gestureAbortSnapshot){
 						context.putImageData(self._gestureAbortSnapshot, 0, 0);
@@ -227,7 +229,7 @@
 					if(plugin.is_dragging==false){
 						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
 						//save snapshot so the next gesture detection can erase this stroke start
-						if(e.type === "touchstart") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
+						if(e.type === "disabledtouchstart") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
 						context.lineCap = "round";context.lineJoin = 'round';
 
@@ -250,9 +252,9 @@
 					}
 				}
 			};
-			$(window).bind("touchstart.drawr mousedown.drawr", self.drawStart);
+			$(window).bind("disabledtouchstart.drawr pointerdown.drawr", self.drawStart);
 
-			//handles touchmove and mousemove events. if is_drawing is true, will call plugins drawSpot
+			//handles disabledtouchmove and pointermove events. if is_drawing is true, will call plugins drawSpot
 			//also handles toolbox dragging
 			self.drawMove = function(e){
 
@@ -361,9 +363,30 @@
 			}
 			$(self).parent().on("contextmenu.drawr", function(e){ e.preventDefault(); });
 
-			$(window).bind("touchmove.drawr mousemove.drawr", self.drawMove);
+			$(window).bind("disabledtouchmove.drawr pointermove.drawr", self.drawMove);
 
-			//handles mouseup and touchend to finish drawing. disables is_drawing flag, 
+			/*function onPointer(e) {
+				    const ev = e.originalEvent || e;
+			    if (ev.pointerType !== 'pen') return;
+
+			    const pressure = ev.pressure; // 0.0 to 1.0
+			    const tiltX = ev.tiltX;       // -90 to 90
+			    const tiltY = ev.tiltY;       // -90 to 90
+			    const twist = ev.twist || 0;  // 0 to 359 on supported hardware
+
+			    console.log({
+			        pressure,
+			        tiltX,
+			        tiltY,
+			        twist
+			    });
+			    //this has working values for wacom. 
+			}
+
+			//testing 1 2 3
+			$(window).bind("pointermove.drawr pointerdown.drawr pointerup.drawr", onPointer);*/
+
+			//handles pointerup and disabledtouchend to finish drawing. disables is_drawing flag, 
 			//and on some tools finalizes transfer of what was drawn on the fx canvas to the main canvas
 			//stops toolbox drag
 			self.drawStop = function(e){
@@ -404,7 +427,7 @@
 				$(".drawr-toolbox").data("dragging", false);
 				plugin.is_dragging=false;
 			};
-			$(window).bind("touchend.drawr mouseup.drawr", self.drawStop);
+			$(window).bind("disabledtouchend.drawr pointerup.drawr", self.drawStop);
 		};
 
 		//function that can be called to clear the canvas from elsewhere in the plugin 
@@ -485,7 +508,7 @@
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
 
-			el.on("mousedown.drawr touchstart.drawr", function(e){
+			el.on("pointerdown.drawr disabledtouchstart.drawr", function(e){
 				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
 				if(typeof data.action!=="undefined") {
 					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
@@ -517,7 +540,7 @@
 				title +
 				'</label></div>'
 			);
-			$(toolbox).find('.checkbox-' + key).on('mousedown touchstart', function(e){
+			$(toolbox).find('.checkbox-' + key).on('pointerdown disabledtouchstart', function(e){
 				e.stopPropagation();
 			});
 			return $(toolbox).find('.checkbox-' + key);
@@ -537,7 +560,7 @@
 		plugin.create_slider = function(toolbox,title,min,max,value){
 			var self=this;
 			$(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
-			$(toolbox).find(".slider-" + title.toLowerCase()).on("mousedown touchstart",function(e){
+			$(toolbox).find(".slider-" + title.toLowerCase()).on("pointerdown disabledtouchstart",function(e){
 				e.stopPropagation();
 			}).on("input.drawr",function(e){
 				 $(this).next().text($(this).val());
@@ -749,7 +772,7 @@
 			$(toolbox).insertAfter($(this).parent());
 			$(toolbox).offset(position);
 			$(toolbox).hide();
-			$(toolbox).on("mousedown.drawr touchstart.drawr", function(e){
+			$(toolbox).on("pointerdown.drawr disabledtouchstart.drawr", function(e){
 				var tbOffset = $(this).offset();
 				var pageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
 				var pageY = e.pageY || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageY) || 0;
@@ -926,7 +949,7 @@
 				$(".drawr-toolbox").hide();
 				$(".drawr-toolbox-brush").show();
 				$(".drawr-toolbox-palette").show();
-				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").mousedown();				
+				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").trigger("pointerdown");				
 			} else if ( action === "stop" ) {
 				if(!$(currentCanvas).hasClass("active-drawr")) {
 					console.error("The element you are running this command on is not a drawr canvas.");
@@ -935,7 +958,7 @@
 				//reset togglers
 				currentCanvas.$brushToolbox.find('.drawr-tool-btn.type-toggle').each(function(){
 					if($(this).data("state")==true){
-						$(this).trigger("mousedown");
+						$(this).trigger("pointerdown");
 					}
 				});
 				$(".drawr-toolbox").hide();
@@ -985,17 +1008,17 @@
 					return false;//can't destroy if not initialized.
 				}
 				var parent = $(currentCanvas).parent();
-				parent.off("touchstart.drawr");
+				parent.off("disabledtouchstart.drawr");
 				parent.off("wheel.drawr");
 				parent.off("contextmenu.drawr");
-				parent.find(".drawr-toolbox .drawr-tool-btn").off("mousedown.drawr touchstart.drawr");
+				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown.drawr disabledtouchstart.drawr");
 				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
-				parent.find(".drawr-toolbox").on("mousedown.drawr touchstart.drawr");
+				parent.find(".drawr-toolbox").on("pointerdown.drawr disabledtouchstart.drawr");
 				parent.find('.drawr-toolbox .color-picker').off("choose.drawrpalette").drawrpalette("destroy");
-				$(window).unbind("touchend.drawr mouseup.drawr", currentCanvas.drawStop);
-				$(window).unbind("touchmove.drawr mousemove.drawr", currentCanvas.drawMove);
-				$(window).unbind("touchstart.drawr mousedown.drawr", currentCanvas.drawStart);
-				$(window).unbind("wheel.drawr mousedown.drawr", currentCanvas.scrollWheel);
+				$(window).unbind("disabledtouchend.drawr pointerup.drawr", currentCanvas.drawStop);
+				$(window).unbind("disabledtouchmove.drawr pointermove.drawr", currentCanvas.drawMove);
+				$(window).unbind("disabledtouchstart.drawr pointerdown.drawr", currentCanvas.drawStart);
+				$(window).unbind("wheel.drawr", currentCanvas.scrollWheel);
 				$(window).off("resize.drawr", currentCanvas.onWindowResize);
 
 				$.each($.fn.drawr.availableTools,function(i,tool){

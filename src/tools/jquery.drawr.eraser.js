@@ -20,6 +20,7 @@ jQuery.fn.drawr.register({
 		context.globalAlpha = alpha;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
+		console.warn("drawing eraser with size " + size,event);
 		var self = this;
 		context.globalAlpha = alpha;
 		if(self.settings.enable_transparency==true){
