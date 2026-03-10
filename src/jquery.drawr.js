@@ -890,11 +890,22 @@
 			return collection;
 		}
 
-		//call with $(selector).drawr("clear") to clear the canvas.
+		//call with $(selector).drawr("clear",clear_undo) to clear the canvas.
 		if( action == "clear" ){
+			var clear_undo = typeof param!=="undefined" ? param : false;
 			this.each(function() {
 				var currentCanvas = this;
-				currentCanvas.plugin.clear_canvas.call(currentCanvas,true);
+				currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
+
+				if(clear_undo) {//re-add current version of the canvas.
+					if(typeof currentCanvas.$undoButton!=="undefined") currentCanvas.$undoButton.css("opacity",0.5);
+					if(typeof currentCanvas.$redoButton!=="undefined") currentCanvas.$redoButton.css("opacity",0.5);
+					currentCanvas.undoStack = [];
+					currentCanvas.redoStack = [];
+				}
+
+				currentCanvas.undoStack.push({data: currentCanvas.toDataURL("image/png"),current:true});
+
 			});
 		}
 

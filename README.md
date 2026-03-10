@@ -34,7 +34,7 @@ $("#canvas").drawr("start");
 - export(mime_type): returns a data url in the given format of the current drawing. (Doesn't force a download!)
 - button(buttonconfig): creates a button. $("#drawr-container .demo-canvas").drawr("button", {"icon":"mdi mdi-folder-open mdi-24px" }).on("mousedown"...etc)
 - destroy: cleans everything up
-- clear: clears the canvas 
+- clear(clear_undo): clears the canvas and optionally resets the undo/redo buffers.
 - createtoolset(name,tools): see minimal.html. Creates a set of tools.
 - loadtoolset(name): see minimal.html. Loads a set of tools.
 
