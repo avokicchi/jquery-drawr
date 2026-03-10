@@ -967,6 +967,11 @@
 				} else {
 					throw new Error("Toolset not found");
 				}
+			} else if ( action === "movetoolbox" ) {
+
+				currentCanvas.$brushToolbox.css("left",($(currentCanvas).parent().offset().left + param.x) + "px");
+				currentCanvas.$brushToolbox.css("top",($(currentCanvas).parent().offset().top + param.y) + "px");
+				
 			//call with $(selector).drawr("load",something) to load an image.
 			//todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
 			} else if ( action === "load" ) {

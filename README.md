@@ -37,6 +37,7 @@ $("#canvas").drawr("start");
 - clear(clear_undo): clears the canvas and optionally resets the undo/redo buffers.
 - createtoolset(name,tools): see minimal.html. Creates a set of tools.
 - loadtoolset(name): see minimal.html. Loads a set of tools.
+- movetoolbox({x:a,y:b}) moves the main tool palette offset from the topleft of the canvas.
 
 **Options**
 
