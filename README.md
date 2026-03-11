@@ -57,7 +57,8 @@ npm install jquery-drawr
 
 [demos and docs at this link](https://rawrfl.es/jquery-drawr/ "demos and docs at this link")
 
-To build,
+# To build
 
 npm install
+
 npm run build
