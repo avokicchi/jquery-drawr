@@ -524,7 +524,7 @@
 				title +
 				'</label></div>'
 			);
-			$(toolbox).find('.checkbox-' + key).on('pointerdown', function(e){
+			$(toolbox).find('.checkbox-' + key).on('pointerdown touchstart', function(e){
 				e.stopPropagation();
 			});
 			return $(toolbox).find('.checkbox-' + key);
@@ -544,7 +544,7 @@
 		plugin.create_slider = function(toolbox,title,min,max,value){
 			var self=this;
 			$(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
-			$(toolbox).find(".slider-" + title.toLowerCase()).on("pointerdown",function(e){
+			$(toolbox).find(".slider-" + title.toLowerCase()).on("pointerdown touchstart",function(e){
 				e.stopPropagation();
 			}).on("input.drawr",function(e){
 				 $(this).next().text($(this).val());
@@ -756,10 +756,7 @@
 			$(toolbox).insertAfter($(this).parent());
 			$(toolbox).offset(position);
 			$(toolbox).hide();
-			$(toolbox).on("touchstart.drawr", function(e){
-				e.preventDefault();//prevent page scroll
-			});
-			$(toolbox).on("pointerdown.drawr", function(e){
+			$(toolbox).on("pointerdown.drawr touchstart.drawr", function(e){
 				var tbOffset = $(this).offset();
 				var pageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
 				var pageY = e.pageY || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageY) || 0;
@@ -1000,7 +997,7 @@
 				parent.off("contextmenu.drawr");
 				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown.drawr");
 				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
-				parent.find(".drawr-toolbox").on("pointerdown.drawr");
+				parent.find(".drawr-toolbox").off("pointerdown.drawr touchstart.drawr");
 				parent.find('.drawr-toolbox .color-picker').off("choose.drawrpalette").drawrpalette("destroy");
 				$(window).unbind("pointerup.drawr pointercancel.drawr", currentCanvas.drawStop);
 				$(window).unbind("pointermove.drawr", currentCanvas.drawMove);
