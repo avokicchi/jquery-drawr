@@ -41,8 +41,7 @@
 		plugin.eventArr = [];
 		plugin.record_event = function(event){
 			var fakeevent = {
-				"type" : event.type,
-				"touchtype" : (event.type=="disabledtouchmove" || event.type=="disabledtouchstart" || event.type=="disabledtouchend") && typeof event.originalEvent.touches[0].touchType!=="undefined" ? event.originalEvent.touches[0].touchType : "direct"
+				"type" : event.type
 			};
 			plugin.eventArr.push(fakeevent);
 			if(plugin.eventArr.length>25){
@@ -51,16 +50,15 @@
 		};
 
 		//checks if a drawing event should be ignored.
-		//rule: if the majority of the last 25 events is stylus, ignore touch.
+		//rule: if the majority of the last 25 events is from a pen, ignore touch/other.
 		//if true, it should be ignored
 		plugin.check_ignore = function(event){
 			var other = 0, stylus = 0;
 			$.each(plugin.eventArr, function(i, ev){
-				((ev.type=="disabledtouchmove" || ev.type=="disabledtouchstart") && ev.touchtype=="stylus") ? stylus++ : other++;
+				ev.type=="pen" ? stylus++ : other++;
 			});
 			if(stylus > other){
-				var t = event.originalEvent.touches[0];
-				return !((event.type=="disabledtouchmove" || event.type=="disabledtouchstart") && typeof t.touchType!=="undefined" && t.touchType=="stylus");
+				return !(event.originalEvent.pointerType=="pen");
 			}
 			return false;
 		};
@@ -68,7 +66,8 @@
 		//It can get it relative to body, or another component
 		plugin.get_mouse_data = function (event,relativeTo,scrollEl) {
 			
-			if(event.type!=="disabledtouchend") plugin.record_event(event);
+			//if(event.type!=="touchend") 
+			plugin.record_event(event);
 
 			if(typeof relativeTo!=="undefined" && relativeTo!==null){
 				var border = plugin.get_border(relativeTo);
@@ -90,21 +89,10 @@
 				};			
 			}
 			var x, y, pressure;
-			if(event.type=="disabledtouchmove" || event.type=="disabledtouchstart"){
-				var t0 = event.originalEvent.touches[0];
-				pressure = typeof t0.force!=="undefined" ? t0.force : 1;
-				//TODO: add support for 3D touch of apple and other devices (oddly enough, the fairphone 3 seems to support this)
-				this.pen_pressure = typeof t0.touchType!=="undefined" && t0.touchType=="stylus";
-				if(pressure==0 && this.pen_pressure==false) pressure = 1;
-				x = (t0.pageX - bounding_box.left) / this.zoomFactor;
-				y = (t0.pageY - bounding_box.top) / this.zoomFactor;
-				pressure = this.pen_pressure ? pressure : 1;
-			} else {
-				this.pen_pressure = event.originalEvent.pointerType=="pen";
-				pressure = this.pen_pressure ? event.originalEvent.pressure : 1;
-				x = (event.pageX - bounding_box.left)/this.zoomFactor;
-				y = (event.pageY-bounding_box.top)/this.zoomFactor;
-			}
+			this.pen_pressure = event.originalEvent.pointerType=="pen";
+			pressure = this.pen_pressure ? event.originalEvent.pressure : 1;
+			x = (event.pageX - bounding_box.left)/this.zoomFactor;
+			y = (event.pageY-bounding_box.top)/this.zoomFactor;
 			//apply inverse canvas rotation 
 			if(typeof relativeTo!=="undefined" && relativeTo!==null && this.rotationAngle){
 				var angle = this.rotationAngle;
@@ -169,8 +157,8 @@
 				var parent = $(self).parent()[0];
 				var border = plugin.get_border(parent);
 				var box = parent.getBoundingClientRect();
-				var eventX = (event.type=="disabledtouchmove"||event.type=="disabledtouchstart") ? event.originalEvent.touches[0].pageX : event.pageX;
-				var eventY = (event.type=="disabledtouchmove"||event.type=="disabledtouchstart") ? event.originalEvent.touches[0].pageY : event.pageY;
+				var eventX = event.pageX;
+				var eventY = event.pageY;
 				var px = eventX - (box.x + $(document).scrollLeft()) - border.left;
 				var py = eventY - (box.y + $(document).scrollTop()) - border.top;
 				var W = self.width * self.zoomFactor;
@@ -191,13 +179,16 @@
 			self.containerBoundCheck = function(event){
 				var parent = $(self).parent()[0];
 				var box = parent.getBoundingClientRect();
-				var eventX = (event.type=="disabledtouchmove"||event.type=="disabledtouchstart") ? event.originalEvent.touches[0].clientX : event.originalEvent.clientX;
-				var eventY = (event.type=="disabledtouchmove"||event.type=="disabledtouchstart") ? event.originalEvent.touches[0].clientY : event.originalEvent.clientY;
+				var eventX = event.originalEvent.clientX;
+				var eventY = event.originalEvent.clientY;
 				return eventX >= box.left && eventX <= box.right && eventY >= box.top && eventY <= box.bottom;
 			};
 
-			//handles disabledtouchstart and pointerdown. sets the important is_drawing flag if drawing started within the canvas area
-			//this is important as drawing continues even when you leave, as long as it started in a valid area. 
+			//tracks active touch pointers by pointerId for gesture detection
+			self.activePointers = {};
+
+			//handles pointerdown. sets the important is_drawing flag if drawing started within the canvas area
+			//this is important as drawing continues even when you leave, as long as it started in a valid area.
 			//calls plugin drawStart and drawSpot functions
 			self.drawStart = function(e){
 				var mouse_data = plugin.get_mouse_data.call(self,e);
@@ -206,7 +197,7 @@
 				//console.warn(e.button);
 
 				//right-mouse drag: enter paning mode
-				if(e.type === "pointerdown" && e.button === 2){
+				if(e.button === 2){
 					if(self.containerBoundCheck.call(self, e)){
 						self.isRightDragging = true;
 						self.rightDragStart = { x: e.pageX, y: e.pageY, scrollX: self.scrollX, scrollY: self.scrollY };
@@ -214,34 +205,38 @@
 					return;
 				}
 
-				//pinch: save snapshot and enter gesture mode
-				if(e.type === "disabledtouchstart" && e.originalEvent.touches.length >= 2){
-					//erase any dot drawn by the first touch before the gesture was detected
-					if(self._gestureAbortSnapshot){
-						context.putImageData(self._gestureAbortSnapshot, 0, 0);
-						self._gestureAbortSnapshot = null;
+				//pinch/two-finger gesture: track touch pointers and enter gesture mode when a second finger lands
+				if(e.originalEvent.pointerType === "touch"){
+					self.activePointers[e.originalEvent.pointerId] = {x: e.pageX, y: e.pageY};
+					var pts = Object.values(self.activePointers);
+					if(pts.length >= 2){
+						//erase any dot drawn by the first touch before the gesture was detected
+						if(self._gestureAbortSnapshot){
+							context.putImageData(self._gestureAbortSnapshot, 0, 0);
+							self._gestureAbortSnapshot = null;
+						}
+						var t1 = pts[0], t2 = pts[1];
+						self.gestureStart = {
+							dist:	 plugin.distance_between(t1, t2),
+							angle:	Math.atan2(t2.y - t1.y, t2.x - t1.x),
+							zoom:	 self.zoomFactor,
+							rotation: self.rotationAngle || 0,
+							midX:	 (t1.x + t2.x) / 2,
+							midY:	 (t1.y + t2.y) / 2,
+							scrollX:  self.scrollX,
+							scrollY:  self.scrollY
+						};
+						self.isGesturing = true;
+						$(self).data("is_drawing", false);
+						return;
 					}
-					var t1 = e.originalEvent.touches[0], t2 = e.originalEvent.touches[1];
-					self.gestureStart = {
-						dist:	 plugin.distance_between({x:t1.pageX,y:t1.pageY},{x:t2.pageX,y:t2.pageY}),
-						angle:	Math.atan2(t2.pageY - t1.pageY, t2.pageX - t1.pageX),
-						zoom:	 self.zoomFactor,
-						rotation: self.rotationAngle || 0,
-						midX:	 (t1.pageX + t2.pageX) / 2,
-						midY:	 (t1.pageY + t2.pageY) / 2,
-						scrollX:  self.scrollX,
-						scrollY:  self.scrollY
-					};
-					self.isGesturing = true;
-					$(self).data("is_drawing", false);
-					return;
 				}
 
 				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true && self.containerBoundCheck.call(self,e)==true){//yay! We're drawing!
 					if(plugin.is_dragging==false){
 						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
-						//save snapshot so the next gesture detection can erase this stroke start
-						if(e.type === "disabledtouchstart") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
+						//save snapshot so the second touch can erase this stroke start if a gesture is detected
+						if(e.originalEvent.pointerType === "touch") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
 						context.lineCap = "round";context.lineJoin = 'round';
 
@@ -264,25 +259,30 @@
 					}
 				}
 			};
-			$(window).bind("disabledtouchstart.drawr pointerdown.drawr", self.drawStart);
+			$(window).bind("pointerdown.drawr", self.drawStart);
 
-			//handles disabledtouchmove and pointermove events. if is_drawing is true, will call plugins drawSpot
+			//handles pointermove events. if is_drawing is true, will call plugins drawSpot
 			//also handles toolbox dragging
 			self.drawMove = function(e){
 
+				//update tracked pointer position for gesture calculation
+				if(e.originalEvent.pointerType === "touch" && self.activePointers[e.originalEvent.pointerId]){
+					self.activePointers[e.originalEvent.pointerId] = {x: e.pageX, y: e.pageY};
+				}
+
 				//apply pinch zoom and rotation while gesturing
 				if(self.isGesturing){
-					var touches = e.originalEvent && e.originalEvent.touches;
-					if(touches && touches.length >= 2){
-						var t1 = touches[0], t2 = touches[1];
+					var pts = Object.values(self.activePointers);
+					if(pts.length >= 2){
+						var t1 = pts[0], t2 = pts[1];
 						var gs = self.gestureStart;
-						var newDist  = plugin.distance_between({x:t1.pageX,y:t1.pageY},{x:t2.pageX,y:t2.pageY});
-						var newAngle = Math.atan2(t2.pageY - t1.pageY, t2.pageX - t1.pageX);
+						var newDist  = plugin.distance_between(t1, t2);
+						var newAngle = Math.atan2(t2.y - t1.y, t2.x - t1.x);
 						var newZoom  = Math.max(0.1, Math.min(5, gs.zoom * (newDist / gs.dist)));
-						var newMidX  = (t1.pageX + t2.pageX) / 2;
-						var newMidY  = (t1.pageY + t2.pageY) / 2;
+						var newMidX  = (t1.x + t2.x) / 2;
+						var newMidY  = (t1.y + t2.y) / 2;
 						/*keep the canvas point under the initial pinch centre pinned to the
-						current finger midpoint, conmbine zoom-centering and panning in one step */
+						current finger midpoint, combine zoom-centering and panning in one step */
 						var rect  = $(self).parent()[0].getBoundingClientRect();
 						var cLeft = rect.left + window.scrollX;
 						var cTop  = rect.top  + window.scrollY;
@@ -374,40 +374,24 @@
 				});
 			}
 			$(self).parent().on("contextmenu.drawr", function(e){ e.preventDefault(); });
+			//prevent browser native touch gestures (scroll, pinch-zoom) so pointer events fire uninterrupted
+			$(self).parent().css("touch-action", "none");
 
-			$(window).bind("disabledtouchmove.drawr pointermove.drawr", self.drawMove);
+			$(window).bind("pointermove.drawr", self.drawMove);
 
-			/*function onPointer(e) {
-				    const ev = e.originalEvent || e;
-			    if (ev.pointerType !== 'pen') return;
-
-			    const pressure = ev.pressure; // 0.0 to 1.0
-			    const tiltX = ev.tiltX;       // -90 to 90
-			    const tiltY = ev.tiltY;       // -90 to 90
-			    const twist = ev.twist || 0;  // 0 to 359 on supported hardware
-
-			    console.log({
-			        pressure,
-			        tiltX,
-			        tiltY,
-			        twist
-			    });
-			    //this has working values for wacom. 
-			}
-
-			//testing 1 2 3
-			$(window).bind("pointermove.drawr pointerdown.drawr pointerup.drawr", onPointer);*/
-
-			//handles pointerup and disabledtouchend to finish drawing. disables is_drawing flag, 
+			//handles pointerup to finish drawing. disables is_drawing flag, 
 			//and on some tools finalizes transfer of what was drawn on the fx canvas to the main canvas
 			//stops toolbox drag
 			self.drawStop = function(e){
 
-				//end gesture mode when fewer than two touches remain
-				if(self.isGesturing){
-					var remaining = e.originalEvent && e.originalEvent.touches;
-					if(!remaining || remaining.length < 2) self.isGesturing = false;
+				//remove pointer from tracking map on lift or cancel
+				if(e.originalEvent && e.originalEvent.pointerType === "touch"){
+					delete self.activePointers[e.originalEvent.pointerId];
+				}
 
+				//end gesture mode when fewer than two touch pointers remain
+				if(self.isGesturing){
+					if(Object.keys(self.activePointers).length < 2) self.isGesturing = false;
 					return;
 				}
 
@@ -439,7 +423,7 @@
 				$(".drawr-toolbox").data("dragging", false);
 				plugin.is_dragging=false;
 			};
-			$(window).bind("disabledtouchend.drawr pointerup.drawr", self.drawStop);
+			$(window).bind("pointerup.drawr pointercancel.drawr", self.drawStop);
 		};
 
 		//function that can be called to clear the canvas from elsewhere in the plugin 
@@ -520,7 +504,7 @@
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
 
-			el.on("pointerdown.drawr disabledtouchstart.drawr", function(e){
+			el.on("pointerdown.drawr", function(e){
 				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
 				if(typeof data.action!=="undefined") {
 					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
@@ -552,7 +536,7 @@
 				title +
 				'</label></div>'
 			);
-			$(toolbox).find('.checkbox-' + key).on('pointerdown disabledtouchstart', function(e){
+			$(toolbox).find('.checkbox-' + key).on('pointerdown', function(e){
 				e.stopPropagation();
 			});
 			return $(toolbox).find('.checkbox-' + key);
@@ -572,7 +556,7 @@
 		plugin.create_slider = function(toolbox,title,min,max,value){
 			var self=this;
 			$(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
-			$(toolbox).find(".slider-" + title.toLowerCase()).on("pointerdown disabledtouchstart",function(e){
+			$(toolbox).find(".slider-" + title.toLowerCase()).on("pointerdown",function(e){
 				e.stopPropagation();
 			}).on("input.drawr",function(e){
 				 $(this).next().text($(this).val());
@@ -784,7 +768,10 @@
 			$(toolbox).insertAfter($(this).parent());
 			$(toolbox).offset(position);
 			$(toolbox).hide();
-			$(toolbox).on("pointerdown.drawr disabledtouchstart.drawr", function(e){
+			$(toolbox).on("touchstart.drawr", function(e){
+				e.preventDefault();//prevent page scroll
+			});
+			$(toolbox).on("pointerdown.drawr", function(e){
 				var tbOffset = $(this).offset();
 				var pageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
 				var pageY = e.pageY || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageY) || 0;
@@ -1020,16 +1007,16 @@
 					return false;//can't destroy if not initialized.
 				}
 				var parent = $(currentCanvas).parent();
-				parent.off("disabledtouchstart.drawr");
+				parent.off("touchstart.drawr");
 				parent.off("wheel.drawr");
 				parent.off("contextmenu.drawr");
-				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown.drawr disabledtouchstart.drawr");
+				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown.drawr");
 				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
-				parent.find(".drawr-toolbox").on("pointerdown.drawr disabledtouchstart.drawr");
+				parent.find(".drawr-toolbox").on("pointerdown.drawr");
 				parent.find('.drawr-toolbox .color-picker').off("choose.drawrpalette").drawrpalette("destroy");
-				$(window).unbind("disabledtouchend.drawr pointerup.drawr", currentCanvas.drawStop);
-				$(window).unbind("disabledtouchmove.drawr pointermove.drawr", currentCanvas.drawMove);
-				$(window).unbind("disabledtouchstart.drawr pointerdown.drawr", currentCanvas.drawStart);
+				$(window).unbind("pointerup.drawr pointercancel.drawr", currentCanvas.drawStop);
+				$(window).unbind("pointermove.drawr", currentCanvas.drawMove);
+				$(window).unbind("pointerdown.drawr", currentCanvas.drawStart);
 				$(window).unbind("wheel.drawr", currentCanvas.scrollWheel);
 				$(window).off("resize.drawr", currentCanvas.onWindowResize);
 
