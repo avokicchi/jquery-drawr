@@ -894,9 +894,10 @@
 		//call with $(selector).drawr("export",mime). mime is optional, will default to png. returns a data url.
 		if ( action == "export" ) {
 			var currentCanvas = this.first()[0];
+			if(typeof param !== "undefined" && typeof param !== "string") throw new Error("drawr export: mime type must be a string");
 			var mime = typeof param=="undefined" ? "image/png" : param;
 			return currentCanvas.toDataURL(mime);
-		} 
+		}
 
 		//dynamically add a button, and return it so they can add event listeners to it etc.
 		if( action == "button" ){
@@ -907,25 +908,6 @@
 				collection=collection.add(newButton);
 			});
 			return collection;
-		}
-
-		//call with $(selector).drawr("clear",clear_undo) to clear the canvas.
-		if( action == "clear" ){
-			var clear_undo = typeof param!=="undefined" ? param : false;
-			this.each(function() {
-				var currentCanvas = this;
-				currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
-
-				if(clear_undo) {//re-add current version of the canvas.
-					if(typeof currentCanvas.$undoButton!=="undefined") currentCanvas.$undoButton.css("opacity",0.5);
-					if(typeof currentCanvas.$redoButton!=="undefined") currentCanvas.$redoButton.css("opacity",0.5);
-					currentCanvas.undoStack = [];
-					currentCanvas.redoStack = [];
-				}
-
-				currentCanvas.undoStack.push({data: currentCanvas.toDataURL("image/png"),current:true});
-
-			});
 		}
 
 		//Initialize canvas or calling of methods
@@ -945,7 +927,22 @@
 				$(".drawr-toolbox").hide();
 				$(".drawr-toolbox-brush").show();
 				$(".drawr-toolbox-palette").show();
-				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").trigger("pointerdown");				
+				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").trigger("pointerdown");		  
+			} else if ( action === "clear" ) {
+
+				if(typeof param !== "undefined" && typeof param !== "boolean") throw new Error("drawr clear: clear_undo must be a boolean");
+				var clear_undo = typeof param!=="undefined" ? param : false;
+				currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
+
+				if(clear_undo) {//re-add current version of the canvas.
+					if(typeof currentCanvas.$undoButton!=="undefined") currentCanvas.$undoButton.css("opacity",0.5);
+					if(typeof currentCanvas.$redoButton!=="undefined") currentCanvas.$redoButton.css("opacity",0.5);
+					currentCanvas.undoStack = [];
+					currentCanvas.redoStack = [];
+				}
+
+				currentCanvas.undoStack.push({data: currentCanvas.toDataURL("image/png"),current:true});
+
 			} else if ( action === "stop" ) {
 				if(!$(currentCanvas).hasClass("active-drawr")) {
 					console.error("The element you are running this command on is not a drawr canvas.");
@@ -976,6 +973,8 @@
 				}
 			} else if ( action === "movetoolbox" ) {
 
+				if(typeof param !== "object" || param === null || Array.isArray(param)) throw new Error("drawr movetoolbox: param must be an object");
+				if(typeof param.x !== "number" || typeof param.y !== "number") throw new Error("drawr movetoolbox: param.x and param.y must be numbers");
 				currentCanvas.$brushToolbox.css("left",($(currentCanvas).parent().offset().left + param.x) + "px");
 				currentCanvas.$brushToolbox.css("top",($(currentCanvas).parent().offset().top + param.y) + "px");
 				
@@ -1010,7 +1009,6 @@
 				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown.drawr");
 				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
 				parent.find(".drawr-toolbox").off("pointerdown.drawr touchstart.drawr");
-				parent.find('.drawr-toolbox .color-picker').off("choose.drawrpalette").drawrpalette("destroy");
 				$(window).unbind("pointerup.drawr pointercancel.drawr", currentCanvas.drawStop);
 				$(window).unbind("pointermove.drawr", currentCanvas.drawMove);
 				$(window).unbind("pointerdown.drawr", currentCanvas.drawStart);
@@ -2742,6 +2740,7 @@ jQuery.fn.drawr.register({
 	},
 	cleanup: function(){
 		var self = this;
+		self.$settingsToolbox.find('.color-picker').off("choose.drawrpalette").drawrpalette("destroy");
 		self.$settingsToolbox.remove();
 		delete self.$settingsToolbox;
 		delete self.$cbPressureAlpha;

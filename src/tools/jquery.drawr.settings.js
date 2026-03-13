@@ -110,6 +110,7 @@ jQuery.fn.drawr.register({
 	},
 	cleanup: function(){
 		var self = this;
+		self.$settingsToolbox.find('.color-picker').off("choose.drawrpalette").drawrpalette("destroy");
 		self.$settingsToolbox.remove();
 		delete self.$settingsToolbox;
 		delete self.$cbPressureAlpha;
