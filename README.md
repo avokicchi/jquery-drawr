@@ -1,5 +1,6 @@
 # jquery-drawr
 JQuery dRawr is a jquery plugin to turn any canvas element into a drawing area with a lot of useful tools and brushes.
+It requires material design icons for the icons of the tool picker, and jquery. It bundles my other plugin, [drawrpalette](https://github.com/avokicchi/jquery-drawrpalette)
 
 Usage:
 
@@ -57,7 +58,8 @@ npm install jquery-drawr
 
 [demos and docs at this link](https://rawrfl.es/jquery-drawr/ "demos and docs at this link")
 
-To build,
+# To build
 
 npm install
+
 npm run build
