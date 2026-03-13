@@ -293,7 +293,7 @@
 						$(self).height(self.height * newZoom);
 						plugin.draw_checkerboard.call(self);
 						plugin.apply_scroll.call(self, newScrollX, newScrollY, true);
-						plugin.apply_rotation.call(self, gs.rotation + (newAngle - gs.angle));
+						plugin.apply_rotation.call(self, gs.rotation + (newAngle - gs.angle),false);
 					}
 					return;
 				}
@@ -695,20 +695,28 @@
 				this.scrollTimer-=5;
 				context.lineWidth = 4;
 				context.lineCap = 'square';
-				context.beginPath(); 
+				context.beginPath();
+
+				//get the axis-aligned bounding box of the rotated canvas 
+				var _angle = this.rotationAngle || 0;
+				var _W = this.width * this.zoomFactor;
+				var _H = this.height * this.zoomFactor;
+				var _abscos = Math.abs(Math.cos(_angle));
+				var _abssin = Math.abs(Math.sin(_angle));
+				var effectiveWidth  = _W * _abscos + _H * _abssin;
+				var effectiveHeight = _W * _abssin + _H * _abscos;
 
 				//horizontal
 				var max_bar_width = container_width;
 				var visible_scroll_x = container_width;
 				if(this.scrollX<0) visible_scroll_x += this.scrollX;
-				if(this.scrollX> (this.width*this.zoomFactor)-container_width) visible_scroll_x -= this.scrollX-((this.width*this.zoomFactor)-container_width);
-				if(visible_scroll_x<0) visible_scroll_x = 0;	
-				var percentage = 100/this.width * visible_scroll_x;
+				if(this.scrollX> effectiveWidth-container_width) visible_scroll_x -= this.scrollX-(effectiveWidth-container_width);
+				if(visible_scroll_x<0) visible_scroll_x = 0;
+				var percentage = 100/effectiveWidth * visible_scroll_x;
 				var scroll_bar_width= max_bar_width / 100 * percentage;
-				scroll_bar_width/=this.zoomFactor;
 				if(scroll_bar_width<1) scroll_bar_width = 1;
 
-				var position_percentage = (100/((this.width*this.zoomFactor)-container_width))*this.scrollX;	
+				var position_percentage = (100/(effectiveWidth-container_width))*this.scrollX;
 				var posx=(((max_bar_width-scroll_bar_width)/100)*position_percentage);
 				if(posx<0) posx=0;
 				if(posx>container_width-scroll_bar_width) posx = container_width-scroll_bar_width;
@@ -721,13 +729,13 @@
 				var max_bar_height = container_height;
 				var visible_scroll_y = container_height;
 				if(this.scrollY<0) visible_scroll_y += this.scrollY;
-				if(this.scrollY> (this.height*this.zoomFactor)-container_height) visible_scroll_y -= this.scrollY-((this.height*this.zoomFactor)-container_height);
-				if(visible_scroll_y<0) visible_scroll_y = 0;	
-				var percentage = 100/(this.height*this.zoomFactor) * visible_scroll_y;
+				if(this.scrollY> effectiveHeight-container_height) visible_scroll_y -= this.scrollY-(effectiveHeight-container_height);
+				if(visible_scroll_y<0) visible_scroll_y = 0;
+				var percentage = 100/effectiveHeight * visible_scroll_y;
 				var scroll_bar_height= max_bar_height / 100 * percentage;
 				if(scroll_bar_height<1) scroll_bar_height = 1;
 
-				var position_percentage = (100/((this.width*this.zoomFactor)-container_height))*this.scrollY;	
+				var position_percentage = (100/(effectiveHeight-container_height))*this.scrollY;
 				var posy=(((max_bar_height-scroll_bar_height)/100)*position_percentage);
 				if(posy<0) posy=0;
 				if(posy>container_height-scroll_bar_height) posy = container_height-scroll_bar_height;
@@ -817,18 +825,21 @@
 			self.scrollX = x;
 			self.scrollY = y;
 			if(setTimer==true){
-				self.scrollTimer= 250;
+				self.scrollTimer= 500;
 			}
 			plugin.request_redraw.call(self);
 		};
 
 		//call this to set canvas rotation angle (radians).
-		plugin.apply_rotation = function(angle){
+		plugin.apply_rotation = function(angle,setTimer){
 			var self = this;
 			self.rotationAngle = angle;
 			var transform = plugin.canvas_transform(self.scrollX, self.scrollY, angle);
 			$(self).css("transform", transform);
 			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
+			if(setTimer==true){
+				self.scrollTimer= 500;
+			}
 			plugin.request_redraw.call(self);
 		};
 
@@ -2604,7 +2615,7 @@ jQuery.fn.drawr.register({
 		var currentAngle = Math.atan2(py - cy, px - cx);
 		var delta = currentAngle - brush.startAngle;
 
-		self.plugin.apply_rotation.call(self, brush.startRotation + delta);
+		self.plugin.apply_rotation.call(self, brush.startRotation + delta,true);
 
 	}
 

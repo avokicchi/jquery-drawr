@@ -76,7 +76,7 @@ jQuery.fn.drawr.register({
 		var currentAngle = Math.atan2(py - cy, px - cx);
 		var delta = currentAngle - brush.startAngle;
 
-		self.plugin.apply_rotation.call(self, brush.startRotation + delta);
+		self.plugin.apply_rotation.call(self, brush.startRotation + delta,true);
 
 	}
 
