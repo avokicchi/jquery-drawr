@@ -40,9 +40,9 @@ jQuery.fn.drawr.register({
 
 		if(self.settings.enable_transparency){
 			self.$paperColorDropdown = self.plugin.create_dropdown.call(self, self.$settingsToolbox, "Paper color", [
-				{ value: "checkerboard", label: "Checkerboard" },
-				{ value: "solid", label: "Solid color" }
-			], "checkerboard");
+				{ value: "checkerboard", label: "Checkered" },
+				{ value: "solid", label: "Solid" }
+			], self.paperColorMode);
 			self.$paperColorDropdown.on("change.drawr", function(){
 				self.paperColorMode = $(this).val();
 				self.plugin.draw_checkerboard.call(self);
@@ -54,7 +54,7 @@ jQuery.fn.drawr.register({
 				}
 			});
 
-			self.$settingsToolbox.append("<div class='paper-color-picker-wrap' style='padding:0 8px 4px;'><input type='text' value='#ffffff' class='paper-color-picker'/></div>");
+			self.$settingsToolbox.append("<div class='paper-color-picker-wrap' style='padding:0 8px 4px;'><input type='text' value='" + self.paperColor + "' class='paper-color-picker'/></div>");
 			self.$paperColorPicker = self.$settingsToolbox.find('.paper-color-picker');
 			self.$paperColorPicker.drawrpalette({ auto_apply: true }).on("choose.drawrpalette", function(event, hexcolor){
 				self.paperColor = hexcolor;
@@ -64,7 +64,6 @@ jQuery.fn.drawr.register({
 				e.stopPropagation();
 			});
 
-			self.paperColorMode = "checkerboard";
 			if(self.paperColorMode === "solid"){
 				self.$paperColorPicker.parent().show();
 			} else {

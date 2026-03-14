@@ -643,7 +643,7 @@
 			
 			var context = this.getContext("2d", { alpha: true });
 			if(this.settings.clear_on_init==true){
-                context.globalAlpha = 1;
+				context.globalAlpha = 1;
 				if(this.settings.enable_transparency==false){
 					context.fillStyle="white";
 					context.fillRect(0,0,width,height);
@@ -1164,7 +1164,9 @@
 					"color_mode" : "picker",
 					"clear_on_init" : true,
 					"toolbox_cols" : 3,
-					"debug_mode" : false
+					"debug_mode" : false,
+					"paper_color_mode" : "checkerboard",
+					"paper_color" : "#ffffff"
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
@@ -1189,12 +1191,16 @@
 				currentCanvas.draw_animations_bound = plugin.draw_animations.bind(currentCanvas);
 				currentCanvas._animFrameQueued = false;
 
+				currentCanvas.paperColorMode = currentCanvas.settings.paper_color_mode;
+				currentCanvas.paperColor = currentCanvas.settings.paper_color;
+
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
 				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
 				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
+
 
 				//brush dialog
 				var width = defaultSettings.toolbox_cols * 40;
@@ -2744,9 +2750,9 @@ jQuery.fn.drawr.register({
 
 		if(self.settings.enable_transparency){
 			self.$paperColorDropdown = self.plugin.create_dropdown.call(self, self.$settingsToolbox, "Paper color", [
-				{ value: "checkerboard", label: "Checkerboard" },
-				{ value: "solid", label: "Solid color" }
-			], "checkerboard");
+				{ value: "checkerboard", label: "Checkered" },
+				{ value: "solid", label: "Solid" }
+			], self.paperColorMode);
 			self.$paperColorDropdown.on("change.drawr", function(){
 				self.paperColorMode = $(this).val();
 				self.plugin.draw_checkerboard.call(self);
@@ -2758,7 +2764,7 @@ jQuery.fn.drawr.register({
 				}
 			});
 
-			self.$settingsToolbox.append("<div class='paper-color-picker-wrap' style='padding:0 8px 4px;'><input type='text' value='#ffffff' class='paper-color-picker'/></div>");
+			self.$settingsToolbox.append("<div class='paper-color-picker-wrap' style='padding:0 8px 4px;'><input type='text' value='" + self.paperColor + "' class='paper-color-picker'/></div>");
 			self.$paperColorPicker = self.$settingsToolbox.find('.paper-color-picker');
 			self.$paperColorPicker.drawrpalette({ auto_apply: true }).on("choose.drawrpalette", function(event, hexcolor){
 				self.paperColor = hexcolor;
@@ -2768,7 +2774,6 @@ jQuery.fn.drawr.register({
 				e.stopPropagation();
 			});
 
-			self.paperColorMode = "checkerboard";
 			if(self.paperColorMode === "solid"){
 				self.$paperColorPicker.parent().show();
 			} else {

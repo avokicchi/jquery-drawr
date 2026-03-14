@@ -50,6 +50,8 @@ $("#canvas").drawr("start");
 - clear_on_init(true): whether to erase the canvas when it is loaded.
 - enable_scrollwheel_zooming(true)
 - toolbox_cols(2): configure the toolbox size
+- paper_color(#ffffff): configure the paper color used when paper_color_mode is solid
+- paper_color_mode(checkerboard/solid): configure the paper color display mode used if transparency is on.
 
 Also available [on npm](https://www.npmjs.com/package/jquery-drawr). For installation,
 

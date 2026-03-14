@@ -1152,7 +1152,9 @@
 					"color_mode" : "picker",
 					"clear_on_init" : true,
 					"toolbox_cols" : 3,
-					"debug_mode" : false
+					"debug_mode" : false,
+					"paper_color_mode" : "checkerboard",
+					"paper_color" : "#ffffff"
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
@@ -1177,12 +1179,16 @@
 				currentCanvas.draw_animations_bound = plugin.draw_animations.bind(currentCanvas);
 				currentCanvas._animFrameQueued = false;
 
+				currentCanvas.paperColorMode = currentCanvas.settings.paper_color_mode;
+				currentCanvas.paperColor = currentCanvas.settings.paper_color;
+
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
 				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
 				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
+
 
 				//brush dialog
 				var width = defaultSettings.toolbox_cols * 40;
