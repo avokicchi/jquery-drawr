@@ -631,23 +631,14 @@
 			
 			var context = this.getContext("2d", { alpha: true });
 			if(this.settings.clear_on_init==true){
+				context.globalAlpha = 1;
 				if(this.settings.enable_transparency==false){
 					context.fillStyle="white";
 					context.fillRect(0,0,width,height);
 				} else {
 					context.clearRect(0,0,width,height);
 				}
-			} else {
-				var is_blank = !new Uint32Array(context.getImageData(0, 0, width, height).data.buffer).some(x => x !== 0);
-				if(is_blank){
-					if(this.settings.clear_on_init==true){
-						context.fillStyle="white";
-						context.fillRect(0,0,width,height);
-					} else {
-						context.clearRect(0,0,width,height);
-					}
-				}
-			}
+			} 
 
 			//memory canvas
 			var context = this.$memoryCanvas[0].getContext("2d");
