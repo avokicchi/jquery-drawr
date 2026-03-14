@@ -1049,6 +1049,20 @@
 				} else {
 					throw new Error("Toolset not found");
 				}
+			} else if ( action === "activate_tool" ) {
+
+				if(typeof param !== "string") throw new Error("drawr activate_tool: tool name must be a string");
+				var tool = plugin.get_tool_by_name("activate_tool", param);
+				var toolButton = null;
+				currentCanvas.$brushToolbox.find(".drawr-tool-btn.type-brush").each(function(){
+					if($(this).data("data") === tool) { toolButton = this; return false; }
+				});
+				if(toolButton) {
+					plugin.select_button.call(currentCanvas, toolButton);
+				} else {
+					plugin.activate_brush.call(currentCanvas, tool);
+				}
+
 			} else if ( action === "zoom" ) {
 
 				if(typeof param !== "number") throw new Error("drawr setzoom: param must be a number");
