@@ -38,6 +38,41 @@ jQuery.fn.drawr.register({
 			self.plugin.is_dragging=false;
 		});
 
+		if(self.settings.enable_transparency){
+			self.$paperColorDropdown = self.plugin.create_dropdown.call(self, self.$settingsToolbox, "Paper color", [
+				{ value: "checkerboard", label: "Checkerboard" },
+				{ value: "solid", label: "Solid color" }
+			], "checkerboard");
+			self.$paperColorDropdown.on("change.drawr", function(){
+				self.paperColorMode = $(this).val();
+				self.plugin.draw_checkerboard.call(self);
+				self.plugin.is_dragging = false;
+				if($(this).val() === "solid"){
+					self.$paperColorPicker.parent().show();
+				} else {
+					self.$paperColorPicker.parent().hide();
+				}
+			});
+
+			self.$settingsToolbox.append("<div class='paper-color-picker-wrap' style='padding:0 8px 4px;'><input type='text' value='#ffffff' class='paper-color-picker'/></div>");
+			self.$paperColorPicker = self.$settingsToolbox.find('.paper-color-picker');
+			self.$paperColorPicker.drawrpalette({ auto_apply: true }).on("choose.drawrpalette", function(event, hexcolor){
+				self.paperColor = hexcolor;
+				self.plugin.draw_checkerboard.call(self);
+			});
+			self.$paperColorPicker.parent().on("pointerdown touchstart mousedown", function(e){
+				e.stopPropagation();
+			});
+
+			self.paperColorMode = "checkerboard";
+			if(self.paperColorMode === "solid"){
+				self.$paperColorPicker.parent().show();
+			} else {
+				self.$paperColorPicker.parent().hide();
+			}
+
+		}
+
 		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Pressure affects");
 
 		self.$cbPressureAlpha = self.plugin.create_checkbox.call(self, self.$settingsToolbox, "Alpha", false);
@@ -111,6 +146,11 @@ jQuery.fn.drawr.register({
 	cleanup: function(){
 		var self = this;
 		self.$settingsToolbox.find('.color-picker').off("choose.drawrpalette").drawrpalette("destroy");
+		if(self.$paperColorPicker){
+			self.$paperColorPicker.off("choose.drawrpalette").drawrpalette("destroy");
+			delete self.$paperColorPicker;
+			delete self.$paperColorDropdown;
+		}
 		self.$settingsToolbox.remove();
 		delete self.$settingsToolbox;
 		delete self.$cbPressureAlpha;

@@ -43,7 +43,6 @@ $("#canvas").drawr("start");
 **Options**
 
 - enable_transparency(true)
-- enable_transparency_image(true)
 - canvas_width
 - canvas_height
 - undo_max_levels(5)

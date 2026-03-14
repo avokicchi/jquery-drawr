@@ -528,6 +528,29 @@
 			return el;
 		};
 
+		/* create a dropdown select inside a toolbox.
+		   options: array of { value, label }
+		   selected: currently selected value
+		   returns the <select> element */
+		plugin.create_dropdown = function(toolbox, title, options, selected){
+			var key = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+			var optHtml = '';
+			$.each(options, function(i, opt){
+				optHtml += '<option value="' + opt.value + '"' + (opt.value === selected ? ' selected' : '') + '>' + opt.label + '</option>';
+			});
+			$(toolbox).append(
+				'<div style="clear:both;text-align:left;padding:4px 8px;">' +
+				'<label style="text-align:center;display:block;font-weight:bold;margin-bottom:2px;user-select:none;">' + title + '</label>' +
+				'<select class="dropdown-component dropdown-' + key + '" style="color:#333;width:100%;box-sizing:border-box;cursor:pointer;">' +
+				optHtml +
+				'</select></div>'
+			);
+			$(toolbox).find('.dropdown-' + key).on('pointerdown touchstart mousedown', function(e){
+				e.stopPropagation();
+			});
+			return $(toolbox).find('.dropdown-' + key);
+		};
+
 		/* create a checkbox */
 		plugin.create_checkbox = function(toolbox, title, checked){
 			var key = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -582,12 +605,10 @@
 			`;
 			document.head.appendChild(style);//hacky, but I don't know another way to do this. 
 
-			if(this.settings.enable_transparency_image==true){
-				if(!this.$bgCanvas){
-					this.$bgCanvas = $("<canvas class='drawr-bg-canvas'></canvas>");
-					this.$bgCanvas.css({"position":"absolute","z-index":0,"top":0,"left":0,"pointer-events":"none"});
-					this.$bgCanvas.insertBefore(this);
-				}
+			if(!this.$bgCanvas){
+				this.$bgCanvas = $("<canvas class='drawr-bg-canvas'></canvas>");
+				this.$bgCanvas.css({"position":"absolute","z-index":0,"top":0,"left":0,"pointer-events":"none"});
+				this.$bgCanvas.insertBefore(this);
 			}
 
 			if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
@@ -834,6 +855,7 @@
 		};
 
 		//draw the transparency checkerboard onto the background canvas at fixed 20px squares
+		//if self.paperColorMode === "solid", fills with self.paperColor instead
 		plugin.draw_checkerboard = function(){
 			var self = this;
 			if(!self.$bgCanvas) return;
@@ -844,13 +866,18 @@
 			self.$bgCanvas.width(W);
 			self.$bgCanvas.height(H);
 			var ctx = self.$bgCanvas[0].getContext('2d');
-			var sz = 20 * self.zoomFactor;
-			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(0, 0, W, H);
-			ctx.fillStyle = '#cccccc';
-			for(var row = 0; row * sz < H; row++){
-				for(var col = row % 2; col * sz < W; col += 2){
-					ctx.fillRect(col * sz, row * sz, sz, sz);
+			if(self.paperColorMode === "solid"){
+				ctx.fillStyle = self.paperColor || '#ffffff';
+				ctx.fillRect(0, 0, W, H);
+			} else {
+				var sz = 20 * self.zoomFactor;
+				ctx.fillStyle = '#ffffff';
+				ctx.fillRect(0, 0, W, H);
+				ctx.fillStyle = '#cccccc';
+				for(var row = 0; row * sz < H; row++){
+					for(var col = row % 2; col * sz < W; col += 2){
+						ctx.fillRect(col * sz, row * sz, sz, sz);
+					}
 				}
 			}
 			var angle = self.rotationAngle || 0;
@@ -1136,7 +1163,6 @@
 				//determine settings
 				var defaultSettings = {
 					"enable_transparency" : true,
-					"enable_transparency_image" : true,
 					"enable_scrollwheel_zooming" : true,
 					"canvas_width" : $(currentCanvas).parent().innerWidth(),
 					"canvas_height" : $(currentCanvas).parent().innerHeight(),
