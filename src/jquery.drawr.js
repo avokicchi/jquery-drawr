@@ -304,7 +304,7 @@
 				if(self.isRightDragging){
 					var dx = e.pageX - self.rightDragStart.x;
 					var dy = e.pageY - self.rightDragStart.y;
-					plugin.apply_scroll.call(self, self.rightDragStart.scrollX - dx, self.rightDragStart.scrollY - dy, false);
+					plugin.apply_scroll.call(self, self.rightDragStart.scrollX - dx, self.rightDragStart.scrollY - dy, true);
 					return;
 				}
 

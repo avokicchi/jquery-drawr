@@ -18,7 +18,7 @@
 
 (function( $ ) {
 
-	var DRAWR_VERSION = "0.9.4";
+	var DRAWR_VERSION = "0.9.5";
 
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
@@ -316,7 +316,7 @@
 				if(self.isRightDragging){
 					var dx = e.pageX - self.rightDragStart.x;
 					var dy = e.pageY - self.rightDragStart.y;
-					plugin.apply_scroll.call(self, self.rightDragStart.scrollX - dx, self.rightDragStart.scrollY - dy, false);
+					plugin.apply_scroll.call(self, self.rightDragStart.scrollX - dx, self.rightDragStart.scrollY - dy, true);
 					return;
 				}
 
