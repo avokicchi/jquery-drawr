@@ -35,9 +35,15 @@
 
 	window.addEventListener("contextmenu", function(evt){evt.preventDefault();return false;});//for demo purposes, context menus break interactivity, so.
 
-	$("#drawr-container3 .demo-canvas").drawr({ "enable_transparency" : true });
+	var width = $("#drawr-container3").width()/2;
+	var height = $("#drawr-container3").height()/2;
+
+	$("#drawr-container3 .demo-canvas").drawr({ "enable_transparency" : true, canvas_width: width, canvas_height: height });
 
 	$("#drawr-container3 .demo-canvas").drawr("start");
+
+	$("#drawr-container3 .demo-canvas").drawr("zoom",2);
+	$("#drawr-container3 .demo-canvas").drawr("center");
 
 </script>
 

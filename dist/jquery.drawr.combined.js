@@ -1049,6 +1049,19 @@
 				} else {
 					throw new Error("Toolset not found");
 				}
+			} else if ( action === "zoom" ) {
+
+				if(typeof param !== "number") throw new Error("drawr setzoom: param must be a number");
+				plugin.apply_zoom.call(currentCanvas, param);
+
+			} else if ( action === "center" ) {
+
+				var _cw = currentCanvas.width  * currentCanvas.zoomFactor;
+				var _ch = currentCanvas.height * currentCanvas.zoomFactor;
+				var _cx = (_cw - currentCanvas.containerWidth)  / 2;
+				var _cy = (_ch - currentCanvas.containerHeight) / 2;
+				plugin.apply_scroll.call(currentCanvas, _cx, _cy, false);
+
 			} else if ( action === "movetoolbox" ) {
 
 				if(typeof param !== "object" || param === null || Array.isArray(param)) throw new Error("drawr movetoolbox: param must be an object");

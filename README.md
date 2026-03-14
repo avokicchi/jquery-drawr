@@ -39,6 +39,8 @@ $("#canvas").drawr("start");
 - createtoolset(name,tools): see minimal.html. Creates a set of tools.
 - loadtoolset(name): see minimal.html. Loads a set of tools.
 - movetoolbox({x:a,y:b}) moves the main tool palette offset from the topleft of the canvas.
+- zoom(factor) sets the zoom factor.
+- center: centers the view in the parent container.
 
 **Options**
 
