@@ -831,6 +831,10 @@
 			$(toolbox).offset(position);
 			$(toolbox).hide();
 			$(toolbox).on("pointerdown.drawr touchstart.drawr", function(e){
+				if($(e.target).is("button, input, select, textarea, label, a") || $(e.target).closest("button, input, select, textarea, label, a").length) {
+					e.preventDefault();//prevent native scroll, even if we don't wanna drag the toolbox.
+					return;
+				}
 				var tbOffset = $(this).offset();
 				var pageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
 				var pageY = e.pageY || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageY) || 0;
