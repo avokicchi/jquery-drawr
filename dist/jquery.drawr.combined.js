@@ -148,7 +148,7 @@
 			var self=this;
 			var context = self.getContext("2d", { alpha: self.settings.enable_transparency });
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
-			$(self).parent().on("touchstart.drawr", function(e){ e.preventDefault(); });//cancel scroll.
+			$(self).parent().on("touchstart." + self._evns, function(e){ e.preventDefault(); });//cancel scroll.
 
 			//true if inside canvas, false if outside canvas.
 			//used to check if an initial click or touch start event is valid inside the container
@@ -260,7 +260,7 @@
 					}
 				}
 			};
-			$(window).bind("pointerdown.drawr", self.drawStart);
+			$(window).bind("pointerdown." + self._evns, self.drawStart);
 
 			//handles pointermove events. if is_drawing is true, will call plugins drawSpot
 			//also handles toolbox dragging
@@ -382,16 +382,16 @@
 					var focalY = e.pageY - containerOffset.top;
 					plugin.apply_zoom.call(self, newZoomies, focalX, focalY);
 				};
-				$(self).parent().on("wheel.drawr", function(e){ 
-					e.preventDefault(); 
+				$(self).parent().on("wheel." + self._evns, function(e){
+					e.preventDefault();
 					self.scrollWheel(e);
 				});
 			}
-			$(self).parent().on("contextmenu.drawr", function(e){ e.preventDefault(); });
+			$(self).parent().on("contextmenu." + self._evns, function(e){ e.preventDefault(); });
 			//prevent browser native touch gestures (scroll, pinch-zoom) so pointer events fire uninterrupted
 			$(self).parent().css("touch-action", "none");
 
-			$(window).bind("pointermove.drawr", self.drawMove);
+			$(window).bind("pointermove." + self._evns, self.drawMove);
 
 			//handles pointerup to finish drawing. disables is_drawing flag, 
 			//and on some tools finalizes transfer of what was drawn on the fx canvas to the main canvas
@@ -437,7 +437,7 @@
 				$(".drawr-toolbox").data("dragging", false);
 				plugin.is_dragging=false;
 			};
-			$(window).bind("pointerup.drawr pointercancel.drawr", self.drawStop);
+			$(window).bind("pointerup." + self._evns + " pointercancel." + self._evns, self.drawStop);
 		};
 
 		//function that can be called to clear the canvas from elsewhere in the plugin 
@@ -518,7 +518,7 @@
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
 
-			el.on("pointerdown.drawr", function(e){
+			el.on("pointerdown." + self._evns, function(e){
 				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
 				if(typeof data.action!=="undefined") {
 					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
@@ -595,7 +595,7 @@
 			$(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
 			$(toolbox).find(".slider-" + title.toLowerCase()).on("pointerdown touchstart",function(e){
 				e.stopPropagation();
-			}).on("input.drawr",function(e){
+			}).on("input." + self._evns,function(e){
 				 $(this).next().text($(this).val());
 			});
 			return $(toolbox).find(".slider-" + title.toLowerCase());
@@ -833,7 +833,7 @@
 			$(toolbox).insertAfter($(this).parent());
 			$(toolbox).offset(position);
 			$(toolbox).hide();
-			$(toolbox).on("pointerdown.drawr touchstart.drawr", function(e){
+			$(toolbox).on("pointerdown." + self._evns + " touchstart." + self._evns, function(e){
 				if($(e.target).is("button, input, select, textarea, label, a") || $(e.target).closest("button, input, select, textarea, label, a").length) {
 					e.preventDefault();//prevent native scroll, even if we don't wanna drag the toolbox.
 					return;
@@ -1081,17 +1081,18 @@
 					return false;//can't destroy if not initialized.
 				}
 				var parent = $(currentCanvas).parent();
-				parent.off("touchstart.drawr");
-				parent.off("wheel.drawr");
-				parent.off("contextmenu.drawr");
-				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown.drawr");
-				parent.find(".drawr-toolbox .slider-component").off("input.drawr");
-				parent.find(".drawr-toolbox").off("pointerdown.drawr touchstart.drawr");
-				$(window).unbind("pointerup.drawr pointercancel.drawr", currentCanvas.drawStop);
-				$(window).unbind("pointermove.drawr", currentCanvas.drawMove);
-				$(window).unbind("pointerdown.drawr", currentCanvas.drawStart);
-				$(window).unbind("wheel.drawr", currentCanvas.scrollWheel);
-				$(window).off("resize.drawr", currentCanvas.onWindowResize);
+				var evns = currentCanvas._evns;
+				parent.off("touchstart." + evns);
+				parent.off("wheel." + evns);
+				parent.off("contextmenu." + evns);
+				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown." + evns);
+				parent.find(".drawr-toolbox .slider-component").off("input." + evns);
+				parent.find(".drawr-toolbox").off("pointerdown." + evns + " touchstart." + evns);
+				$(window).unbind("pointerup." + evns + " pointercancel." + evns, currentCanvas.drawStop);
+				$(window).unbind("pointermove." + evns, currentCanvas.drawMove);
+				$(window).unbind("pointerdown." + evns, currentCanvas.drawStart);
+				$(window).unbind("wheel." + evns, currentCanvas.scrollWheel);
+				$(window).off("resize." + evns, currentCanvas.onWindowResize);
 
 				$.each($.fn.drawr.availableTools,function(i,tool){
 					if(typeof tool.cleanup!=="undefined"){
@@ -1180,11 +1181,12 @@
 				var _parent = $(currentCanvas).parent();
 				currentCanvas.containerWidth = _parent.width();
 				currentCanvas.containerHeight = _parent.height();
+				currentCanvas._evns = "drawr_" + Math.random().toString(36).slice(2, 9);//event namespace so destroying one drawr instance doesn't affect others.
 				currentCanvas.onWindowResize = function() {
 					currentCanvas.containerWidth = _parent.width();
 					currentCanvas.containerHeight = _parent.height();
 				};
-				$(window).on("resize.drawr", currentCanvas.onWindowResize);
+				$(window).on("resize." + currentCanvas._evns, currentCanvas.onWindowResize);
 
 				currentCanvas.plugin = plugin;
 				currentCanvas.rotationAngle = 0;
