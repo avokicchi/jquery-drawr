@@ -756,15 +756,12 @@
 
 			//scroll indicators
 			if(this.scrollTimer>0){
-
-				context.globalAlpha = (0.6/100)*this.scrollTimer<1 ?  (0.6/100)*this.scrollTimer : 0.6;//brush.currentAlpha;
-
+				context.globalAlpha = Math.min(0.6, (0.6/100)*this.scrollTimer);
 				this.scrollTimer-=5;
 				context.lineWidth = 4;
 				context.lineCap = 'square';
-				context.beginPath();
 
-				//get the axis-aligned bounding box of the rotated canvas 
+				//axis-aligned bounding box of the rotated canvas
 				var _angle = this.rotationAngle || 0;
 				var _W = this.width * this.zoomFactor;
 				var _H = this.height * this.zoomFactor;
@@ -773,42 +770,32 @@
 				var effectiveWidth  = _W * _abscos + _H * _abssin;
 				var effectiveHeight = _W * _abssin + _H * _abscos;
 
-				//horizontal
-				var max_bar_width = container_width;
-				var visible_scroll_x = container_width;
-				if(this.scrollX<0) visible_scroll_x += this.scrollX;
-				if(this.scrollX> effectiveWidth-container_width) visible_scroll_x -= this.scrollX-(effectiveWidth-container_width);
-				if(visible_scroll_x<0) visible_scroll_x = 0;
-				var percentage = 100/effectiveWidth * visible_scroll_x;
-				var scroll_bar_width= max_bar_width / 100 * percentage;
-				if(scroll_bar_width<1) scroll_bar_width = 1;
+				//When rotated, CSS transform-origin is the canvas element center (_W/2, _H/2).
+				//The AABB left edge sits at (_W - effectiveWidth)/2 from the element's left edge,
+				//not at 0. We need the scroll offset relative to that AABB origin so that the
+				//visible-window calculation is correct in AABB space.
+				var scrollX_aabb = this.scrollX - (_W - effectiveWidth) / 2;
+				var scrollY_aabb = this.scrollY - (_H - effectiveHeight) / 2;
 
-				var position_percentage = (100/(effectiveWidth-container_width))*this.scrollX;
-				var posx=(((max_bar_width-scroll_bar_width)/100)*position_percentage);
-				if(posx<0) posx=0;
-				if(posx>container_width-scroll_bar_width) posx = container_width-scroll_bar_width;
-
-				context.moveTo(posx,container_height-3);
-				context.lineTo(posx+scroll_bar_width,container_height-3);
+				//horizontal bar
+				//hVisible: how many AABB pixels are actually showing in the viewport
+				//hThumbW:  thumb width = visible fraction of total AABB width, mapped onto track
+				//hThumbX:  thumb position = where the visible window starts in AABB space, mapped onto track
+				var hVisible = Math.max(0, Math.min(effectiveWidth, scrollX_aabb + container_width) - Math.max(0, scrollX_aabb));
+				var hThumbW  = Math.max(4, hVisible / effectiveWidth * container_width);
+				var hThumbX  = Math.max(0, scrollX_aabb) / effectiveWidth * container_width;
+				context.beginPath();
+				context.moveTo(hThumbX, container_height-3);
+				context.lineTo(hThumbX + hThumbW, container_height-3);
 				context.stroke();
 
-				//vertical
-				var max_bar_height = container_height;
-				var visible_scroll_y = container_height;
-				if(this.scrollY<0) visible_scroll_y += this.scrollY;
-				if(this.scrollY> effectiveHeight-container_height) visible_scroll_y -= this.scrollY-(effectiveHeight-container_height);
-				if(visible_scroll_y<0) visible_scroll_y = 0;
-				var percentage = 100/effectiveHeight * visible_scroll_y;
-				var scroll_bar_height= max_bar_height / 100 * percentage;
-				if(scroll_bar_height<1) scroll_bar_height = 1;
-
-				var position_percentage = (100/(effectiveHeight-container_height))*this.scrollY;
-				var posy=(((max_bar_height-scroll_bar_height)/100)*position_percentage);
-				if(posy<0) posy=0;
-				if(posy>container_height-scroll_bar_height) posy = container_height-scroll_bar_height;
-
-				context.moveTo(container_width-2,posy);
-				context.lineTo(container_width-2,posy+scroll_bar_height);
+				//vertical bar
+				var vVisible = Math.max(0, Math.min(effectiveHeight, scrollY_aabb + container_height) - Math.max(0, scrollY_aabb));
+				var vThumbH  = Math.max(4, vVisible / effectiveHeight * container_height);
+				var vThumbY  = Math.max(0, scrollY_aabb) / effectiveHeight * container_height;
+				context.beginPath();
+				context.moveTo(container_width-2, vThumbY);
+				context.lineTo(container_width-2, vThumbY + vThumbH);
 				context.stroke();
 			}
 
