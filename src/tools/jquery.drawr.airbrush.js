@@ -18,25 +18,24 @@ jQuery.fn.drawr.register({
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
-		var brushSize = self.brushSize;
-		var cacheKey = brushSize + '|' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b;
+		var cacheKey = size + '|' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b;
 		if(brush._stampCacheKey !== cacheKey){
 			var buffer = document.createElement('canvas');
-			buffer.width = brushSize;
-			buffer.height = brushSize;
+			buffer.width = size;
+			buffer.height = size;
 			var bctx = buffer.getContext('2d');
-			var half = brushSize / 2;
+			var half = size / 2;
 			var radgrad = bctx.createRadialGradient(half, half, 0, half, half, half);
 			radgrad.addColorStop(0, 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')');
 			radgrad.addColorStop(0.5, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0.5)');
 			radgrad.addColorStop(1, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0)');
 			bctx.fillStyle = radgrad;
-			bctx.fillRect(0, 0, brushSize, brushSize);
+			bctx.fillRect(0, 0, size, size);
 			brush._stampCache = buffer;
 			brush._stampCacheKey = cacheKey;
 		}
 		context.globalAlpha = alpha;
-		context.drawImage(brush._stampCache, x - brushSize / 2, y - brushSize / 2);
+		context.drawImage(brush._stampCache, x - size / 2, y - size / 2);
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
 		return true;

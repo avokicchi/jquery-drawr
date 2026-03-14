@@ -4,8 +4,7 @@ jQuery.fn.drawr.register({
 	size: 20,
 	alpha: 1,
 	order: 13,
-	pressure_affects_alpha: false,
-	pressure_affects_size: true,
+	pressure_affects_alpha: true,
 	activate: function(brush, context) {},
 	deactivate: function(brush, context) {
 		brush._smudge = null;

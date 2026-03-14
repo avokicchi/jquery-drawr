@@ -5,7 +5,9 @@
  */
 
 (function( $ ) {
- 
+
+	var DRAWR_VERSION = "@@VERSION@@";
+
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
 		//returns the euclidean distance between two {x,y} points.
@@ -102,11 +104,10 @@
 		plugin.is_dragging = false;
 
 		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
-		plugin.calc_brush_params = function(brush, brushAlpha, pressure){
-			var s = typeof brush.size!=="undefined" ? brush.size : 1;
+		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure){
 			return {
 				alpha: brush.pressure_affects_alpha ? Math.min(1, brushAlpha * pressure * 2) : brushAlpha,
-				size:  parseFloat(brush.pressure_affects_size  ? Math.max(1, s * pressure * 2) : s)
+				size:  parseFloat(brush.pressure_affects_size  ? Math.max(1, brushSize * pressure * 2) : brushSize)
 			};
 		};
 
@@ -232,7 +233,7 @@
 						self._fadeInSpotCount = 0;
 
 						//calculate alpha and size, scaled by pressure if the brush supports it
-						var bp = plugin.calc_brush_params(self.active_brush, self.brushAlpha, mouse_data.pressure);
+						var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure);
 						var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
@@ -325,7 +326,7 @@
 					var dist = plugin.distance_between(lastSpot, currentSpot);
 					 var angle = plugin.angle_between(lastSpot, currentSpot);
 
-					var bp = plugin.calc_brush_params(self.active_brush, self.brushAlpha, mouse_data.pressure);
+					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 
 					 var stepSize = calculatedSize/6;
@@ -408,7 +409,7 @@
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
 				
 					//if(plugin.check_ignore(e)==true) return;
-					var bp = plugin.calc_brush_params(self.active_brush, self.brushAlpha, mouse_data.pressure);
+					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 					var result;
 
@@ -687,6 +688,19 @@
 			context.rotate(this.rotationAngle || 0);
 			context.strokeRect(-_bW / 2, -_bH / 2, _bW, _bH);
 			context.restore();
+
+			//debug_mode on: always show version label
+			if(this.settings.debug_mode){
+				context.save();
+				context.globalAlpha = 0.75;
+				context.fillStyle = "rgba(0,0,0,0.5)";
+				context.fillRect(4, 4, 130, 18);
+				context.globalAlpha = 1;
+				context.fillStyle = "#fff";
+				context.font = "bold 11px monospace";
+				context.fillText("drawr v" + DRAWR_VERSION, 8, 17);
+				context.restore();
+			}
 
 			//debug_mode on: draw a bunch of useful debug stuff when gesturing
 			if(this.settings.debug_mode && this.isGesturing && this.gesturePivot){

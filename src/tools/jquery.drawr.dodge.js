@@ -5,7 +5,6 @@ jQuery.fn.drawr.register({
 	alpha: 0.5,
 	order: 16,
 	pressure_affects_alpha: true,
-	pressure_affects_size: true,
 	activate: function(brush, context) {},
 	deactivate: function(brush, context) {},
 	drawStart: function(brush, context, x, y, size, alpha, event) {},
