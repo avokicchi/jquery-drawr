@@ -276,12 +276,25 @@
 						var cTop  = rect.top  + window.scrollY;
 						var newScrollX = (gs.midX - cLeft + gs.scrollX) * (newZoom / gs.zoom) - (newMidX - cLeft);
 						var newScrollY = (gs.midY - cTop  + gs.scrollY) * (newZoom / gs.zoom) - (newMidY - cTop);
+						//adjust scroll so rotation pivots around the current finger midpoint instead of the canvas center
+						var dAngle = newAngle - gs.angle;
+						var _W = self.width * newZoom;
+						var _H = self.height * newZoom;
+						var pvX = newMidX - cLeft;
+						var pvY = newMidY - cTop;
+						var ctrX = _W / 2 - newScrollX;
+						var ctrY = _H / 2 - newScrollY;
+						var dX = pvX - ctrX;
+						var dY = pvY - ctrY;
+						newScrollX -= dX - (dX * Math.cos(dAngle) - dY * Math.sin(dAngle));
+						newScrollY -= dY - (dX * Math.sin(dAngle) + dY * Math.cos(dAngle));
+						self.gesturePivot = { x: pvX, y: pvY };
 						self.zoomFactor = newZoom;
 						$(self).width(self.width * newZoom);
 						$(self).height(self.height * newZoom);
 						plugin.draw_checkerboard.call(self);
 						plugin.apply_scroll.call(self, newScrollX, newScrollY, true);
-						plugin.apply_rotation.call(self, gs.rotation + (newAngle - gs.angle),false);
+						plugin.apply_rotation.call(self, gs.rotation + dAngle, false);
 					}
 					return;
 				}
@@ -675,6 +688,37 @@
 			context.strokeRect(-_bW / 2, -_bH / 2, _bW, _bH);
 			context.restore();
 
+			//debug_mode on: draw a bunch of useful debug stuff when gesturing
+			if(this.settings.debug_mode && this.isGesturing && this.gesturePivot){
+				var _crossSize = 12;
+				var _crossX = this.gesturePivot.x;
+				var _crossY = this.gesturePivot.y;
+				var _angle = this.rotationAngle || 0;
+				var _lineLen = 40;
+				context.save();
+				context.globalAlpha = 1;
+				context.strokeStyle = "red";
+				context.lineWidth = 2;
+				context.lineCap = "round";
+				//cross
+				context.beginPath();
+				context.moveTo(_crossX - _crossSize, _crossY);
+				context.lineTo(_crossX + _crossSize, _crossY);
+				context.moveTo(_crossX, _crossY - _crossSize);
+				context.lineTo(_crossX, _crossY + _crossSize);
+				context.stroke();
+				//rotation angle line
+				context.beginPath();
+				context.moveTo(_crossX, _crossY);
+				context.lineTo(_crossX + Math.cos(_angle) * _lineLen, _crossY + Math.sin(_angle) * _lineLen);
+				context.stroke();
+				//zoom factor label
+				context.fillStyle = "red";
+				context.font = "bold 11px monospace";
+				context.fillText("zoom: " + this.zoomFactor.toFixed(2) + "x", _crossX + _crossSize + 4, _crossY + _crossSize + 12);
+				context.restore();
+			}
+
 			//scroll indicators
 			if(this.scrollTimer>0){
 
@@ -734,7 +778,7 @@
 			}
 
 			//we only keep the loop alive when there is work to do (effectCallback preview or scroll indicators fading in n out). Everything else is triggered via request_redraw.
-			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0){
+			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || (this.settings.debug_mode && this.isGesturing)){
 				this._animFrameQueued = true;
 				window.requestAnimationFrame(this.draw_animations_bound);
 			}
@@ -1085,7 +1129,8 @@
 					"undo_max_levels" : 5,
 					"color_mode" : "picker",
 					"clear_on_init" : true,
-					"toolbox_cols" : 3
+					"toolbox_cols" : 3,
+					"debug_mode" : false
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
