@@ -418,6 +418,11 @@
 					if(self.active_brush.smoothing) {
 						//smooth path: buffer raw knots and draw a Catmull-Rom segment lagging one event behind,
 						//using the new knot as the lookahead (P3) that shapes the tangent of the previous segment.
+						//Only accept a new knot if it is far enough from the last one. Sub-pixel (or near-pixel)
+						//knot spacing gives the spline no room to round corners, so high-precision stylus input
+						//would pass through every jitter point rather than smoothing over them.
+						var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
+						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < stepSize * 1.5) return;
 						self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
 						var knots = self._smoothKnots;
 						var n = knots.length - 1; //last index
