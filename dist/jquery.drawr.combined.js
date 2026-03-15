@@ -120,10 +120,10 @@
 		plugin.is_dragging = false;
 
 		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
-		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure){
+		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure, pen_pressure){
 			return {
-				alpha: brush.pressure_affects_alpha ? Math.min(1, brushAlpha * pressure * 2) : brushAlpha,
-				size:  parseFloat(brush.pressure_affects_size  ? Math.max(1, brushSize * pressure * 2) : brushSize)
+				alpha: (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * pressure * 2) : brushAlpha,
+				size:  parseFloat((brush.pressure_affects_size && pen_pressure) ? Math.max(1, brushSize * pressure * 2) : brushSize)
 			};
 		};
 
@@ -322,7 +322,7 @@
 						self._fadeInSpotCount = 0;
 
 						//calculate alpha and size, scaled by pressure if the brush supports it
-						var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure);
+						var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure, self.pen_pressure);
 						var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
@@ -410,7 +410,7 @@
 
 				if($(self).data("is_drawing")==true && plugin.check_ignore(e)==false){
 
-					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure);
+					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure, self.pen_pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 					var stepSize = calculatedSize/4;
 					if(stepSize<1) stepSize = 1;
@@ -525,7 +525,7 @@
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
 
 					//if(plugin.check_ignore(e)==true) return;
-					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure);
+					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure, self.pen_pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 					var result;
 
