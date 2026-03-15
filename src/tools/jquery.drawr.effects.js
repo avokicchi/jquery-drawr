@@ -45,7 +45,7 @@ jQuery.fn.drawr.register({
 	alpha: 0.8,
 	order: 13,
 	pressure_affects_alpha: true,
-	smoothing: true,
+	smoothing: false,
 	_effect: "blur",
 
 	buttonCreated: function(brush, button) {

@@ -1741,7 +1741,7 @@ jQuery.fn.drawr.register({
 	brush_fade_in: 10,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
-	smoothing: true,
+	smoothing: false,
 	activate: function(brush,context){
 		brush._stampCache = null;
 		brush._stampCacheKey = null;
@@ -1868,7 +1868,7 @@ jQuery.fn.drawr.register({
 	alpha: 0.8,
 	order: 13,
 	pressure_affects_alpha: true,
-	smoothing: true,
+	smoothing: false,
 	_effect: "blur",
 
 	buttonCreated: function(brush, button) {
@@ -2105,7 +2105,7 @@ jQuery.fn.drawr.register({
 	order: 5,
 	pressure_affects_alpha: true,
 	pressure_affects_size: true,
-	smoothing: true,
+	smoothing: false,
 	activate: function(brush,context){
 		brush._stampCache = null;
 		brush._stampCacheKey = null;
@@ -2693,7 +2693,7 @@ jQuery.fn.drawr.register({
 	brush_fade_in: 20,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
-	smoothing: true,
+	smoothing: false,
 	activate: function(brush,context){
 		brush._rawImage = new Image();
 		brush._rawImage.crossOrigin = "Anonymous";
