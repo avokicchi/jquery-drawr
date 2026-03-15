@@ -18,7 +18,7 @@
 
 (function( $ ) {
 
-	var DRAWR_VERSION = "0.9.9";
+	var DRAWR_VERSION = "0.9.11";
 
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
