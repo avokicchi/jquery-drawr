@@ -410,7 +410,7 @@
 						//knot spacing gives the spline no room to round corners, so high-precision stylus input
 						//would pass through every jitter point rather than smoothing over them.
 						var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
-						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < stepSize * 1.5) return;
+						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < stepSize * 1.5) return;//todo: make 1.5 a variable; we can tune linesmoothing with this.
 						self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
 						var knots = self._smoothKnots;
 						var n = knots.length - 1; //last index
