@@ -18,12 +18,14 @@ jQuery.fn.drawr.register({
 		this.effectCallback = brush.effectCallback;
 		context.globalAlpha=alpha;
 		context.lineWidth = size;
+		this.tempColor = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
+		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
 		context.globalAlpha=alpha;
 		context.lineJoin = 'miter';
 		context.lineWidth = size;
-		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.fillStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
 		var angle = this.rotationAngle || 0;
 		var sx = brush.startPosition.x, sy = brush.startPosition.y;
 		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
@@ -80,7 +82,7 @@ jQuery.fn.drawr.register({
 		}
 		context.globalAlpha=brush.currentAlpha;
 		context.lineJoin = 'miter';
-		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.fillStyle = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
 		context.fillRect(sx, sy, ex-sx, ey-sy);
 		if(angle){ context.restore(); }
 	}

@@ -27,6 +27,10 @@
 				b: parseInt(result[3], 16)
 			} : null;
 		};
+		//converts r, g, b (0–255) to a CSS hex string "#rrggbb".
+		plugin.rgb_to_hex = function(r, g, b) {
+			return '#' + (0x1000000 + (b | (g << 8) | (r << 16))).toString(16).slice(1);
+		};
 		//keeps track of last 25 mouse or stylus events to determine majority, and ignore unintended touches by wrist.
 		plugin.eventArr = [];
 		plugin.record_event = function(event){
@@ -226,11 +230,11 @@
 				if(plugin.check_ignore(e)==true) return;
 				//console.warn(e.button);
 
-				//right-mouse drag: enter paning mode
-				if(e.button === 2){
+				//middle-mouse drag: enter panning mode
+				if(e.button === 1){
 					if(self.containerBoundCheck.call(self, e)){
-						self.isRightDragging = true;
-						self.rightDragStart = { x: e.pageX, y: e.pageY, scrollX: self.scrollX, scrollY: self.scrollY };
+						self.isMiddleDragging = true;
+						self.middleDragStart = { x: e.pageX, y: e.pageY, scrollX: self.scrollX, scrollY: self.scrollY };
 					}
 					return;
 				}
@@ -268,6 +272,7 @@
 						//save snapshot so the second touch can erase this stroke start if a gesture is detected
 						if(e.originalEvent.pointerType === "touch") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
+						self._activeButton = e.button;//store button, since pointer events only have useful button info in pointerdown, and we catch pointermove later.
 						context.lineCap = "round";context.lineJoin = 'round';
 
 						//reset fade-in counter at start of stroke
@@ -342,11 +347,11 @@
 					return;
 				}
 
-				//right-mouse drag: pan the canvas
-				if(self.isRightDragging){
-					var dx = e.pageX - self.rightDragStart.x;
-					var dy = e.pageY - self.rightDragStart.y;
-					plugin.apply_scroll.call(self, self.rightDragStart.scrollX - dx, self.rightDragStart.scrollY - dy, true);
+				//middle-mouse drag: pan the canvas
+				if(self.isMiddleDragging){
+					var dx = e.pageX - self.middleDragStart.x;
+					var dy = e.pageY - self.middleDragStart.y;
+					plugin.apply_scroll.call(self, self.middleDragStart.scrollX - dx, self.middleDragStart.scrollY - dy, true);
 					return;
 				}
 
@@ -453,11 +458,11 @@
 					return;
 				}
 
-				//right-mouse drag: end pan mode
-				if(self.isRightDragging){
+				//middle-mouse drag: end pan mode
+				if(self.isMiddleDragging){
 					
 					//console.warn("right drag: end");
-					self.isRightDragging = false;
+					self.isMiddleDragging = false;
 					return;
 				}
 
@@ -1201,6 +1206,7 @@
 				delete currentCanvas.undoStack;
 				delete currentCanvas.redoStack;
 				delete currentCanvas.brushColor;
+				delete currentCanvas.brushBackColor;
 				delete currentCanvas.active_brush;
 				delete currentCanvas.zoomFactor;
 				delete currentCanvas.scrollX;
@@ -1287,6 +1293,7 @@
 				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
+				currentCanvas.brushBackColor = { r: 255, g: 255, b: 255 };
 
 
 				//brush dialog

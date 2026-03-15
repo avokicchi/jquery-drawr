@@ -7,7 +7,7 @@ jQuery.fn.drawr.register({
 	activate: function(brush, context) {},
 	deactivate: function(brush, context) {},
 	drawStart: function(brush, context, x, y, size, alpha, event) {
-		var self = this;
+		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
 		var canvas = context.canvas;
 		var width = canvas.width;
 		var height = canvas.height;
@@ -26,9 +26,9 @@ jQuery.fn.drawr.register({
 		var targetB = data[idx + 2];
 		var targetA = data[idx + 3];
 
-		var fillR = self.brushColor.r;
-		var fillG = self.brushColor.g;
-		var fillB = self.brushColor.b;
+		var fillR = color.r;
+		var fillG = color.g;
+		var fillB = color.b;
 		var fillA = Math.round(alpha * 255);
 
 		//nothing to do if the seed pixel is already the fill color

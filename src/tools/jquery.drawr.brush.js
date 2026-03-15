@@ -18,8 +18,8 @@ jQuery.fn.drawr.register({
 		context.globalAlpha = alpha;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		var self = this;
-		var cacheKey = size + '|' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b;
+		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
+		var cacheKey = size + '|' + color.r + ',' + color.g + ',' + color.b;
 		if(brush._stampCacheKey !== cacheKey){
 			var sz = Math.max(1, size);
 			var buffer = document.createElement('canvas');
@@ -28,9 +28,9 @@ jQuery.fn.drawr.register({
 			var bctx = buffer.getContext('2d');
 			var half = sz / 2;
 			var radgrad = bctx.createRadialGradient(half, half, 0, half, half, half);
-			radgrad.addColorStop(0, 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')');
-			radgrad.addColorStop(0.5, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0.5)');
-			radgrad.addColorStop(1, 'rgba(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ',0)');
+			radgrad.addColorStop(0, 'rgb(' + color.r + ',' + color.g + ',' + color.b + ')');
+			radgrad.addColorStop(0.5, 'rgba(' + color.r + ',' + color.g + ',' + color.b + ',0.5)');
+			radgrad.addColorStop(1, 'rgba(' + color.r + ',' + color.g + ',' + color.b + ',0)');
 			bctx.fillStyle = radgrad;
 			bctx.fillRect(0, 0, sz, sz);
 			brush._stampCache = buffer;

@@ -20,8 +20,11 @@ jQuery.fn.drawr.register({
 		};
 		brush._positions = [{x: x, y: y}];
 		this.effectCallback = brush.effectCallback;
+		this.tempColor = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
+		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
+
 		context.globalAlpha=alpha;
 
 		brush.currentSize = size;
@@ -31,7 +34,7 @@ jQuery.fn.drawr.register({
 		brush._positions = null;
 		context.lineWidth = size;
 		context.lineJoin = context.lineCap = "round";
-		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.strokeStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
 
 		context.beginPath(); 
 		var positions = $(this).data("positions");
@@ -59,7 +62,7 @@ jQuery.fn.drawr.register({
 		context.globalAlpha = brush.currentAlpha;
 		context.lineWidth = brush.currentSize * adjustzoom;
 		context.lineJoin = context.lineCap = "round";
-		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		context.strokeStyle = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
 		context.beginPath();
 		for(var i = 1; i < positions.length; i++){
 			context.moveTo((positions[i-1].x * adjustzoom) - adjustx, (positions[i-1].y * adjustzoom) - adjusty);

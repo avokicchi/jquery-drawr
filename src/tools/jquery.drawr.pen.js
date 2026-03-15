@@ -14,10 +14,9 @@ jQuery.fn.drawr.register({
 		context.globalAlpha=alpha;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		var self = this;
-
+		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
 		context.globalAlpha=alpha;
-    	context.fillStyle = 'rgb(' + self.brushColor.r + ',' + self.brushColor.g + ',' + self.brushColor.b + ')';
+    	context.fillStyle = 'rgb(' + color.r + ',' + color.g + ',' + color.b + ')';
 		context.beginPath();
 		context.arc(x,y, size/2, 0, 2 * Math.PI);
 		context.fill();

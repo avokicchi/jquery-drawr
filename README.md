@@ -48,7 +48,6 @@ $("#canvas").drawr("start");
 - canvas_width
 - canvas_height
 - undo_max_levels(5)
-- color_mode("presets","picker"): defines the behaviour of the color picker.
 - clear_on_init(true): whether to erase the canvas when it is loaded.
 - enable_scrollwheel_zooming(true)
 - toolbox_cols(2): configure the toolbox size

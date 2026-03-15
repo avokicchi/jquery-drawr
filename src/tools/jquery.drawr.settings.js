@@ -11,22 +11,24 @@ jQuery.fn.drawr.register({
 		//color dialog
 		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() - 80, top: $(self).parent().offset().top },"Settings",80);
 
-		if(self.settings.color_mode=="presets"){
-			var colors = ["#FFFFFF","#0074D9","#2ECC40","#FFDC00","#FF4136","#111111"];
-			$.each(colors,function(i,color){
-				self.plugin.create_button.call(self,self.$settingsToolbox[0],"color",{"icon":""},{"background":color}).on("touchstart.drawr mousedown.drawr",function(){
-					self.brushColor = self.plugin.hex_to_rgb(color);
-					if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
-					self.plugin.is_dragging=false;
-				});
-			});
-		}else {
-			self.$settingsToolbox.append("<input type='text' class='color-picker'/>");
-			self.$settingsToolbox.find('.color-picker').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
-				self.brushColor = self.plugin.hex_to_rgb(hexcolor);
-				if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
-			});
-		}
+		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Color");
+
+		self.$settingsToolbox.append("<div style='margin-bottom:40px;'><input type='text' class='color-picker' style='z-index:1;position:absolute;margin:-10px 0px 0px -30px;'/></div>");
+		self.$settingsToolbox.find('.color-picker').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
+			self.brushColor = self.plugin.hex_to_rgb(hexcolor);
+			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
+		});
+
+		self.$settingsToolbox.find('input.color-picker').drawrpalette("set",self.plugin.rgb_to_hex(self.brushColor.r,self.brushColor.g,self.brushColor.b));
+
+		self.$settingsToolbox.append("<input type='text' class='color-picker2' style='z-index:0;position:absolute;margin:-40px 0px 0px -10px;'/>");
+		self.$settingsToolbox.find('.color-picker2').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
+			self.brushBackColor = self.plugin.hex_to_rgb(hexcolor);
+			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
+		});
+
+		self.$settingsToolbox.find('input.color-picker2').drawrpalette("set",self.plugin.rgb_to_hex(self.brushBackColor.r,self.brushBackColor.g,self.brushBackColor.b));
+
 		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha)).on("input.drawr",function(){
 			self.brushAlpha = parseFloat(this.value/100);
 			if(typeof self.active_brush.alpha!=="undefined") self.active_brush.alpha = parseFloat(this.value/100);;

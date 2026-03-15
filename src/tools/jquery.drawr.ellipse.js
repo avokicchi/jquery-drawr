@@ -13,11 +13,13 @@ jQuery.fn.drawr.register({
 		brush.startPosition = { x: x, y: y };
 		this.effectCallback = brush.effectCallback;
 		context.globalAlpha = alpha;
+		this.tempColor = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
 	},
 	drawStop: function(brush, context, x, y, size, alpha, event) {
 		context.globalAlpha = alpha;
 		context.lineWidth = size;
-		context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
+		context.strokeStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
 		var angle = this.rotationAngle || 0;
 		var sx = brush.startPosition.x, sy = brush.startPosition.y;
 		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
@@ -79,7 +81,7 @@ jQuery.fn.drawr.register({
 		if (rx > 0 && ry > 0) {
 			context.globalAlpha = brush.currentAlpha;
 			context.lineWidth = brush.currentSize * adjustzoom;
-			context.strokeStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
+			context.strokeStyle = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
 			context.beginPath();
 			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
 			context.stroke();
