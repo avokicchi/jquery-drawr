@@ -1327,6 +1327,7 @@
 				currentCanvas.$memoryCanvas=$("<canvas class='sfx-canvas'></canvas>");
 				currentCanvas.$memoryCanvas.insertBefore(currentCanvas);
 				currentCanvas.memoryContext = currentCanvas.$memoryCanvas[0].getContext("2d");
+				currentCanvas.memoryContext.imageSmoothingEnabled= false;
 
 				//cache container dimensions; kept up to date via resize handler
 				var _parent = $(currentCanvas).parent();
@@ -1352,6 +1353,8 @@
 				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
 				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
+				context.imageSmoothingEnabled= false;
+
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
 				currentCanvas.brushBackColor = { r: 255, g: 255, b: 255 };
 
