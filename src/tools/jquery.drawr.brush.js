@@ -2,10 +2,10 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-brush mdi-24px",
 	name: "brush",
 	size: 3,
-	alpha: 0.5,
+	alpha: 1,
 	order: 4,
 	pressure_affects_alpha: true,
-	pressure_affects_size: true,
+	pressure_affects_size: false,
 	brush_fade_in: 20,
 	smoothing: true,
 	activate: function(brush,context){

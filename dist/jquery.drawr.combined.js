@@ -422,7 +422,7 @@
 						//knot spacing gives the spline no room to round corners, so high-precision stylus input
 						//would pass through every jitter point rather than smoothing over them.
 						var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
-						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < stepSize * 1.5) return;
+						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < stepSize * 1.5) return;//todo: make 1.5 a variable; we can tune linesmoothing with this.
 						self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
 						var knots = self._smoothKnots;
 						var n = knots.length - 1; //last index
@@ -1735,8 +1735,8 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-spray mdi-24px",
 	name: "airbrush",
-	size: 40,
-	alpha: 0.2,
+	size: 20,
+	alpha: 0.5,
 	order: 3,
 	brush_fade_in: 10,
 	pressure_affects_alpha: true,
@@ -1780,10 +1780,10 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-brush mdi-24px",
 	name: "brush",
 	size: 3,
-	alpha: 0.5,
+	alpha: 1,
 	order: 4,
 	pressure_affects_alpha: true,
-	pressure_affects_size: true,
+	pressure_affects_size: false,
 	brush_fade_in: 20,
 	smoothing: true,
 	activate: function(brush,context){
@@ -1877,7 +1877,7 @@ jQuery.fn.drawr.register({
 
 		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", {
 			left: $(self).parent().offset().left,
-			top:  $(self).parent().offset().top + $(self).parent().innerHeight() + 4
+			top:  $(self).parent().offset().top + $(self).parent().innerHeight() /2
 		}, "Effect", 120);
 
 		brush.$effectDropdown = self.plugin.create_dropdown.call(self, self.$effectsToolbox, "Type", [
@@ -2687,8 +2687,8 @@ jQuery.fn.drawr.register({
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-lead-pencil mdi-24px",
 	name: "pencil",
-	size: 5,
-	alpha: 0.8,
+	size: 3,
+	alpha: 1,
 	order: 1,
 	brush_fade_in: 20,
 	pressure_affects_alpha: true,

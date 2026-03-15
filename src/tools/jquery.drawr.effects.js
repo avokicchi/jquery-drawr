@@ -54,7 +54,7 @@ jQuery.fn.drawr.register({
 
 		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", {
 			left: $(self).parent().offset().left,
-			top:  $(self).parent().offset().top + $(self).parent().innerHeight() + 4
+			top:  $(self).parent().offset().top + $(self).parent().innerHeight() /2
 		}, "Effect", 120);
 
 		brush.$effectDropdown = self.plugin.create_dropdown.call(self, self.$effectsToolbox, "Type", [

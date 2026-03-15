@@ -1,8 +1,8 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-spray mdi-24px",
 	name: "airbrush",
-	size: 40,
-	alpha: 0.2,
+	size: 20,
+	alpha: 0.5,
 	order: 3,
 	brush_fade_in: 10,
 	pressure_affects_alpha: true,

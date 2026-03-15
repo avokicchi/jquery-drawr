@@ -1,8 +1,8 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-lead-pencil mdi-24px",
 	name: "pencil",
-	size: 5,
-	alpha: 0.8,
+	size: 3,
+	alpha: 1,
 	order: 1,
 	brush_fade_in: 20,
 	pressure_affects_alpha: true,
