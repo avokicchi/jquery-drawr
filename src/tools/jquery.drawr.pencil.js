@@ -7,6 +7,7 @@ jQuery.fn.drawr.register({
 	brush_fade_in: 20,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
+	smoothing: true,
 	activate: function(brush,context){
 		var self = this;
 		brush.brushImage = new Image();

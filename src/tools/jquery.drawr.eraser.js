@@ -6,6 +6,7 @@ jQuery.fn.drawr.register({
 	order: 5,
 	pressure_affects_alpha: true,
 	pressure_affects_size: true,
+	smoothing: true,
 	activate: function(brush,context){
 		brush._stampCache = null;
 		brush._stampCacheKey = null;

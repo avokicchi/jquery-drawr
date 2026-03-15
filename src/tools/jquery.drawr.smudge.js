@@ -5,6 +5,7 @@ jQuery.fn.drawr.register({
 	alpha: 1,
 	order: 13,
 	pressure_affects_alpha: true,
+	smoothing: true,
 	activate: function(brush, context) {},
 	deactivate: function(brush, context) {
 		brush._smudge = null;

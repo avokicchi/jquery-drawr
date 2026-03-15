@@ -125,6 +125,47 @@
 			};
 		};
 
+		//evaluates a uniform Catmull-Rom spline at parameter t (0..1) for the segment p1→p2,
+		//using p0 and p3 as the outer control points that shape the tangents.
+		//https://stackoverflow.com/questions/9489736/catmull-rom-curve-with-no-cusps-and-no-self-intersections
+		plugin.catmull_rom_point = function(p0, p1, p2, p3, t) {
+			var t2 = t * t, t3 = t2 * t;
+			return {
+				x: 0.5 * ((2*p1.x) + (-p0.x + p2.x)*t + (2*p0.x - 5*p1.x + 4*p2.x - p3.x)*t2 + (-p0.x + 3*p1.x - 3*p2.x + p3.x)*t3),
+				y: 0.5 * ((2*p1.y) + (-p0.y + p2.y)*t + (2*p0.y - 5*p1.y + 4*p2.y - p3.y)*t2 + (-p0.y + 3*p1.y - 3*p2.y + p3.y)*t3)
+			};
+		};
+
+		//walks the Catmull-Rom segment p1→p2 (influenced by p0 and p3) at arc-length steps of
+		//stepSize, calling brush.drawSpot at each step. accepts a carry-in accumDist so that
+		//partial progress from a previous short segment is not discarded (fixes slow-draw gaps).
+		//returns the leftover accumDist to be passed into the next call.
+		plugin.draw_catmull_segment = function(context, brush, p0, p1, p2, p3, stepSize, size, alpha, e, accumDist) {
+			var self = this;
+			var segLen = plugin.distance_between(p1, p2);
+			//sample densely enough that no step is skipped even on fast strokes
+			var numSamples = Math.max(20, Math.ceil(segLen / (stepSize * 0.5)));
+			var prevPt = p1;
+			accumDist = accumDist || 0;
+			for (var i = 1; i <= numSamples; i++) {
+				var pt = plugin.catmull_rom_point(p0, p1, p2, p3, i / numSamples);
+				accumDist += plugin.distance_between(prevPt, pt);
+				while (accumDist >= stepSize) {
+					accumDist -= stepSize;
+					var spotAlpha = alpha;
+					if (brush.brush_fade_in) {
+						self._fadeInSpotCount++;
+						spotAlpha = alpha * Math.min(1, self._fadeInSpotCount / brush.brush_fade_in);
+					}
+					if (typeof brush.drawSpot !== "undefined") {
+						brush.drawSpot.call(self, brush, context, pt.x, pt.y, size, spotAlpha, e);
+					}
+				}
+				prevPt = pt;
+			}
+			return accumDist;
+		};
+
 		//sets the active (orange) or inactive (grey) visual state of a toolbox button.
 		plugin.set_button_state = function(el, active){
 			$(el).css(active ? { "background": "orange", "color": "white" }
@@ -237,6 +278,7 @@
 						var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
+						if(self.active_brush.smoothing) { self._smoothKnots = [{x: mouse_data.x, y: mouse_data.y}]; self._smoothAccumDist = 0; }
 						var startAlpha = calculatedAlpha;
 						if(self.active_brush.brush_fade_in){
 							self._fadeInSpotCount++;
@@ -320,31 +362,45 @@
 
 				if($(self).data("is_drawing")==true && plugin.check_ignore(e)==false){
 
-					var positions = $(self).data("positions");
-					var currentSpot = {x:mouse_data.x,y:mouse_data.y};
-					var lastSpot=positions[positions.length-1];
-					var dist = plugin.distance_between(lastSpot, currentSpot);
-					 var angle = plugin.angle_between(lastSpot, currentSpot);
-
 					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
+					var stepSize = calculatedSize/4;
+					if(stepSize<1) stepSize = 1;
 
-					 var stepSize = calculatedSize/6;
-
-					 if(stepSize<1) stepSize = 1;
-					 //advance along the line between last spot and current spot using a^2 + b^2 = c^2 nonsense.
-					for (var i = stepSize; i < dist; i+=stepSize) {
-						x = lastSpot.x + (Math.sin(angle) * i);
-						y = lastSpot.y + (Math.cos(angle) * i);
-						var spotAlpha = calculatedAlpha;
-						if(self.active_brush.brush_fade_in){
-							self._fadeInSpotCount++;
-							spotAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
+					if(self.active_brush.smoothing) {
+						//smooth path: buffer raw knots and draw a Catmull-Rom segment lagging one event behind,
+						//using the new knot as the lookahead (P3) that shapes the tangent of the previous segment.
+						self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
+						var knots = self._smoothKnots;
+						var n = knots.length - 1; //last index
+						if(n >= 2) {
+							//draw segment knots[n-2]→knots[n-1]; knots[n] is the lookahead control point
+							var p0 = knots[Math.max(0, n-3)];
+							var p1 = knots[n-2];
+							var p2 = knots[n-1];
+							var p3 = knots[n];
+							self._smoothAccumDist = plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
 						}
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,spotAlpha,e);
-						positions.push({x:x,y:y});
+					} else {
+						//original linear interpolation along the line between the last drawn spot and the current position
+						var positions = $(self).data("positions");
+						var currentSpot = {x:mouse_data.x,y:mouse_data.y};
+						var lastSpot=positions[positions.length-1];
+						var dist = plugin.distance_between(lastSpot, currentSpot);
+						var angle = plugin.angle_between(lastSpot, currentSpot);
+						for (var i = stepSize; i < dist; i+=stepSize) {
+							x = lastSpot.x + (Math.sin(angle) * i);
+							y = lastSpot.y + (Math.cos(angle) * i);
+							var spotAlpha = calculatedAlpha;
+							if(self.active_brush.brush_fade_in){
+								self._fadeInSpotCount++;
+								spotAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
+							}
+							if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,spotAlpha,e);
+							positions.push({x:x,y:y});
+						}
+						$(self).data("positions",positions);
 					}
-					$(self).data("positions",positions);
 				}
 				var tbPageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
 				var tbPageY = e.pageY || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageY) || 0;
@@ -407,11 +463,25 @@
 
 				if($(self).data("is_drawing")==true){
 					var mouse_data = plugin.get_mouse_data.call(self,e,self);
-				
+
 					//if(plugin.check_ignore(e)==true) return;
 					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 					var result;
+
+					//flush the one lagging segment that smoothing holds back until a lookahead arrives
+					if(self.active_brush.smoothing && self._smoothKnots && self._smoothKnots.length >= 2) {
+						var knots = self._smoothKnots;
+						var n = knots.length - 1;
+						var stepSize = calculatedSize / 6;
+						if(stepSize < 1) stepSize = 1;
+						var p0 = knots[Math.max(0, n-2)];
+						var p1 = knots[Math.max(0, n-1)];
+						var p2 = knots[n];
+						plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
+						self._smoothKnots = null;
+						self._smoothAccumDist = 0;
+					}
 
 					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					//if there is an action to undo
@@ -580,7 +650,7 @@
 		/* create a slider */
 		plugin.create_slider = function(toolbox,title,min,max,value){
 			var self=this;
-			$(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 60px;margin-top:5px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 50px;height: 50px;margin: 0;transform-origin: 25px 25px;transform: rotate(90deg);" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
+			$(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 40px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 70px;height: 30px;margin: 0px -10px 0px -10px;" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
 			$(toolbox).find(".slider-" + title.toLowerCase()).on("pointerdown touchstart",function(e){
 				e.stopPropagation();
 			}).on("input." + self._evns,function(e){
