@@ -18,7 +18,7 @@
 
 (function( $ ) {
 
-	var DRAWR_VERSION = "0.9.5";
+	var DRAWR_VERSION = "0.9.9";
 
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
@@ -141,14 +141,38 @@
 			};
 		};
 
-		//evaluates a uniform Catmull-Rom spline at parameter t (0..1) for the segment p1→p2,
-		//using p0 and p3 as the outer control points that shape the tangents.
-		//https://stackoverflow.com/questions/9489736/catmull-rom-curve-with-no-cusps-and-no-self-intersections
-		plugin.catmull_rom_point = function(p0, p1, p2, p3, t) {
-			var t2 = t * t, t3 = t2 * t;
+		//evaluates a centripetal Catmull-Rom spline (alpha=0.5) at parameter u (0..1) for the
+		//segment p1→p2, using p0 and p3 as the outer control points. The centripetal
+		//parameterisation guarantees no cusps or loops regardless of knot spacing or sharp
+		//direction changes — unlike the uniform variant which overshoots into loops at turns.
+		//Uses the Barry-Goldman algorithm.
+		plugin.catmull_rom_point = function(p0, p1, p2, p3, u) {
+			var d01 = Math.sqrt(plugin.distance_between(p0, p1));
+			var d12 = Math.sqrt(plugin.distance_between(p1, p2));
+			var d23 = Math.sqrt(plugin.distance_between(p2, p3));
+			var t0 = 0;
+			var t1 = t0 + d01;
+			var t2 = t1 + d12;
+			var t3 = t2 + d23;
+			if (t2 === t1) return { x: p1.x, y: p1.y }; // zero-length segment
+			if (t1 === t0) t0 = t1 - 1e-4;			  // degenerate outer interval
+			if (t3 === t2) t3 = t2 + 1e-4;
+			var t = t1 + u * (t2 - t1);
+			var inv10 = 1 / (t1 - t0), inv21 = 1 / (t2 - t1), inv32 = 1 / (t3 - t2);
+			var inv20 = 1 / (t2 - t0), inv31 = 1 / (t3 - t1);
+			var A1x = (t1-t)*inv10 * p0.x + (t-t0)*inv10 * p1.x;
+			var A1y = (t1-t)*inv10 * p0.y + (t-t0)*inv10 * p1.y;
+			var A2x = (t2-t)*inv21 * p1.x + (t-t1)*inv21 * p2.x;
+			var A2y = (t2-t)*inv21 * p1.y + (t-t1)*inv21 * p2.y;
+			var A3x = (t3-t)*inv32 * p2.x + (t-t2)*inv32 * p3.x;
+			var A3y = (t3-t)*inv32 * p2.y + (t-t2)*inv32 * p3.y;
+			var B1x = (t2-t)*inv20 * A1x + (t-t0)*inv20 * A2x;
+			var B1y = (t2-t)*inv20 * A1y + (t-t0)*inv20 * A2y;
+			var B2x = (t3-t)*inv31 * A2x + (t-t1)*inv31 * A3x;
+			var B2y = (t3-t)*inv31 * A2y + (t-t1)*inv31 * A3y;
 			return {
-				x: 0.5 * ((2*p1.x) + (-p0.x + p2.x)*t + (2*p0.x - 5*p1.x + 4*p2.x - p3.x)*t2 + (-p0.x + 3*p1.x - 3*p2.x + p3.x)*t3),
-				y: 0.5 * ((2*p1.y) + (-p0.y + p2.y)*t + (2*p0.y - 5*p1.y + 4*p2.y - p3.y)*t2 + (-p0.y + 3*p1.y - 3*p2.y + p3.y)*t3)
+				x: (t2-t)*inv21 * B1x + (t-t1)*inv21 * B2x,
+				y: (t2-t)*inv21 * B1y + (t-t1)*inv21 * B2y
 			};
 		};
 
@@ -165,7 +189,8 @@
 			accumDist = accumDist || 0;
 			for (var i = 1; i <= numSamples; i++) {
 				var pt = plugin.catmull_rom_point(p0, p1, p2, p3, i / numSamples);
-				accumDist += plugin.distance_between(prevPt, pt);
+				var stepDist = plugin.distance_between(prevPt, pt);
+				accumDist += stepDist;
 				while (accumDist >= stepSize) {
 					accumDist -= stepSize;
 					var spotAlpha = alpha;
@@ -174,7 +199,13 @@
 						spotAlpha = alpha * Math.min(1, self._fadeInSpotCount / brush.brush_fade_in);
 					}
 					if (typeof brush.drawSpot !== "undefined") {
-						brush.drawSpot.call(self, brush, context, pt.x, pt.y, size, spotAlpha, e);
+						//interpolate the exact arc-length position along prevPt→pt so that
+						//multiple spots within one sample step are spread out, not stacked.
+						var ratio = stepDist > 0 ? Math.max(0, Math.min(1, 1 - accumDist / stepDist)) : 1;
+						brush.drawSpot.call(self, brush, context,
+							prevPt.x + (pt.x - prevPt.x) * ratio,
+							prevPt.y + (pt.y - prevPt.y) * ratio,
+							size, spotAlpha, e);
 					}
 				}
 				prevPt = pt;
@@ -295,7 +326,7 @@
 						var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
-						if(self.active_brush.smoothing) { self._smoothKnots = [{x: mouse_data.x, y: mouse_data.y}]; self._smoothAccumDist = 0; }
+						if(self.active_brush.smoothing) { self._smoothKnots = [{x: mouse_data.x, y: mouse_data.y}]; self._smoothAccumDist = 0; self._smoothLastStepSize = null; }
 						var startAlpha = calculatedAlpha;
 						if(self.active_brush.brush_fade_in){
 							self._fadeInSpotCount++;
@@ -396,6 +427,13 @@
 							var p1 = knots[n-2];
 							var p2 = knots[n-1];
 							var p3 = knots[n];
+							//rescale accumDist when stepSize changes (e.g. stylus pressure shift) so the
+							//fractional progress towards the next spot is preserved, preventing the while
+							//loop in draw_catmull_segment from firing multiple times at the same point.
+							if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
+								self._smoothAccumDist = self._smoothAccumDist * (stepSize / self._smoothLastStepSize);
+							}
+							self._smoothLastStepSize = stepSize;
 							self._smoothAccumDist = plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
 						}
 					} else {
@@ -495,9 +533,14 @@
 						var p0 = knots[Math.max(0, n-2)];
 						var p1 = knots[Math.max(0, n-1)];
 						var p2 = knots[n];
-						plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
+						var flushAccum = self._smoothAccumDist;
+						if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
+							flushAccum = flushAccum * (stepSize / self._smoothLastStepSize);
+						}
+						plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, flushAccum);
 						self._smoothKnots = null;
 						self._smoothAccumDist = 0;
+						self._smoothLastStepSize = null;
 					}
 
 					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
@@ -2072,7 +2115,6 @@ jQuery.fn.drawr.register({
 		context.globalAlpha = alpha;
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		console.warn("drawing eraser with size " + size,event);
 		var self = this;
 		context.globalAlpha = alpha;
 		if(self.settings.enable_transparency==true){
