@@ -619,7 +619,7 @@
 		};
 
 		/* Inserts a button into a toolbox */
-		plugin.create_button = function(toolbox,type,data,css){
+		plugin.create_toolbutton = function(toolbox,type,data,css){
 			var self=this;
 
 			var button_width = 100/self.settings.toolbox_cols;
@@ -711,6 +711,86 @@
 			});
 			return $(toolbox).find(".slider-" + title.toLowerCase());
 		}
+
+		/* create a button */
+		plugin.create_button = function(toolbox, title){
+			var key = 'btn-' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+			$(toolbox).append(
+				'<button class="drawr-toolwindow-btn ' + key + '" style="' +
+					'display:block;width:calc(100% - 16px);margin:6px 8px;padding:7px 10px;' +
+					'font-size:12px;font-weight:bold;cursor:pointer;border-radius:4px;' +
+					'border:1px solid rgba(0,0,0,0.25);' +
+					'background:linear-gradient(to bottom,rgba(255,255,255,0.18) 0%,rgba(0,0,0,0.08) 100%);' +
+					'box-shadow:0 1px 2px rgba(0,0,0,0.18),inset 0 1px 0 rgba(255,255,255,0.22);' +
+					'color:inherit;' +
+				'">' + title + '</button>'
+			);
+			$(toolbox).find('.' + key).on('pointerdown touchstart', function(e){
+				e.stopPropagation();
+			});
+			return $(toolbox).find('.' + key);
+		};
+
+		/* create a descriptive text block (styled like a quote block) */
+		plugin.create_text = function(toolbox, text){
+			$(toolbox).append(
+				'<div class="drawr-toolwindow-text" style="' +
+					'margin:6px 8px;padding:6px 8px 6px 10px;font-size:11px;line-height:1.5;' +
+					'border-left:3px solid rgba(128,128,255,0.55);' +
+					'background:rgba(128,128,255,0.07);border-radius:0 3px 3px 0;' +
+					'white-space:pre-wrap;word-break:break-word;' +
+				'">' + text + '</div>'
+			);
+			return $(toolbox).find('.drawr-toolwindow-text:last');
+		};
+
+		/* create a styled text input field with a left accent border */
+		plugin.create_input = function(toolbox, placeholder, value){
+			var uid = 'inp-' + Math.random().toString(36).slice(2, 8);
+			$(toolbox).append(
+				'<div style="margin:6px 8px;border-left:3px solid rgba(128,128,255,0.55);border-radius:0 3px 3px 0;color:#333;background:rgba(255,255,255);">' +
+					'<input class="drawr-toolwindow-input ' + uid + '" type="text"' +
+						(placeholder ? ' placeholder="' + placeholder + '"' : '') +
+						(value !== undefined ? ' value="' + value + '"' : '') +
+						' style="' +
+							'display:block;width:100%;box-sizing:border-box;' +
+							'padding:6px 8px 6px 10px;font-size:12px;' +
+							'background:transparent;border:none;outline:none;color:inherit;' +
+						'">' +
+				'</div>'
+			);
+			var input = $(toolbox).find('.' + uid);
+			input.on('pointerdown touchstart keydown', function(e){ e.stopPropagation(); });
+			return input;
+		};
+
+		/* create a file picker styled like a button, with an upload icon */
+		plugin.create_filepicker = function(toolbox, title, accept){
+			var uid = 'fp-' + Math.random().toString(36).slice(2, 8);
+			var wrapper = $(
+				'<div class="drawr-toolwindow-btn drawr-filepicker-wrap ' + uid + '" style="' +
+					'display:block;position:relative;width:calc(100% - 16px);margin:6px 8px;padding:7px 10px;' +
+					'font-size:12px;font-weight:bold;cursor:pointer;border-radius:4px;' +
+					'border:1px solid rgba(0,0,0,0.25);' +
+					'background:linear-gradient(to bottom,rgba(255,255,255,0.18) 0%,rgba(0,0,0,0.08) 100%);' +
+					'box-shadow:0 1px 2px rgba(0,0,0,0.18),inset 0 1px 0 rgba(255,255,255,0.22);' +
+					'text-align:center;user-select:none;overflow:hidden;box-sizing:border-box;' +
+				'">' +
+					'<span class="mdi mdi-upload" style="margin-right:5px;vertical-align:middle;font-size:16px;"></span>' +
+					'<span style="vertical-align:middle;">' + title + '</span>' +
+				'</div>'
+			);
+			var input = $('<input type="file" class="drawr-filepicker-fix">').css({
+				position: 'absolute', top: 0, left: 0,
+				width: '100%', height: '100%',
+				opacity: 0, cursor: 'pointer', margin: 0
+			});
+			if (accept){ input.attr('accept', accept); }
+			wrapper.append(input);
+			wrapper.on('pointerdown touchstart', function(e){ e.stopPropagation(); });
+			$(toolbox).append(wrapper);
+			return input;
+		};
 
 		//set some default settings. :)
 		plugin.initialize_canvas = function(width,height,reset){
@@ -1070,12 +1150,12 @@
 			if(toolset=="default"){
 				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} );
 				$.each($.fn.drawr.availableTools, function(i, tool){
-					plugin.create_button.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
 				});
 			} else {
 				for(var tool_name of self.toolsets[toolset]){
 					var tool = plugin.get_tool_by_name(toolset, tool_name);
-					plugin.create_button.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
 				}
 			}
 		};
@@ -1093,7 +1173,7 @@
 			var collection = $();
 			this.each(function() {
 				var currentCanvas = this;
-				var newButton = plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],typeof param.type=="undefined" ? "action" : param.type,param);
+				var newButton = plugin.create_toolbutton.call(currentCanvas,currentCanvas.$brushToolbox[0],typeof param.type=="undefined" ? "action" : param.type,param);
 				collection=collection.add(newButton);
 			});
 			return collection;
