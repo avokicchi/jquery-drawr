@@ -964,18 +964,19 @@
 		plugin.draw_checkerboard = function(){
 			var self = this;
 			if(!self.$bgCanvas) return;
-			var W = Math.ceil(self.width * self.zoomFactor);
-			var H = Math.ceil(self.height * self.zoomFactor);
+			//draw at base resolution; css display size handles zoom scaling 
+			var W = self.width;
+			var H = self.height;
 			self.$bgCanvas[0].width = W;
 			self.$bgCanvas[0].height = H;
-			self.$bgCanvas.width(W);
-			self.$bgCanvas.height(H);
+			self.$bgCanvas.width(Math.ceil(W * self.zoomFactor));
+			self.$bgCanvas.height(Math.ceil(H * self.zoomFactor));
 			var ctx = self.$bgCanvas[0].getContext('2d');
 			if(self.paperColorMode === "solid"){
 				ctx.fillStyle = self.paperColor || '#ffffff';
 				ctx.fillRect(0, 0, W, H);
 			} else {
-				var sz = 20 * self.zoomFactor;
+				var sz = 20; //fixed cell size at base resolution; zoom handled by css :)
 				ctx.fillStyle = '#ffffff';
 				ctx.fillRect(0, 0, W, H);
 				ctx.fillStyle = '#cccccc';
