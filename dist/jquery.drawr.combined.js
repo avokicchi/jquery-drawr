@@ -18,7 +18,7 @@
 
 (function( $ ) {
 
-	var DRAWR_VERSION = "0.9.11";
+	var DRAWR_VERSION = "0.9.12";
 
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
@@ -631,7 +631,7 @@
 		};
 
 		/* Inserts a button into a toolbox */
-		plugin.create_button = function(toolbox,type,data,css){
+		plugin.create_toolbutton = function(toolbox,type,data,css){
 			var self=this;
 
 			var button_width = 100/self.settings.toolbox_cols;
@@ -723,6 +723,86 @@
 			});
 			return $(toolbox).find(".slider-" + title.toLowerCase());
 		}
+
+		/* create a button */
+		plugin.create_button = function(toolbox, title){
+			var key = 'btn-' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+			$(toolbox).append(
+				'<button class="drawr-toolwindow-btn ' + key + '" style="' +
+					'display:block;width:calc(100% - 16px);margin:6px 8px;padding:7px 10px;' +
+					'font-size:12px;font-weight:bold;cursor:pointer;border-radius:4px;' +
+					'border:1px solid rgba(0,0,0,0.25);' +
+					'background:linear-gradient(to bottom,rgba(255,255,255,0.18) 0%,rgba(0,0,0,0.08) 100%);' +
+					'box-shadow:0 1px 2px rgba(0,0,0,0.18),inset 0 1px 0 rgba(255,255,255,0.22);' +
+					'color:inherit;' +
+				'">' + title + '</button>'
+			);
+			$(toolbox).find('.' + key).on('pointerdown touchstart', function(e){
+				e.stopPropagation();
+			});
+			return $(toolbox).find('.' + key);
+		};
+
+		/* create a descriptive text block (styled like a quote block) */
+		plugin.create_text = function(toolbox, text){
+			$(toolbox).append(
+				'<div class="drawr-toolwindow-text" style="' +
+					'margin:6px 8px;padding:6px 8px 6px 10px;font-size:11px;line-height:1.5;' +
+					'border-left:3px solid rgba(128,128,255,0.55);' +
+					'background:rgba(128,128,255,0.07);border-radius:0 3px 3px 0;' +
+					'white-space:pre-wrap;word-break:break-word;' +
+				'">' + text + '</div>'
+			);
+			return $(toolbox).find('.drawr-toolwindow-text:last');
+		};
+
+		/* create a styled text input field with a left accent border */
+		plugin.create_input = function(toolbox, placeholder, value){
+			var uid = 'inp-' + Math.random().toString(36).slice(2, 8);
+			$(toolbox).append(
+				'<div style="margin:6px 8px;border-left:3px solid rgba(128,128,255,0.55);border-radius:0 3px 3px 0;color:#333;background:rgba(255,255,255);">' +
+					'<input class="drawr-toolwindow-input ' + uid + '" type="text"' +
+						(placeholder ? ' placeholder="' + placeholder + '"' : '') +
+						(value !== undefined ? ' value="' + value + '"' : '') +
+						' style="' +
+							'display:block;width:100%;box-sizing:border-box;' +
+							'padding:6px 8px 6px 10px;font-size:12px;' +
+							'background:transparent;border:none;outline:none;color:inherit;' +
+						'">' +
+				'</div>'
+			);
+			var input = $(toolbox).find('.' + uid);
+			input.on('pointerdown touchstart keydown', function(e){ e.stopPropagation(); });
+			return input;
+		};
+
+		/* create a file picker styled like a button, with an upload icon */
+		plugin.create_filepicker = function(toolbox, title, accept){
+			var uid = 'fp-' + Math.random().toString(36).slice(2, 8);
+			var wrapper = $(
+				'<div class="drawr-toolwindow-btn drawr-filepicker-wrap ' + uid + '" style="' +
+					'display:block;position:relative;width:calc(100% - 16px);margin:6px 8px;padding:7px 10px;' +
+					'font-size:12px;font-weight:bold;cursor:pointer;border-radius:4px;' +
+					'border:1px solid rgba(0,0,0,0.25);' +
+					'background:linear-gradient(to bottom,rgba(255,255,255,0.18) 0%,rgba(0,0,0,0.08) 100%);' +
+					'box-shadow:0 1px 2px rgba(0,0,0,0.18),inset 0 1px 0 rgba(255,255,255,0.22);' +
+					'text-align:center;user-select:none;overflow:hidden;box-sizing:border-box;' +
+				'">' +
+					'<span class="mdi mdi-upload" style="margin-right:5px;vertical-align:middle;font-size:16px;"></span>' +
+					'<span style="vertical-align:middle;">' + title + '</span>' +
+				'</div>'
+			);
+			var input = $('<input type="file" class="drawr-filepicker-fix">').css({
+				position: 'absolute', top: 0, left: 0,
+				width: '100%', height: '100%',
+				opacity: 0, cursor: 'pointer', margin: 0
+			});
+			if (accept){ input.attr('accept', accept); }
+			wrapper.append(input);
+			wrapper.on('pointerdown touchstart', function(e){ e.stopPropagation(); });
+			$(toolbox).append(wrapper);
+			return input;
+		};
 
 		//set some default settings. :)
 		plugin.initialize_canvas = function(width,height,reset){
@@ -1082,12 +1162,12 @@
 			if(toolset=="default"){
 				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} );
 				$.each($.fn.drawr.availableTools, function(i, tool){
-					plugin.create_button.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
 				});
 			} else {
 				for(var tool_name of self.toolsets[toolset]){
 					var tool = plugin.get_tool_by_name(toolset, tool_name);
-					plugin.create_button.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
 				}
 			}
 		};
@@ -1105,7 +1185,7 @@
 			var collection = $();
 			this.each(function() {
 				var currentCanvas = this;
-				var newButton = plugin.create_button.call(currentCanvas,currentCanvas.$brushToolbox[0],typeof param.type=="undefined" ? "action" : param.type,param);
+				var newButton = plugin.create_toolbutton.call(currentCanvas,currentCanvas.$brushToolbox[0],typeof param.type=="undefined" ? "action" : param.type,param);
 				collection=collection.add(newButton);
 			});
 			return collection;
@@ -1824,6 +1904,137 @@ jQuery.fn.drawr.register({
 		return true;
 	}
 });
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-plus mdi-24px",
+	name: "custom",
+	type: "toggle",
+	order: 100,
+	buttonCreated: function(brush,button){
+
+		var self = this;
+
+		self.$customToolbox = self.plugin.create_toolbox.call(self,"custom",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() /2, top: $(self).parent().offset().top + $(self).parent().innerHeight() /2 },"Custom",160);
+
+		self.plugin.create_text.call(self, self.$customToolbox,"This tool allows you to create a custom brush.");
+
+		self.plugin.create_label.call(self, self.$customToolbox, "Icon");
+		self.icon_input = self.plugin.create_input(self.$customToolbox, "Icon", "mdi-puzzle");
+
+		self.plugin.create_label.call(self, self.$customToolbox, "File");
+
+		var input = self.plugin.create_filepicker(self.$customToolbox, "Load Image", "image/*");
+		input.on('change', function() {
+			 var file = this.files[0];
+		      if (!file) return;
+		      var reader = new FileReader();
+		      reader.onload = function(e) {
+		          var dataUrl = e.target.result;
+		          // use dataUrl here, e.g.:
+		          self.brush_image = dataUrl;
+		      };
+		      reader.readAsDataURL(file);
+		});
+
+		var btn = self.plugin.create_button.call(self, self.$customToolbox,"Create new brush");
+  		btn.on('click', function() {
+
+  			var icon = self.icon_input.val();
+
+  			var new_brush = {
+				icon: "mdi " + icon + " mdi-24px",
+				name: "test123",
+				size: 15,
+				alpha: 1,
+				order: 1001,
+				brush_fade_in: 20,
+				pressure_affects_alpha: true,
+				pressure_affects_size: false,
+				smoothing: false,
+				activate: function(brush,context){
+					brush._rawImage = new Image();
+					brush._rawImage.crossOrigin = "Anonymous";
+					brush._stampCache = null;
+					brush._stampCacheKey = null;
+					brush._rawImage.src = self.brush_image;
+				},
+				deactivate: function(brush,context){},
+				drawStart: function(brush,context,x,y,size,alpha,event){
+					context.globalCompositeOperation="source-over";
+					context.globalAlpha = alpha;
+					brush._lastX = x;
+					brush._lastY = y;
+					brush._strokeAngle = 0;
+				},
+				drawRotatedImage: function (context, image, x, y, angle, size) {
+					context.save();
+					context.translate(x,y);
+					context.rotate(angle);
+					if(image.width>=image.height){
+						var imageHeight=image.height/(image.width/size);
+						var imageWidth=size;
+					} else {
+						var imageWidth=image.width/(image.height/size)
+						var imageHeight=size;
+					}
+					var destx=-imageWidth/2;
+					var desty=-imageHeight/2;
+					context.drawImage(image,destx,desty,imageWidth,imageHeight);
+				    context.restore();
+				},
+				drawSpot: function(brush,context,x,y,size,alpha,event) {
+					if(!brush._rawImage || !brush._rawImage.complete) return;
+					var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
+					var cacheKey = color.r + "," + color.g + "," + color.b;
+					if(brush._stampCacheKey !== cacheKey){
+						var img = brush._rawImage;
+						var buffer = document.createElement("canvas");
+						buffer.width = img.width;
+						buffer.height = img.height;
+						var bctx = buffer.getContext("2d");
+						bctx.fillStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
+						bctx.fillRect(0, 0, img.width, img.height);
+						bctx.globalCompositeOperation = "destination-atop";
+						bctx.drawImage(img, 0, 0);
+						brush._stampCache = buffer;
+						brush._stampCacheKey = cacheKey;
+					}
+					// compute stroke angle from movement direction, keeping the last angle when stationary
+					var dx = x - brush._lastX;
+					var dy = y - brush._lastY;
+					if(dx !== 0 || dy !== 0){
+						brush._strokeAngle = Math.atan2(dx, dy);
+					}
+					brush._lastX = x;
+					brush._lastY = y;
+
+					context.globalAlpha = alpha;
+					var calculated_size = parseInt(size);
+					if(calculated_size<2) calculated_size = 2;
+					brush.drawRotatedImage(context, brush._stampCache, x, y, brush._strokeAngle, calculated_size);
+				},
+				drawStop: function(brush,context,x,y,size,alpha,event){
+					return true;
+				}
+			};
+			jQuery.fn.drawr.register(new_brush);
+            self.plugin.create_toolbutton.call(self, self.$brushToolbox[0], "brush", new_brush);
+
+  		});
+
+
+	},
+	action: function(brush,context){
+		var self = this;
+		self.$customToolbox.toggle();
+	},
+	cleanup: function(){
+		var self = this;
+		self.$customToolbox.remove();
+		delete self.$customToolbox;
+	}
+
+});
+
 //iterates every pixel inside a circular brush area, calling fn(data, src, i, blend, t, row, col, radius, diameter).
 //handles getImageData / putImageData and the tapered blend weight from the center 
 //pass needSrc=true to receive a frozen snapshot as the second argument to fn.
