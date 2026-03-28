@@ -545,6 +545,19 @@
 				}
 				self._gestureAbortSnapshot = null;
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
+				$(".drawr-toolbox").each(function(){
+					if($(this).data("dragging") == true){
+						var owner = this.ownerCanvas;
+						if(owner && owner._toolboxPositions){
+							var containerOffset = $(owner).parent().offset();
+							var o = $(this).offset();
+							owner._toolboxPositions[$(this).data("toolbox-id")] = {
+								left: o.left - containerOffset.left,
+								top:  o.top  - containerOffset.top
+							};
+						}
+					}
+				});
 				$(".drawr-toolbox").data("dragging", false);
 				plugin.is_dragging=false;
 			};
@@ -942,7 +955,8 @@
 				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center"
 			});
 			$(toolbox).insertAfter($(this).parent());
-			$(toolbox).offset(position);
+			if(position){ $(toolbox).offset(position); }
+			$(toolbox).data("toolbox-id", id);
 			$(toolbox).hide();
 			$(toolbox).on("pointerdown." + self._evns + " touchstart." + self._evns, function(e){
 				if($(e.target).is("button, input, select, textarea, label, a") || $(e.target).closest("button, input, select, textarea, label, a").length) {
@@ -957,6 +971,78 @@
 				e.preventDefault();
 			});
 			return $(toolbox);
+		};
+
+		//returns the best container-relative {left, top} for a toolbox of the given dimensions.
+		//restores a remembered drag position if available; otherwise scores 8 perimeter zones
+		//by their total overlap area with already-visible toolboxes and picks the lowest-scoring one.
+
+		plugin.get_best_toolbox_position = function(id, width, height, $exclude) {
+
+			var container = $(this).parent();
+			var cw = container.innerWidth();
+			var ch = container.innerHeight();
+			var P = 6;
+
+			if(this._toolboxPositions && this._toolboxPositions[id]) {
+				var mem = this._toolboxPositions[id];
+				return {
+					left: Math.min(Math.max(mem.left, P), cw - width - P),
+					top:  Math.min(Math.max(mem.top,  P), ch - height - P)
+				};
+			}
+
+			var zones = [
+				{ left: P,                top: P                },  //topleft
+				{ left: cw - width - P,   top: P                },  //topright
+				{ left: P,                top: (ch-height)/2    },  //middle left
+				{ left: cw - width - P,   top: (ch-height)/2    },  //middleright
+				{ left: P,                top: ch - height - P  },  //bottomleft
+				{ left: cw - width - P,   top: ch - height - P  },  //bottomright
+				{ left: (cw-width)/2,     top: P                },  //topcenter
+				{ left: (cw-width)/2,     top: ch - height - P  }   //bottomcenter
+			];
+
+			var containerOffset = container.offset();
+			var occupied = [];
+			$(".drawr-toolbox:visible").each(function(){
+				if($exclude && $(this).is($exclude)) return; //skip the toolbox being placed
+				var o = $(this).offset();
+				occupied.push({
+					left:   o.left  - containerOffset.left,
+					top:    o.top   - containerOffset.top,
+					right:  o.left  - containerOffset.left + $(this).outerWidth(),
+					bottom: o.top   - containerOffset.top  + $(this).outerHeight()
+				});
+			});
+
+			var best = zones[0], bestScore = Infinity;
+			zones.forEach(function(zone){
+				var zr = { left: zone.left, top: zone.top, right: zone.left+width, bottom: zone.top+height };
+				var score = 0;
+				occupied.forEach(function(occ){
+					var ix = Math.max(0, Math.min(zr.right,  occ.right)  - Math.max(zr.left, occ.left));
+					var iy = Math.max(0, Math.min(zr.bottom, occ.bottom) - Math.max(zr.top,  occ.top));
+					score += ix * iy;
+				});
+				if(score < bestScore){ bestScore = score; best = zone; }
+			});
+			return best;
+		};
+
+		//shows a toolbox and positions it using zone-scoring (or its remembered drag position).
+		plugin.show_toolbox = function($toolbox){
+			var self = this;
+			var id = $toolbox.data("toolbox-id");
+			$toolbox.show();
+			var w = $toolbox.outerWidth();
+			var h = $toolbox.outerHeight() || 100;
+			var pos = plugin.get_best_toolbox_position.call(self, id, w, h, $toolbox);
+			var containerOffset = $(self).parent().offset();
+			$toolbox.offset({
+				left: containerOffset.left + pos.left,
+				top:  containerOffset.top  + pos.top
+			});
 		};
 
 		//draw the transparency checkerboard onto the background canvas at fixed 20px squares
@@ -1115,7 +1201,7 @@
 				}
 
 				$(".drawr-toolbox").hide();
-				$(".drawr-toolbox-brush").show();
+				plugin.show_toolbox.call(currentCanvas, currentCanvas.$brushToolbox);
 				$(".drawr-toolbox-palette").show();
 				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").trigger("pointerdown");		  
 			} else if ( action === "clear" ) {
@@ -1346,11 +1432,11 @@
 
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
 				currentCanvas.brushBackColor = { r: 255, g: 255, b: 255 };
-
+				currentCanvas._toolboxPositions = {};
 
 				//brush dialog
 				var width = defaultSettings.toolbox_cols * 40;
-				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Tools",width);
+				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",null,"Tools",width);
 
 				plugin.bind_draw_events.call(currentCanvas);
 			}

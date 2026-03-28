@@ -52,10 +52,7 @@ jQuery.fn.drawr.register({
 		var self = this;
 		brush._canvasInstance = self;
 
-		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", {
-			left: $(self).parent().offset().left,
-			top:  $(self).parent().offset().top + $(self).parent().innerHeight() /2
-		}, "Effect", 120);
+		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", null, "Effect", 120);
 
 		brush.$effectDropdown = self.plugin.create_dropdown.call(self, self.$effectsToolbox, "Type", [
 			{ value: "blur",    label: "Blur"    },
@@ -75,7 +72,7 @@ jQuery.fn.drawr.register({
 
 	activate: function(brush, context) {
 		if (typeof brush._canvasInstance !== "undefined") {
-			brush._canvasInstance.$effectsToolbox.show();
+			brush._canvasInstance.plugin.show_toolbox.call(brush._canvasInstance, brush._canvasInstance.$effectsToolbox);
 		}
 	},
 
