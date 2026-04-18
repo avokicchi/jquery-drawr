@@ -487,8 +487,12 @@
 						//Only accept a new knot if it is far enough from the last one. Sub-pixel (or near-pixel)
 						//knot spacing gives the spline no room to round corners, so high-precision stylus input
 						//would pass through every jitter point rather than smoothing over them.
+						//Cutoff is a fraction of brush size (not stepSize) — knot decimation is about jitter
+						//tolerance for the spline, which is unrelated to how densely the spline is sampled.
+						var knotCutoff = calculatedSize * 0.375;
+						if(knotCutoff < 1) knotCutoff = 1;
 						var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
-						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < stepSize * 1.5) return;//todo: make 1.5 a variable; we can tune linesmoothing with this.
+						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < knotCutoff) return;
 						self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
 						var knots = self._smoothKnots;
 						var n = knots.length - 1; //last index
