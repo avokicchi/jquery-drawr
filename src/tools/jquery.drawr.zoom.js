@@ -7,7 +7,7 @@ jQuery.fn.drawr.register({
 
 		var self = this;
 
-		self.$zoomToolbox = self.plugin.create_toolbox.call(self,"zoom",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() - 140, top: $(self).parent().offset().top },"Zoom",140);
+		self.$zoomToolbox = self.plugin.create_toolbox.call(self,"zoom",null,"Zoom",80);
 		self.plugin.create_slider.call(self, self.$zoomToolbox,"zoom", 0,400,100).on("input.drawr",function(){
 			var cleaned = Math.ceil(this.value/10)*10;
 			$(this).next().text(cleaned);
@@ -17,7 +17,11 @@ jQuery.fn.drawr.register({
 	},
 	action: function(brush,context){
 		var self = this;
-		self.$zoomToolbox.toggle();
+		if(self.$zoomToolbox.is(":visible")){
+			self.$zoomToolbox.hide();
+		} else {
+			self.plugin.show_toolbox.call(self, self.$zoomToolbox);
+		}
 	},
 	cleanup: function(){
 		var self = this;

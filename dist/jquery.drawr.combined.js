@@ -142,16 +142,16 @@
 		};
 
 		//Evaluates a centripetal Catmull-Rom spline (alpha=0.5) at parameter u (0..1) for the
-		//segment p1→p2, using p0 and p3 as the outer control points. The centripetal
+		//segment p1 -> p2, using p0 and p3 as the outer control points. The centripetal
 		//parameterisation guarantees no cusps or loops regardless of knot spacing or sharp
 		//direction changes — unlike the uniform variant which overshoots into loops at turns.
 		//Uses the Barry–Goldman recursive form (three linear interpolations per level, three levels),
 		//which is numerically friendlier for drawing apps than expanding the basis polynomials.
 		//Refs:
-		//  Catmull-Rom spline — https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
-		//  Barry–Goldman algorithm — https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
-		//   generalised to non-uniform knot spacing; see also Yuksel et al., "On the Parameterization of
-		//   Catmull-Rom Curves", 2011 — http://www.cemyuksel.com/research/catmullrom_param/).
+		//Catmull-Rom spline — https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
+		//Barry–Goldman algorithm — https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
+		//generalised to non-uniform knot spacing; see also Yuksel et al., "On the Parameterization of
+		//Catmull-Rom Curves", 2011 — http://www.cemyuksel.com/research/catmullrom_param/).
 		plugin.catmull_rom_point = function(p0, p1, p2, p3, u) {
 			var d01 = Math.sqrt(plugin.distance_between(p0, p1));
 			var d12 = Math.sqrt(plugin.distance_between(p1, p2));
@@ -238,7 +238,7 @@
 			}
 		};
 
-		//walks the Catmull-Rom segment p1→p2 (influenced by p0 and p3) at arc-length steps of
+		//walks the Catmull-Rom segment p1 -> p2 (influenced by p0 and p3) at arc-length steps of
 		//stepSize, calling emit_spot at each step. accepts a carry-in accumDist so that
 		//partial progress from a previous short segment is not discarded (fixes slow-draw gaps).
 		//returns the leftover accumDist to be passed into the next call.
@@ -255,7 +255,7 @@
 				accumDist += stepDist;
 				while (accumDist >= stepSize) {
 					accumDist -= stepSize;
-					//interpolate the exact arc-length position along prevPt→pt so that
+					//interpolate the exact arc-length position along prevPt->pt so that
 					//multiple spots within one sample step are spread out, not stacked.
 					var ratio = stepDist > 0 ? Math.max(0, Math.min(1, 1 - accumDist / stepDist)) : 1;
 					var spotX = prevPt.x + (pt.x - prevPt.x) * ratio;
@@ -388,7 +388,7 @@
 							self._fadeInSpotCount++;
 							startAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
 						}
-						//first spot has no stroke direction yet — pass angle=0 so tools consuming
+						//first spot has no stroke direction yet so we pass angle=0 so tools consuming
 						//the 8th arg get a deterministic value. fade-in already applied inline above,
 						//so this call bypasses emit_spot to avoid double-incrementing the counter.
 						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
@@ -488,7 +488,7 @@
 						var knots = self._smoothKnots;
 						var n = knots.length - 1; //last index
 						if(n >= 2) {
-							//draw segment knots[n-2]→knots[n-1]; knots[n] is the lookahead control point
+							//draw segment knots[n-2]->knots[n-1]; knots[n] is the lookahead control point
 							var p0 = knots[Math.max(0, n-3)];
 							var p1 = knots[n-2];
 							var p2 = knots[n-1];
@@ -620,6 +620,19 @@
 				}
 				self._gestureAbortSnapshot = null;
 				$(self).data("is_drawing",false).data("lastx",null).data("lasty",null);
+				$(".drawr-toolbox").each(function(){
+					if($(this).data("dragging") == true){
+						var owner = this.ownerCanvas;
+						if(owner && owner._toolboxPositions){
+							var containerOffset = $(owner).parent().offset();
+							var o = $(this).offset();
+							owner._toolboxPositions[$(this).data("toolbox-id")] = {
+								left: o.left - containerOffset.left,
+								top:  o.top  - containerOffset.top
+							};
+						}
+					}
+				});
 				$(".drawr-toolbox").data("dragging", false);
 				plugin.is_dragging=false;
 			};
@@ -1461,7 +1474,8 @@
 				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center"
 			});
 			$(toolbox).insertAfter($(this).parent());
-			$(toolbox).offset(position);
+			if(position){ $(toolbox).offset(position); }
+			$(toolbox).data("toolbox-id", id);
 			$(toolbox).hide();
 			//the plugin claims the middle mouse button for canvas panning, so block the browser's
 			//autoscroll-on-middle-click over any toolbox (otherwise a tall dialog will trigger it).
@@ -1483,23 +1497,96 @@
 			return $(toolbox);
 		};
 
+		//returns the best container-relative {left, top} for a toolbox of the given dimensions.
+		//restores a remembered drag position if available; otherwise scores 8 perimeter zones
+		//by their total overlap area with already-visible toolboxes and picks the lowest-scoring one.
+
+		plugin.get_best_toolbox_position = function(id, width, height, $exclude) {
+
+			var container = $(this).parent();
+			var cw = container.innerWidth();
+			var ch = container.innerHeight();
+			var P = 6;
+
+			if(this._toolboxPositions && this._toolboxPositions[id]) {
+				var mem = this._toolboxPositions[id];
+				return {
+					left: Math.min(Math.max(mem.left, P), cw - width - P),
+					top:  Math.min(Math.max(mem.top,  P), ch - height - P)
+				};
+			}
+
+			var zones = [
+				{ left: P,                top: P                },  //topleft
+				{ left: cw - width - P,   top: P                },  //topright
+				{ left: P,                top: (ch-height)/2    },  //middle left
+				{ left: cw - width - P,   top: (ch-height)/2    },  //middleright
+				{ left: P,                top: ch - height - P  },  //bottomleft
+				{ left: cw - width - P,   top: ch - height - P  },  //bottomright
+				{ left: (cw-width)/2,     top: P                },  //topcenter
+				{ left: (cw-width)/2,     top: ch - height - P  }   //bottomcenter
+			];
+
+			var containerOffset = container.offset();
+			var occupied = [];
+			$(".drawr-toolbox:visible").each(function(){
+				if($exclude && $(this).is($exclude)) return; //skip the toolbox being placed
+				var o = $(this).offset();
+				occupied.push({
+					left:   o.left  - containerOffset.left,
+					top:    o.top   - containerOffset.top,
+					right:  o.left  - containerOffset.left + $(this).outerWidth(),
+					bottom: o.top   - containerOffset.top  + $(this).outerHeight()
+				});
+			});
+
+			var best = zones[0], bestScore = Infinity;
+			zones.forEach(function(zone){
+				var zr = { left: zone.left, top: zone.top, right: zone.left+width, bottom: zone.top+height };
+				var score = 0;
+				occupied.forEach(function(occ){
+					var ix = Math.max(0, Math.min(zr.right,  occ.right)  - Math.max(zr.left, occ.left));
+					var iy = Math.max(0, Math.min(zr.bottom, occ.bottom) - Math.max(zr.top,  occ.top));
+					score += ix * iy;
+				});
+				if(score < bestScore){ bestScore = score; best = zone; }
+			});
+			return best;
+		};
+
+		//shows a toolbox and positions it using zone-scoring (or its remembered drag position).
+		plugin.show_toolbox = function($toolbox){
+			var self = this;
+			var id = $toolbox.data("toolbox-id");
+			$toolbox.show();
+			var w = $toolbox.outerWidth();
+			var h = $toolbox.outerHeight() || 100;
+			var pos = plugin.get_best_toolbox_position.call(self, id, w, h, $toolbox);
+			var containerOffset = $(self).parent().offset();
+			$toolbox.offset({
+				left: containerOffset.left + pos.left,
+				top:  containerOffset.top  + pos.top
+			});
+		};
+
 		//draw the transparency checkerboard onto the background canvas at fixed 20px squares
 		//if self.paperColorMode === "solid", fills with self.paperColor instead
 		plugin.draw_checkerboard = function(){
 			var self = this;
 			if(!self.$bgCanvas) return;
-			var W = Math.ceil(self.width * self.zoomFactor);
-			var H = Math.ceil(self.height * self.zoomFactor);
+			//draw at base resolution; css display size handles zoom scaling 
+			var W = self.width;
+			var H = self.height;
 			self.$bgCanvas[0].width = W;
 			self.$bgCanvas[0].height = H;
-			self.$bgCanvas.width(W);
-			self.$bgCanvas.height(H);
+			self.$bgCanvas.width(Math.ceil(W * self.zoomFactor));
+			self.$bgCanvas.height(Math.ceil(H * self.zoomFactor));
 			var ctx = self.$bgCanvas[0].getContext('2d');
 			if(self.paperColorMode === "solid"){
 				ctx.fillStyle = self.paperColor || '#ffffff';
 				ctx.fillRect(0, 0, W, H);
 			} else {
-				var sz = 20 * self.zoomFactor;
+				var sz = 20; //fixed cell size at base resolution; zoom handled by css :)
 				ctx.fillStyle = '#ffffff';
 				ctx.fillRect(0, 0, W, H);
 				ctx.fillStyle = '#cccccc';
@@ -1643,7 +1730,7 @@
 				}
 
 				$(".drawr-toolbox").hide();
-				$(".drawr-toolbox-brush").show();
+				plugin.show_toolbox.call(currentCanvas, currentCanvas.$brushToolbox);
 				$(".drawr-toolbox-palette").show();
 				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").trigger("pointerdown");		  
 			} else if ( action === "clear" ) {
@@ -1874,11 +1961,11 @@
 
 				currentCanvas.brushColor = { r: 0, g: 0, b: 0 };
 				currentCanvas.brushBackColor = { r: 255, g: 255, b: 255 };
-
+				currentCanvas._toolboxPositions = {};
 
 				//brush dialog
 				var width = defaultSettings.toolbox_cols * 40;
-				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Tools",width);
+				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",null,"Tools",width);
 
 				plugin.bind_draw_events.call(currentCanvas);
 
@@ -2562,10 +2649,7 @@ jQuery.fn.drawr.register({
 	buttonCreated: function(brush, button) {
 		var self = this;
 
-		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", {
-			left: $(self).parent().offset().left,
-			top:  $(self).parent().offset().top + $(self).parent().innerHeight() /2
-		}, "Effect", 120);
+		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", null, "Effect", 120);
 
 		var $dd = self.plugin.create_dropdown.call(self, self.$effectsToolbox, "Type", [
 			{ value: "blur",    label: "Blur"    },
@@ -2593,7 +2677,7 @@ jQuery.fn.drawr.register({
 	},
 
 	activate: function(brush, context) {
-		if(this.$effectsToolbox) this.$effectsToolbox.show();
+		if(this.$effectsToolbox) this.plugin.show_toolbox.call(this, this.$effectsToolbox);
 	},
 
 	deactivate: function(brush, context) {
@@ -3626,7 +3710,7 @@ jQuery.fn.drawr.register({
 		var context = self.getContext('2d');
 
 		//color dialog
-		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() - 180, top: $(self).parent().offset().top },"Settings",180);
+		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",180);
 
 		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Color");
 
@@ -3869,7 +3953,11 @@ jQuery.fn.drawr.register({
 			brush.update.call(this,brush);
 		}
 
-		self.$settingsToolbox.toggle();
+		if(self.$settingsToolbox.is(":visible")){
+			self.$settingsToolbox.hide();
+		} else {
+			self.plugin.show_toolbox.call(self, self.$settingsToolbox);
+		}
 
 	},
 	cleanup: function(){
@@ -4170,7 +4258,7 @@ jQuery.fn.drawr.register({
 
 		var self = this;
 
-		self.$zoomToolbox = self.plugin.create_toolbox.call(self,"zoom",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() - 140, top: $(self).parent().offset().top },"Zoom",140);
+		self.$zoomToolbox = self.plugin.create_toolbox.call(self,"zoom",null,"Zoom",80);
 		self.plugin.create_slider.call(self, self.$zoomToolbox,"zoom", 0,400,100).on("input.drawr",function(){
 			var cleaned = Math.ceil(this.value/10)*10;
 			$(this).next().text(cleaned);
@@ -4180,7 +4268,11 @@ jQuery.fn.drawr.register({
 	},
 	action: function(brush,context){
 		var self = this;
-		self.$zoomToolbox.toggle();
+		if(self.$zoomToolbox.is(":visible")){
+			self.$zoomToolbox.hide();
+		} else {
+			self.plugin.show_toolbox.call(self, self.$zoomToolbox);
+		}
 	},
 	cleanup: function(){
 		var self = this;

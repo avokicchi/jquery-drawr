@@ -9,7 +9,7 @@ jQuery.fn.drawr.register({
 		var context = self.getContext('2d');
 
 		//color dialog
-		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() - 180, top: $(self).parent().offset().top },"Settings",180);
+		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",180);
 
 		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Color");
 
@@ -252,7 +252,11 @@ jQuery.fn.drawr.register({
 			brush.update.call(this,brush);
 		}
 
-		self.$settingsToolbox.toggle();
+		if(self.$settingsToolbox.is(":visible")){
+			self.$settingsToolbox.hide();
+		} else {
+			self.plugin.show_toolbox.call(self, self.$settingsToolbox);
+		}
 
 	},
 	cleanup: function(){

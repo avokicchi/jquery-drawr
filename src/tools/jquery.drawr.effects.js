@@ -58,10 +58,7 @@ jQuery.fn.drawr.register({
 	buttonCreated: function(brush, button) {
 		var self = this;
 
-		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", {
-			left: $(self).parent().offset().left,
-			top:  $(self).parent().offset().top + $(self).parent().innerHeight() /2
-		}, "Effect", 120);
+		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", null, "Effect", 120);
 
 		var $dd = self.plugin.create_dropdown.call(self, self.$effectsToolbox, "Type", [
 			{ value: "blur",    label: "Blur"    },
@@ -89,7 +86,7 @@ jQuery.fn.drawr.register({
 	},
 
 	activate: function(brush, context) {
-		if(this.$effectsToolbox) this.$effectsToolbox.show();
+		if(this.$effectsToolbox) this.plugin.show_toolbox.call(this, this.$effectsToolbox);
 	},
 
 	deactivate: function(brush, context) {

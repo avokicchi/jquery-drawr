@@ -58,7 +58,7 @@ Also available [on npm](https://www.npmjs.com/package/jquery-drawr). For install
 
 npm install jquery-drawr
 
-[demos and docs at this link](https://rawrfl.es/jquery-drawr/ "demos and docs at this link")
+[demos and docs at this link](https://cachecat.io/jquery-drawr/ "demos and docs at this link")
 
 # To build
 
