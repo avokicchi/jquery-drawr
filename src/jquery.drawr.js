@@ -108,10 +108,14 @@
 		plugin.is_dragging = false;
 
 		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
+		//pressure is reshaped with a sqrt-ish gamma before scaling so gentle stylus strokes (Apple Pencil
+		//resting pressure sits around 0.2-0.3) reach a useful fraction of the base — a raw linear map
+		//made pencil/brush feel ghostly on iPad. TODO: expose this curve as a per-user setting eventually.
 		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure, pen_pressure){
+			var shaped = Math.pow(pressure, 0.5) * 1.5;
 			return {
-				alpha: (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * pressure * 2) : brushAlpha,
-				size:  parseFloat((brush.pressure_affects_size && pen_pressure) ? Math.max(1, brushSize * pressure * 2) : brushSize)
+				alpha: (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha,
+				size:  parseFloat((brush.pressure_affects_size && pen_pressure) ? Math.max(1, brushSize * shaped) : brushSize)
 			};
 		};
 
