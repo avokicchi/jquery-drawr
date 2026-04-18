@@ -1729,7 +1729,7 @@
 					plugin.load_toolset.call(currentCanvas,"default");
 				}
 
-				$(".drawr-toolbox").hide();
+				$(".drawr-toolbox").each(function(){ if(this.ownerCanvas === currentCanvas) $(this).hide(); });
 				plugin.show_toolbox.call(currentCanvas, currentCanvas.$brushToolbox);
 				$(".drawr-toolbox-palette").show();
 				currentCanvas.$brushToolbox.find(".drawr-tool-btn:first").trigger("pointerdown");		  
@@ -1759,7 +1759,7 @@
 						$(this).trigger("pointerdown");
 					}
 				});
-				$(".drawr-toolbox").hide();
+				$(".drawr-toolbox").each(function(){ if(this.ownerCanvas === currentCanvas) $(this).hide(); });
 			} else if ( action === "createtoolset" ) {
 				if(typeof currentCanvas.toolsets=="undefined") currentCanvas.toolsets = {};
 				if(typeof param!=="string" || typeof param2!=="object" || Array.isArray(param2)==false){
