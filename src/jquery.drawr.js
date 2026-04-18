@@ -108,11 +108,12 @@
 		plugin.is_dragging = false;
 
 		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
-		//pressure is reshaped with a sqrt-ish gamma before scaling so gentle stylus strokes (Apple Pencil
-		//resting pressure sits around 0.2-0.3) reach a useful fraction of the base — a raw linear map
-		//made pencil/brush feel ghostly on iPad. TODO: expose this curve as a per-user setting eventually.
+		//pressure is reshaped as `pow(pressure, gamma)` where gamma is a global user-adjustable curve
+		//(see plugin.read_pressure_curve). gamma<1 boosts low pressure so gentle stylus strokes (Apple
+		//Pencil resting pressure sits around 0.2-0.3) reach a useful fraction of the base; gamma=1 is
+		//linear; gamma>1 requires a firmer press.
 		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure, pen_pressure){
-			var shaped = Math.pow(pressure, 0.5) * 1.5;
+			var shaped = Math.pow(pressure, plugin.read_pressure_curve());
 			return {
 				alpha: (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha,
 				size:  parseFloat((brush.pressure_affects_size && pen_pressure) ? Math.max(1, brushSize * shaped) : brushSize)
@@ -709,6 +710,42 @@
 			try { window.localStorage.setItem("drawr.customBrushes", JSON.stringify(arr)); } catch(e){}
 		};
 
+		//Global stylus-pressure response curve. Single gamma parameter consumed by calc_brush_params:
+		//shaped = pow(pressure, gamma). Persisted as a number in localStorage["drawr.pressureCurve"];
+		//cached in memory (_pressureCurveCache) since calc_brush_params runs per spot. The storage-event
+		//handler invalidates the cache when another tab writes the key.
+		plugin.PRESSURE_CURVE_DEFAULT = 0.5;
+		plugin._pressureCurveCache = null;
+		plugin.read_pressure_curve = function(){
+			if(plugin._pressureCurveCache !== null) return plugin._pressureCurveCache;
+			var v = plugin.PRESSURE_CURVE_DEFAULT;
+			try {
+				var raw = window.localStorage.getItem("drawr.pressureCurve");
+				if(raw !== null){
+					var parsed = parseFloat(raw);
+					if(isFinite(parsed) && parsed > 0) v = parsed;
+				}
+			} catch(e){}
+			plugin._pressureCurveCache = v;
+			return v;
+		};
+		plugin.write_pressure_curve = function(gamma){
+			plugin._pressureCurveCache = gamma;
+			try { window.localStorage.setItem("drawr.pressureCurve", String(gamma)); } catch(e){}
+		};
+		//Refresh settings UI on every instance (no tool filter — this is a global setting).
+		plugin.broadcast_pressure_curve_change = function(){
+			var instances = $.fn.drawr._instances || [];
+			for(var i = 0; i < instances.length; i++){
+				var inst = instances[i];
+				if(!inst || typeof inst.$settingsToolbox === "undefined") continue;
+				var settings_brush = plugin.get_tool_by_name("default","settings");
+				if(settings_brush && typeof settings_brush.update === "function"){
+					settings_brush.update.call(inst);
+				}
+			}
+		};
+
 		//apply overrides from localStorage onto already-registered tools. idempotent — safe to re-run.
 		//sets a guard so we don't iterate every call; set `force=true` to re-apply after a storage event.
 		plugin.apply_overrides = function(force){
@@ -973,6 +1010,11 @@
 							plugin.broadcast_dynamics_change(inst.active_brush.name);
 						}
 					}
+				} else if(e.key === "drawr.pressureCurve"){
+					//global setting: invalidate cache so next read pulls the new value, then refresh
+					//the settings dialog on every instance so sliders/curve preview reflect the change.
+					plugin._pressureCurveCache = null;
+					plugin.broadcast_pressure_curve_change();
 				} else if(e.key === "drawr.customBrushes"){
 					//step 8 handles custom-brush add/remove reconciliation across tabs.
 					if(typeof $.fn.drawr.reconcile_custom_brushes === "function"){
@@ -1220,10 +1262,13 @@
 		plugin.create_collapsible = function(toolbox, title, collapsedDefault){
 			var uid = 'col-' + Math.random().toString(36).slice(2, 8);
 			var collapsed = !!collapsedDefault;
+			//use MDI chevron glyphs instead of raw unicode triangles — iOS Firefox renders those as
+			//tofu/garbled symbols because its default fallback font lacks the geometric-shape range.
+			var chevClass = function(c){ return c ? 'mdi-chevron-right' : 'mdi-chevron-down'; };
 			var $wrap = $(
 				'<div class="drawr-collapsible ' + uid + '" style="margin:6px 8px 4px;border-top:1px solid rgba(0,0,0,0.12);">' +
 					'<div class="drawr-collapsible-header" style="cursor:pointer;padding:6px 4px;font-weight:bold;font-size:12px;user-select:none;display:flex;align-items:center;">' +
-						'<span class="drawr-collapsible-chevron" style="display:inline-block;width:12px;transition:transform 0.1s;">' + (collapsed ? '▸' : '▾') + '</span>' +
+						'<span class="drawr-collapsible-chevron mdi ' + chevClass(collapsed) + '" style="display:inline-block;width:14px;font-size:16px;line-height:1;"></span>' +
 						'<span style="margin-left:6px;">' + title + '</span>' +
 					'</div>' +
 					'<div class="drawr-collapsible-content" style="' + (collapsed ? 'display:none;' : '') + '"></div>' +
@@ -1237,7 +1282,7 @@
 			$header.on('click', function(){
 				collapsed = !collapsed;
 				$content.css('display', collapsed ? 'none' : '');
-				$chev.text(collapsed ? '▸' : '▾');
+				$chev.removeClass('mdi-chevron-right mdi-chevron-down').addClass(chevClass(collapsed));
 			});
 			return $content;
 		};

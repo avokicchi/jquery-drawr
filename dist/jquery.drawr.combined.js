@@ -120,11 +120,12 @@
 		plugin.is_dragging = false;
 
 		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
-		//pressure is reshaped with a sqrt-ish gamma before scaling so gentle stylus strokes (Apple Pencil
-		//resting pressure sits around 0.2-0.3) reach a useful fraction of the base — a raw linear map
-		//made pencil/brush feel ghostly on iPad. TODO: expose this curve as a per-user setting eventually.
+		//pressure is reshaped as `pow(pressure, gamma)` where gamma is a global user-adjustable curve
+		//(see plugin.read_pressure_curve). gamma<1 boosts low pressure so gentle stylus strokes (Apple
+		//Pencil resting pressure sits around 0.2-0.3) reach a useful fraction of the base; gamma=1 is
+		//linear; gamma>1 requires a firmer press.
 		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure, pen_pressure){
-			var shaped = Math.pow(pressure, 0.5) * 1.5;
+			var shaped = Math.pow(pressure, plugin.read_pressure_curve());
 			return {
 				alpha: (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha,
 				size:  parseFloat((brush.pressure_affects_size && pen_pressure) ? Math.max(1, brushSize * shaped) : brushSize)
@@ -721,6 +722,42 @@
 			try { window.localStorage.setItem("drawr.customBrushes", JSON.stringify(arr)); } catch(e){}
 		};
 
+		//Global stylus-pressure response curve. Single gamma parameter consumed by calc_brush_params:
+		//shaped = pow(pressure, gamma). Persisted as a number in localStorage["drawr.pressureCurve"];
+		//cached in memory (_pressureCurveCache) since calc_brush_params runs per spot. The storage-event
+		//handler invalidates the cache when another tab writes the key.
+		plugin.PRESSURE_CURVE_DEFAULT = 0.5;
+		plugin._pressureCurveCache = null;
+		plugin.read_pressure_curve = function(){
+			if(plugin._pressureCurveCache !== null) return plugin._pressureCurveCache;
+			var v = plugin.PRESSURE_CURVE_DEFAULT;
+			try {
+				var raw = window.localStorage.getItem("drawr.pressureCurve");
+				if(raw !== null){
+					var parsed = parseFloat(raw);
+					if(isFinite(parsed) && parsed > 0) v = parsed;
+				}
+			} catch(e){}
+			plugin._pressureCurveCache = v;
+			return v;
+		};
+		plugin.write_pressure_curve = function(gamma){
+			plugin._pressureCurveCache = gamma;
+			try { window.localStorage.setItem("drawr.pressureCurve", String(gamma)); } catch(e){}
+		};
+		//Refresh settings UI on every instance (no tool filter — this is a global setting).
+		plugin.broadcast_pressure_curve_change = function(){
+			var instances = $.fn.drawr._instances || [];
+			for(var i = 0; i < instances.length; i++){
+				var inst = instances[i];
+				if(!inst || typeof inst.$settingsToolbox === "undefined") continue;
+				var settings_brush = plugin.get_tool_by_name("default","settings");
+				if(settings_brush && typeof settings_brush.update === "function"){
+					settings_brush.update.call(inst);
+				}
+			}
+		};
+
 		//apply overrides from localStorage onto already-registered tools. idempotent — safe to re-run.
 		//sets a guard so we don't iterate every call; set `force=true` to re-apply after a storage event.
 		plugin.apply_overrides = function(force){
@@ -985,6 +1022,11 @@
 							plugin.broadcast_dynamics_change(inst.active_brush.name);
 						}
 					}
+				} else if(e.key === "drawr.pressureCurve"){
+					//global setting: invalidate cache so next read pulls the new value, then refresh
+					//the settings dialog on every instance so sliders/curve preview reflect the change.
+					plugin._pressureCurveCache = null;
+					plugin.broadcast_pressure_curve_change();
 				} else if(e.key === "drawr.customBrushes"){
 					//step 8 handles custom-brush add/remove reconciliation across tabs.
 					if(typeof $.fn.drawr.reconcile_custom_brushes === "function"){
@@ -1232,10 +1274,13 @@
 		plugin.create_collapsible = function(toolbox, title, collapsedDefault){
 			var uid = 'col-' + Math.random().toString(36).slice(2, 8);
 			var collapsed = !!collapsedDefault;
+			//use MDI chevron glyphs instead of raw unicode triangles — iOS Firefox renders those as
+			//tofu/garbled symbols because its default fallback font lacks the geometric-shape range.
+			var chevClass = function(c){ return c ? 'mdi-chevron-right' : 'mdi-chevron-down'; };
 			var $wrap = $(
 				'<div class="drawr-collapsible ' + uid + '" style="margin:6px 8px 4px;border-top:1px solid rgba(0,0,0,0.12);">' +
 					'<div class="drawr-collapsible-header" style="cursor:pointer;padding:6px 4px;font-weight:bold;font-size:12px;user-select:none;display:flex;align-items:center;">' +
-						'<span class="drawr-collapsible-chevron" style="display:inline-block;width:12px;transition:transform 0.1s;">' + (collapsed ? '▸' : '▾') + '</span>' +
+						'<span class="drawr-collapsible-chevron mdi ' + chevClass(collapsed) + '" style="display:inline-block;width:14px;font-size:16px;line-height:1;"></span>' +
 						'<span style="margin-left:6px;">' + title + '</span>' +
 					'</div>' +
 					'<div class="drawr-collapsible-content" style="' + (collapsed ? 'display:none;' : '') + '"></div>' +
@@ -1249,7 +1294,7 @@
 			$header.on('click', function(){
 				collapsed = !collapsed;
 				$content.css('display', collapsed ? 'none' : '');
-				$chev.text(collapsed ? '▸' : '▾');
+				$chev.removeClass('mdi-chevron-right mdi-chevron-down').addClass(chevClass(collapsed));
 			});
 			return $content;
 		};
@@ -3851,6 +3896,82 @@ jQuery.fn.drawr.register({
 			self.plugin.is_dragging = false;
 		});
 
+		//---- Stylus pressure curve (global) -----------------------------------
+		//Single gamma slider controlling how raw stylus pressure maps to brush output via
+		//pow(pressure, gamma). gamma<1 = gentle (boosts low-pressure strokes, helpful for
+		//Apple Pencil which rests near p=0.2-0.3); gamma=1 = linear; gamma>1 = firm. Slider
+		//position t in [0..100] maps as gamma = 3^((50 - t) / 50), so center = linear and
+		//endpoints span [1/3, 3]. Only takes effect when pen_pressure is true (raw stylus
+		//input); mouse strokes are unaffected. Setting is global, shared across instances
+		//and tabs via localStorage["drawr.pressureCurve"].
+		var gammaFromSlider = function(t){ return Math.pow(3, (50 - t) / 50); };
+		var sliderFromGamma = function(g){
+			if(!(g > 0)) return 50;
+			return Math.max(0, Math.min(100, Math.round(50 - 50 * Math.log(g) / Math.log(3))));
+		};
+
+		self.plugin.create_label.call(self, self.$settingsToolbox, "Stylus pressure");
+		self.$settingsToolbox.append(
+			'<div class="drawr-pressure-curve-wrap" style="padding:2px 8px 6px;">' +
+				'<div style="display:flex;align-items:center;gap:6px;font-size:11px;">' +
+					'<span style="flex:0 0 auto;min-width:32px;color:#666;user-select:none;">soft</span>' +
+					'<input class="slider-component slider-pressurecurve" type="range" min="0" max="100" step="1" value="50" style="flex:1 1 auto;min-width:0;background:transparent;height:18px;margin:0;" />' +
+					'<span style="flex:0 0 auto;min-width:32px;text-align:right;color:#666;user-select:none;">firm</span>' +
+				'</div>' +
+				'<div style="display:flex;justify-content:center;margin-top:4px;">' +
+					'<canvas class="pressure-curve-preview" width="120" height="44" style="width:120px;height:44px;background:#fafafa;border:1px solid rgba(0,0,0,0.12);border-radius:2px;"></canvas>' +
+				'</div>' +
+			'</div>'
+		);
+		self.$pressureCurveSlider  = self.$settingsToolbox.find('.slider-pressurecurve');
+		self.$pressureCurvePreview = self.$settingsToolbox.find('.pressure-curve-preview');
+
+		//redraw the preview canvas from the current gamma. Maps x=pressure(0..1) → y=shaped(0..1),
+		//flipped so y axis grows upward. A faint linear reference line shows the no-curve baseline.
+		var drawPressureCurve = function(gamma){
+			var c = self.$pressureCurvePreview[0];
+			if(!c || !c.getContext) return;
+			var ctx = c.getContext("2d");
+			var W = c.width, H = c.height;
+			ctx.clearRect(0, 0, W, H);
+			//linear reference
+			ctx.strokeStyle = "rgba(0,0,0,0.15)";
+			ctx.lineWidth = 1;
+			ctx.beginPath();
+			ctx.moveTo(0, H);
+			ctx.lineTo(W, 0);
+			ctx.stroke();
+			//actual curve
+			ctx.strokeStyle = "#2a7fd6";
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			for(var i = 0; i <= W; i++){
+				var p = i / W;
+				var s = Math.pow(p, gamma);
+				var y = H - s * H;
+				if(i === 0) ctx.moveTo(i, y); else ctx.lineTo(i, y);
+			}
+			ctx.stroke();
+		};
+
+		self.$pressureCurveSlider.on("pointerdown touchstart", function(e){ e.stopPropagation(); });
+		self.$pressureCurveSlider.on("input.drawr", function(){
+			var gamma = gammaFromSlider(parseFloat(this.value));
+			drawPressureCurve(gamma);
+			if(!self._suppressSettingsWrite){
+				self.plugin.write_pressure_curve(gamma);
+				self.plugin.broadcast_pressure_curve_change();
+			}
+			self.plugin.is_dragging = false;
+		});
+
+		//initial sync from storage (default if unset)
+		var initialGamma = self.plugin.read_pressure_curve();
+		self._suppressSettingsWrite = true;
+		self.$pressureCurveSlider.val(sliderFromGamma(initialGamma));
+		self._suppressSettingsWrite = false;
+		drawPressureCurve(initialGamma);
+
 		//---- Advanced (brush dynamics) ----------------------------------------
 		//The Advanced section collects the per-spot dynamics applied uniformly by the engine:
 		//spacing, flow, jitters, scatter, rotation. Hidden for tools without drawSpot.
@@ -3968,6 +4089,33 @@ jQuery.fn.drawr.register({
 			self.$cbPressureSize.prop("disabled", true);
 		}
 
+		//---- Pressure curve (global) ----------------------------------
+		//Re-read from storage and resync the slider + preview. Runs under _suppressSettingsWrite so the
+		//val() call doesn't trigger a write-back to localStorage.
+		if(self.$pressureCurveSlider && self.$pressureCurveSlider.length){
+			var curGamma = self.plugin.read_pressure_curve();
+			var t = Math.max(0, Math.min(100, Math.round(50 - 50 * Math.log(curGamma) / Math.log(3))));
+			self.$pressureCurveSlider.val(t);
+			//preview is a raw canvas, not tied to slider input event — redraw directly.
+			var c = self.$pressureCurvePreview && self.$pressureCurvePreview[0];
+			if(c && c.getContext){
+				var ctx = c.getContext("2d");
+				var W = c.width, H = c.height;
+				ctx.clearRect(0, 0, W, H);
+				ctx.strokeStyle = "rgba(0,0,0,0.15)"; ctx.lineWidth = 1;
+				ctx.beginPath(); ctx.moveTo(0, H); ctx.lineTo(W, 0); ctx.stroke();
+				ctx.strokeStyle = "#2a7fd6"; ctx.lineWidth = 1.5;
+				ctx.beginPath();
+				for(var i = 0; i <= W; i++){
+					var p = i / W;
+					var s = Math.pow(p, curGamma);
+					var y = H - s * H;
+					if(i === 0) ctx.moveTo(i, y); else ctx.lineTo(i, y);
+				}
+				ctx.stroke();
+			}
+		}
+
 		//---- Advanced section ----------------------------------------
 		//Hide entirely for tools without drawSpot (shape/action tools) — dynamics don't apply to them.
 		if(self.$advancedSection){
@@ -4039,6 +4187,8 @@ jQuery.fn.drawr.register({
 		delete self.$fadeInSlider;
 		delete self.$cbSmoothing;
 		delete self.$resetButton;
+		delete self.$pressureCurveSlider;
+		delete self.$pressureCurvePreview;
 	}
 
 });
