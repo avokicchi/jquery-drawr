@@ -129,11 +129,17 @@
 			};
 		};
 
-		//evaluates a centripetal Catmull-Rom spline (alpha=0.5) at parameter u (0..1) for the
-		//segment p1→p2, using p0 and p3 as the outer control points. The centripetal
+		//Evaluates a centripetal Catmull-Rom spline (alpha=0.5) at parameter u (0..1) for the
+		//segment p1 -> p2, using p0 and p3 as the outer control points. The centripetal
 		//parameterisation guarantees no cusps or loops regardless of knot spacing or sharp
 		//direction changes — unlike the uniform variant which overshoots into loops at turns.
-		//Uses the Barry-Goldman algorithm.
+		//Uses the Barry–Goldman recursive form (three linear interpolations per level, three levels),
+		//which is numerically friendlier for drawing apps than expanding the basis polynomials.
+		//Refs:
+		//Catmull-Rom spline — https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
+		//Barry–Goldman algorithm — https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
+		//generalised to non-uniform knot spacing; see also Yuksel et al., "On the Parameterization of
+		//Catmull-Rom Curves", 2011 — http://www.cemyuksel.com/research/catmullrom_param/).
 		plugin.catmull_rom_point = function(p0, p1, p2, p3, u) {
 			var d01 = Math.sqrt(plugin.distance_between(p0, p1));
 			var d12 = Math.sqrt(plugin.distance_between(p1, p2));
@@ -164,8 +170,64 @@
 			};
 		};
 
-		//walks the Catmull-Rom segment p1→p2 (influenced by p0 and p3) at arc-length steps of
-		//stepSize, calling brush.drawSpot at each step. accepts a carry-in accumDist so that
+		//central per-spot pipeline. applies brush dynamics (size/opacity/angle jitter, flow,
+		//scatter, rotation mode, fade-in) on top of the calculated base size/alpha, then calls
+		//brush.drawSpot with the resolved values. all three interpolation loops (drawMove linear,
+		//Catmull-Rom, drawStop flush) funnel through here so dynamics apply uniformly.
+		//strokeAngleRad: direction of travel at this spot in radians (atan2(dx, dy) convention
+		//matching plugin.angle_between); undefined means no direction available (first/stationary spot).
+		plugin.emit_spot = function(context, brush, baseX, baseY, strokeAngleRad, size, alpha, e) {
+			var self = this;
+
+			//size jitter: per-spot multiplier clamped to [0.1, 2] so a 100% jitter can't zero out.
+			var sizeJitter = brush.size_jitter || 0;
+			var sizeMul = 1 + (Math.random() * 2 - 1) * sizeJitter;
+			if(sizeMul < 0.1) sizeMul = 0.1;
+			if(sizeMul > 2)   sizeMul = 2;
+			var finalSize = Math.max(1, size * sizeMul);
+
+			//fade-in first, then flow and opacity jitter. opacity_jitter only reduces (Photoshop-style).
+			var spotAlpha = alpha;
+			if(brush.brush_fade_in){
+				self._fadeInSpotCount++;
+				spotAlpha = alpha * Math.min(1, self._fadeInSpotCount / brush.brush_fade_in);
+			}
+			var flow = (typeof brush.flow !== "undefined") ? brush.flow : 1;
+			var opJitter = brush.opacity_jitter || 0;
+			spotAlpha = spotAlpha * flow * (1 - Math.random() * opJitter);
+
+			//angle resolution from rotation_mode.
+			var mode = brush.rotation_mode || "none";
+			var angle = 0;
+			if(mode === "fixed"){
+				angle = brush.fixed_angle || 0;
+			} else if(mode === "follow_stroke"){
+				angle = (typeof strokeAngleRad === "number") ? strokeAngleRad : 0;
+			} else if(mode === "random_jitter"){
+				angle = Math.random() * Math.PI * 2;
+			} else if(mode === "follow_jitter"){
+				var base = (typeof strokeAngleRad === "number") ? strokeAngleRad : 0;
+				angle = base + (Math.random() * 2 - 1) * (brush.angle_jitter || 0) * Math.PI;
+			}
+
+			//scatter: perpendicular offset from the stroke direction, magnitude as fraction of base size.
+			var ox = 0, oy = 0;
+			var scatter = brush.scatter || 0;
+			if(scatter > 0 && typeof strokeAngleRad === "number"){
+				var perp = strokeAngleRad + Math.PI / 2;
+				var mag = (Math.random() * 2 - 1) * scatter * size;
+				//stroke angle uses atan2(dx,dy), so sin(angle)=dx-component, cos(angle)=dy-component
+				ox = Math.sin(perp) * mag;
+				oy = Math.cos(perp) * mag;
+			}
+
+			if(typeof brush.drawSpot !== "undefined"){
+				brush.drawSpot.call(self, brush, context, baseX + ox, baseY + oy, finalSize, spotAlpha, e, angle);
+			}
+		};
+
+		//walks the Catmull-Rom segment p1 -> p2 (influenced by p0 and p3) at arc-length steps of
+		//stepSize, calling emit_spot at each step. accepts a carry-in accumDist so that
 		//partial progress from a previous short segment is not discarded (fixes slow-draw gaps).
 		//returns the leftover accumDist to be passed into the next call.
 		plugin.draw_catmull_segment = function(context, brush, p0, p1, p2, p3, stepSize, size, alpha, e, accumDist) {
@@ -181,20 +243,14 @@
 				accumDist += stepDist;
 				while (accumDist >= stepSize) {
 					accumDist -= stepSize;
-					var spotAlpha = alpha;
-					if (brush.brush_fade_in) {
-						self._fadeInSpotCount++;
-						spotAlpha = alpha * Math.min(1, self._fadeInSpotCount / brush.brush_fade_in);
-					}
-					if (typeof brush.drawSpot !== "undefined") {
-						//interpolate the exact arc-length position along prevPt→pt so that
-						//multiple spots within one sample step are spread out, not stacked.
-						var ratio = stepDist > 0 ? Math.max(0, Math.min(1, 1 - accumDist / stepDist)) : 1;
-						brush.drawSpot.call(self, brush, context,
-							prevPt.x + (pt.x - prevPt.x) * ratio,
-							prevPt.y + (pt.y - prevPt.y) * ratio,
-							size, spotAlpha, e);
-					}
+					//interpolate the exact arc-length position along prevPt->pt so that
+					//multiple spots within one sample step are spread out, not stacked.
+					var ratio = stepDist > 0 ? Math.max(0, Math.min(1, 1 - accumDist / stepDist)) : 1;
+					var spotX = prevPt.x + (pt.x - prevPt.x) * ratio;
+					var spotY = prevPt.y + (pt.y - prevPt.y) * ratio;
+					//derive stroke direction from the spline tangent on this sample step.
+					var spotAngle = (stepDist > 0) ? plugin.angle_between(prevPt, pt) : undefined;
+					plugin.emit_spot.call(self, context, brush, spotX, spotY, spotAngle, size, alpha, e);
 				}
 				prevPt = pt;
 			}
@@ -320,8 +376,11 @@
 							self._fadeInSpotCount++;
 							startAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
 						}
-						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e);
+						//first spot has no stroke direction yet so we pass angle=0 so tools consuming
+						//the 8th arg get a deterministic value. fade-in already applied inline above,
+						//so this call bypasses emit_spot to avoid double-incrementing the counter.
+						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
 						plugin.request_redraw.call(self);
 					}
 				}
@@ -400,7 +459,9 @@
 
 					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure, self.pen_pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
-					var stepSize = calculatedSize/4;
+					//spacing as a fraction of size (brush dynamics). fallback to 0.25 matches the old hardcoded /4.
+					var spacingFrac = (typeof self.active_brush.spacing === "number") ? self.active_brush.spacing : 0.25;
+					var stepSize = calculatedSize * spacingFrac;
 					if(stepSize<1) stepSize = 1;
 
 					if(self.active_brush.smoothing) {
@@ -415,7 +476,7 @@
 						var knots = self._smoothKnots;
 						var n = knots.length - 1; //last index
 						if(n >= 2) {
-							//draw segment knots[n-2]→knots[n-1]; knots[n] is the lookahead control point
+							//draw segment knots[n-2]->knots[n-1]; knots[n] is the lookahead control point
 							var p0 = knots[Math.max(0, n-3)];
 							var p1 = knots[n-2];
 							var p2 = knots[n-1];
@@ -439,12 +500,7 @@
 						for (var i = stepSize; i < dist; i+=stepSize) {
 							x = lastSpot.x + (Math.sin(angle) * i);
 							y = lastSpot.y + (Math.cos(angle) * i);
-							var spotAlpha = calculatedAlpha;
-							if(self.active_brush.brush_fade_in){
-								self._fadeInSpotCount++;
-								spotAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
-							}
-							if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,x,y,calculatedSize,spotAlpha,e);
+							plugin.emit_spot.call(self, context, self.active_brush, x, y, angle, calculatedSize, calculatedAlpha, e);
 							positions.push({x:x,y:y});
 						}
 						$(self).data("positions",positions);
@@ -480,6 +536,11 @@
 				});
 			}
 			$(self).parent().on("contextmenu." + self._evns, function(e){ e.preventDefault(); });
+			//middle mouse button is claimed for canvas panning, so block the browser's autoscroll-on-middle-click
+			//over the whole container. Autoscroll fires on `mousedown` (not pointerdown), hence the separate bind.
+			$(self).parent().on("mousedown." + self._evns, function(e){
+				if(e.button === 1) e.preventDefault();
+			});
 			//prevent browser native touch gestures (scroll, pinch-zoom) so pointer events fire uninterrupted
 			$(self).parent().css("touch-action", "none");
 
@@ -521,7 +582,9 @@
 					if(self.active_brush.smoothing && self._smoothKnots && self._smoothKnots.length >= 2) {
 						var knots = self._smoothKnots;
 						var n = knots.length - 1;
-						var stepSize = calculatedSize / 6;
+						//unified: same spacing as the move loop, so the flush stamps consistently with the rest of the stroke.
+						var spacingFrac = (typeof self.active_brush.spacing === "number") ? self.active_brush.spacing : 0.25;
+						var stepSize = calculatedSize * spacingFrac;
 						if(stepSize < 1) stepSize = 1;
 						var p0 = knots[Math.max(0, n-2)];
 						var p1 = knots[Math.max(0, n-1)];
@@ -595,6 +658,307 @@
 		};
 
 		//activates a brush ( a tool plugin ).
+		//---- Persistence & cross-instance sync -------------------------------------------------
+		//Two localStorage keys: drawr.toolOverrides ({ [name]: { field: value } }) for built-in tools,
+		//and drawr.customBrushes ([ { id, ... } ]) for user-created brushes (step 8 populates these).
+		//Writes propagate to (a) all same-page drawr canvases via $.fn.drawr._instances, and (b) other
+		//tabs via the storage event. The writing tab does not receive its own storage event.
+
+		plugin.read_overrides = function(){
+			try {
+				var raw = window.localStorage.getItem("drawr.toolOverrides");
+				return raw ? JSON.parse(raw) : {};
+			} catch(e) { return {}; }
+		};
+
+		plugin.write_overrides = function(obj){
+			try { window.localStorage.setItem("drawr.toolOverrides", JSON.stringify(obj)); } catch(e){}
+		};
+
+		plugin.read_custom_brushes = function(){
+			try {
+				var raw = window.localStorage.getItem("drawr.customBrushes");
+				return raw ? JSON.parse(raw) : [];
+			} catch(e) { return []; }
+		};
+
+		plugin.write_custom_brushes = function(arr){
+			try { window.localStorage.setItem("drawr.customBrushes", JSON.stringify(arr)); } catch(e){}
+		};
+
+		//apply overrides from localStorage onto already-registered tools. idempotent — safe to re-run.
+		//sets a guard so we don't iterate every call; set `force=true` to re-apply after a storage event.
+		plugin.apply_overrides = function(force){
+			if($.fn.drawr._overridesApplied && !force) return;
+			var overrides = plugin.read_overrides();
+			if(!$.fn.drawr.availableTools) return;
+			$.each($.fn.drawr.availableTools, function(i, tool){
+				if(!tool.removable && overrides[tool.name]){
+					var patch = overrides[tool.name];
+					for(var field in patch){
+						if(Object.prototype.hasOwnProperty.call(patch, field)) tool[field] = patch[field];
+					}
+				}
+			});
+			$.fn.drawr._overridesApplied = true;
+		};
+
+		//refresh settings UI on every registered instance whose active brush matches the given toolName.
+		//Used both by persist_tool_setting (same-page broadcast) and by the storage-event handler (cross-tab).
+		plugin.broadcast_dynamics_change = function(toolName){
+			var instances = $.fn.drawr._instances || [];
+			for(var i = 0; i < instances.length; i++){
+				var inst = instances[i];
+				if(!inst || !inst.active_brush) continue;
+				if(inst.active_brush.name !== toolName) continue;
+				if(typeof inst.$settingsToolbox === "undefined") continue;
+				var settings_brush = plugin.get_tool_by_name("default","settings");
+				if(settings_brush && typeof settings_brush.update === "function"){
+					settings_brush.update.call(inst);
+				}
+			}
+		};
+
+		//persist a single dynamics field change. For built-in tools, writes into drawr.toolOverrides;
+		//for custom (removable) brushes, updates the matching record in drawr.customBrushes.
+		plugin.persist_tool_setting = function(brush, field, value){
+			if(!brush) return;
+			if(brush.removable){
+				//custom brush: update the matching record by id (tool exposes it as _id).
+				var brushes = plugin.read_custom_brushes();
+				var found = false;
+				for(var i = 0; i < brushes.length; i++){
+					if(brushes[i].id === brush._id){
+						brushes[i][field] = value;
+						found = true;
+						break;
+					}
+				}
+				if(found) plugin.write_custom_brushes(brushes);
+			} else {
+				//built-in: write into drawr.toolOverrides[name][field].
+				var overrides = plugin.read_overrides();
+				if(!overrides[brush.name]) overrides[brush.name] = {};
+				overrides[brush.name][field] = value;
+				plugin.write_overrides(overrides);
+			}
+			plugin.broadcast_dynamics_change(brush.name);
+		};
+
+		//Reset a built-in tool to the defaults snapshotted at register() time.
+		//Copies each field from tool._defaults back onto the tool, and deletes fields that the original
+		//declaration didn't have. Also wipes the drawr.toolOverrides entry so the reset persists.
+		plugin.reset_tool_defaults = function(brush){
+			if(!brush || !brush._defaults) return;
+			var fields = $.fn.drawr._dynamicsFields || [];
+			for(var i = 0; i < fields.length; i++){
+				var f = fields[i];
+				if(typeof brush._defaults[f] !== "undefined"){
+					brush[f] = brush._defaults[f];
+				} else {
+					delete brush[f];
+				}
+			}
+			if(!brush.removable){
+				var overrides = plugin.read_overrides();
+				if(overrides[brush.name]){
+					delete overrides[brush.name];
+					plugin.write_overrides(overrides);
+				}
+			}
+			plugin.broadcast_dynamics_change(brush.name);
+		};
+
+		//Factory: produce a full tool object from a persisted custom-brush record.
+		//Record shape: { id, name, icon, image_data_url, size, alpha, flow, spacing,
+		//   rotation_mode, fixed_angle, angle_jitter, size_jitter, opacity_jitter, scatter,
+		//   smoothing, brush_fade_in, pressure_affects_alpha, pressure_affects_size }
+		//Used both at create-time (from the custom-brush dialog) and at boot hydration.
+		$.fn.drawr.buildCustomBrush = function(record){
+			var tool = {
+				//identification
+				icon: "mdi " + (record.icon || "mdi-puzzle") + " mdi-24px",
+				name: "custom:" + record.id,
+				_id: record.id,
+				_displayName: record.name,
+				removable: true,
+				order: 1000,
+				//dynamics (mirror the record so emit_spot reads from the live tool)
+				size:           typeof record.size === "number" ? record.size : 15,
+				alpha:          typeof record.alpha === "number" ? record.alpha : 1,
+				flow:           typeof record.flow === "number" ? record.flow : 1,
+				spacing:        typeof record.spacing === "number" ? record.spacing : 0.25,
+				rotation_mode:  record.rotation_mode || "follow_stroke",
+				fixed_angle:    typeof record.fixed_angle === "number" ? record.fixed_angle : 0,
+				angle_jitter:   typeof record.angle_jitter === "number" ? record.angle_jitter : 0,
+				size_jitter:    typeof record.size_jitter === "number" ? record.size_jitter : 0,
+				opacity_jitter: typeof record.opacity_jitter === "number" ? record.opacity_jitter : 0,
+				scatter:        typeof record.scatter === "number" ? record.scatter : 0,
+				smoothing:      !!record.smoothing,
+				brush_fade_in:  typeof record.brush_fade_in === "number" ? record.brush_fade_in : 0,
+				pressure_affects_alpha: record.pressure_affects_alpha !== false,
+				pressure_affects_size:  !!record.pressure_affects_size,
+				activate: function(brush, context){
+					brush._rawImage = new Image();
+					brush._rawImage.crossOrigin = "Anonymous";
+					brush._stampCache = null;
+					brush._stampCacheKey = null;
+					brush._rawImage.src = record.image_data_url;
+				},
+				deactivate: function(brush, context){},
+				drawStart: function(brush, context, x, y, size, alpha, event){
+					context.globalCompositeOperation = "source-over";
+					context.globalAlpha = alpha;
+				},
+				//render a colorized copy of the brush image, rotated by the engine-provided angle.
+				drawSpot: function(brush, context, x, y, size, alpha, event, angle){
+					if(!brush._rawImage || !brush._rawImage.complete) return;
+					var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
+					var cacheKey = color.r + "," + color.g + "," + color.b;
+					if(brush._stampCacheKey !== cacheKey){
+						var img = brush._rawImage;
+						var buffer = document.createElement("canvas");
+						buffer.width = img.width;
+						buffer.height = img.height;
+						var bctx = buffer.getContext("2d");
+						bctx.fillStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
+						bctx.fillRect(0, 0, img.width, img.height);
+						bctx.globalCompositeOperation = "destination-atop";
+						bctx.drawImage(img, 0, 0);
+						brush._stampCache = buffer;
+						brush._stampCacheKey = cacheKey;
+					}
+					context.globalAlpha = alpha;
+					var drawSize = Math.max(2, Math.round(size));
+					var image = brush._stampCache;
+					context.save();
+					context.translate(x, y);
+					context.rotate(angle || 0);
+					var iw, ih;
+					if(image.width >= image.height){
+						ih = image.height / (image.width / drawSize);
+						iw = drawSize;
+					} else {
+						iw = image.width / (image.height / drawSize);
+						ih = drawSize;
+					}
+					context.drawImage(image, -iw/2, -ih/2, iw, ih);
+					context.restore();
+				},
+				drawStop: function(brush, context, x, y, size, alpha, event){
+					return true;
+				}
+			};
+			return tool;
+		};
+
+		//Hydrate persisted custom brushes into the global registry. Guarded so multiple drawr
+		//instances on the same page don't double-register. Called from load_toolset before
+		//the toolbar buttons are created.
+		$.fn.drawr.hydrate_custom_brushes = function(){
+			if($.fn.drawr._customBrushesHydrated) return;
+			$.fn.drawr._customBrushesHydrated = true;
+			var records = plugin.read_custom_brushes();
+			for(var i = 0; i < records.length; i++){
+				$.fn.drawr.register($.fn.drawr.buildCustomBrush(records[i]));
+			}
+		};
+
+		//Reconcile the global registry with the localStorage list. Called on storage events and after
+		//any in-process add/remove. Diffs by id; adds missing, removes deleted, patches fields on
+		//existing entries. Touches all registered drawr instances so their toolbars stay in sync.
+		$.fn.drawr.reconcile_custom_brushes = function(){
+			if(!$.fn.drawr.availableTools) return;
+			var records = plugin.read_custom_brushes();
+			var recordById = {};
+			for(var i = 0; i < records.length; i++) recordById[records[i].id] = records[i];
+
+			//collect current registered custom brushes (by id)
+			var existingById = {};
+			for(var j = 0; j < $.fn.drawr.availableTools.length; j++){
+				var t = $.fn.drawr.availableTools[j];
+				if(t.removable && t._id) existingById[t._id] = t;
+			}
+
+			//add brushes present in storage but not registered
+			for(var id in recordById){
+				if(!existingById[id]){
+					var tool = $.fn.drawr.buildCustomBrush(recordById[id]);
+					$.fn.drawr.register(tool);
+					//create toolbar buttons on every active instance
+					var instances = $.fn.drawr._instances || [];
+					for(var k = 0; k < instances.length; k++){
+						var inst = instances[k];
+						if(inst && inst.$brushToolbox && inst.$brushToolbox.length){
+							plugin.create_toolbutton.call(inst, inst.$brushToolbox[0], tool.type || "brush", tool);
+						}
+					}
+				}
+			}
+
+			//remove brushes registered but not present in storage
+			for(var eid in existingById){
+				if(!recordById[eid]){
+					var etool = existingById[eid];
+					//remove from availableTools
+					var idx = $.fn.drawr.availableTools.indexOf(etool);
+					if(idx >= 0) $.fn.drawr.availableTools.splice(idx, 1);
+					//remove DOM buttons on every instance (match by tool data reference)
+					var insts = $.fn.drawr._instances || [];
+					for(var kk = 0; kk < insts.length; kk++){
+						var ii = insts[kk];
+						if(ii && ii.$brushToolbox){
+							ii.$brushToolbox.find(".drawr-tool-btn").each(function(){
+								if($(this).data("data") === etool) $(this).remove();
+							});
+						}
+					}
+				}
+			}
+
+			//patch fields on brushes that exist in both but may have changed (e.g. edited in another tab).
+			//We only copy the canonical dynamics fields — not id/icon/image_data_url, which shouldn't
+			//change for an existing brush — so reuse the single source of truth for that list.
+			var dynFields = $.fn.drawr._dynamicsFields || [];
+			for(var eid2 in existingById){
+				if(recordById[eid2]){
+					var rec = recordById[eid2];
+					var tool2 = existingById[eid2];
+					for(var m = 0; m < dynFields.length; m++){
+						var f = dynFields[m];
+						if(typeof rec[f] !== "undefined") tool2[f] = rec[f];
+					}
+					tool2._displayName = rec.name;
+				}
+			}
+		};
+
+		//one-time storage-event binding to sync overrides/custom-brushes from other tabs.
+		plugin.bind_storage_listener = function(){
+			if($.fn.drawr._storageBound) return;
+			$.fn.drawr._storageBound = true;
+			window.addEventListener("storage", function(e){
+				if(!e || !e.key) return;
+				if(e.key === "drawr.toolOverrides"){
+					//reapply overrides onto all tools, then refresh settings UI on instances where the
+					//active brush might have changed. we don't know which tool changed, so refresh each.
+					plugin.apply_overrides(true);
+					var instances = $.fn.drawr._instances || [];
+					for(var i = 0; i < instances.length; i++){
+						var inst = instances[i];
+						if(inst && inst.active_brush && typeof inst.$settingsToolbox !== "undefined"){
+							plugin.broadcast_dynamics_change(inst.active_brush.name);
+						}
+					}
+				} else if(e.key === "drawr.customBrushes"){
+					//step 8 handles custom-brush add/remove reconciliation across tabs.
+					if(typeof $.fn.drawr.reconcile_custom_brushes === "function"){
+						$.fn.drawr.reconcile_custom_brushes();
+					}
+				}
+			});
+		};
+
 		plugin.activate_brush = function(brush){
 			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
 			if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
@@ -604,14 +968,11 @@
 			this.brushSize = typeof brush.size!=="undefined" ? brush.size : this.brushSize;
 			this.brushAlpha = typeof brush.alpha!=="undefined" ? brush.alpha : this.brushAlpha;
 
-
-			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-alpha").val(this.brushAlpha*100).trigger("input");
-			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".slider-size").val(this.brushSize).trigger("input");
-			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".checkbox-alpha").prop("checked", !!brush.pressure_affects_alpha);
-			if(typeof this.$settingsToolbox!=="undefined") this.$settingsToolbox.find(".checkbox-size").prop("checked",  !!brush.pressure_affects_size);
-
 			this.active_brush.activate.call(this,this.active_brush,context);
 
+			//settings.update() handles syncing all UI controls (sliders, checkboxes, Advanced section)
+			//to the newly-activated brush, under an internal _suppressSettingsWrite guard so the sync
+			//doesn't accidentally persist overrides.
 			if(typeof this.$settingsToolbox!=="undefined"){
 				var settings_brush = plugin.get_tool_by_name("default","settings");
 				settings_brush.update.call(this);
@@ -643,6 +1004,38 @@
 				e.stopPropagation();
 				e.preventDefault();
 			});
+
+			//removable tools (custom brushes) get a small × overlay that deletes the brush.
+			//stopPropagation so clicking × doesn't also select the brush underneath.
+			if(data.removable){
+				el.css("position", "relative");
+				var $x = $("<span class='drawr-tool-x' title='Remove brush'>×</span>");
+				$x.css({
+					position: "absolute", top: "0px", right: "2px",
+					width: "12px", height: "12px", lineHeight: "10px", fontSize: "14px",
+					color: "#900", background: "rgba(255,255,255,0.7)", borderRadius: "50%",
+					textAlign: "center", cursor: "pointer", userSelect: "none", zIndex: 1
+				});
+				$x.on("pointerdown." + self._evns + " mousedown." + self._evns, function(e){
+					e.stopPropagation();
+					e.preventDefault();
+				});
+				$x.on("click." + self._evns, function(e){
+					e.stopPropagation();
+					e.preventDefault();
+					var displayName = data._displayName || data.name;
+					if(!window.confirm("Delete brush \"" + displayName + "\"?")) return;
+					//remove from localStorage, then reconcile to drop from registry + DOM on all instances.
+					var arr = plugin.read_custom_brushes().filter(function(r){ return r.id !== data._id; });
+					plugin.write_custom_brushes(arr);
+					$.fn.drawr.reconcile_custom_brushes();
+					//if this instance had the deleted brush selected, fall back to the first brush button.
+					if(self.active_brush === data && self.$brushToolbox){
+						self.$brushToolbox.find(".drawr-tool-btn.type-brush:first").trigger("pointerdown");
+					}
+				});
+				el.append($x);
+			}
 
 			$(toolbox).append(el);
 			if(typeof data.buttonCreated!=="undefined"){
@@ -700,11 +1093,18 @@
 			return $(toolbox).find('label:last');
 		};
 
-		/* create a slider */
+		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact. */
 		plugin.create_slider = function(toolbox,title,min,max,value){
 			var self=this;
-			$(toolbox).append('<div style="clear:both;font-weight:bold;text-align:center;padding:5px 0px 5px 0px">' + title + '</div><div style="clear:both;display: inline-block;width: 50px;height: 40px;padding: 0;"><input class="slider-component slider-' + title.toLowerCase() + '" value="' + value + '" style="background:transparent;width: 70px;height: 30px;margin: 0px -10px 0px -10px;" type="range" min="' + min + '" max="' + max + '" step="1" /><span>' + value + '</span></div>');
-			$(toolbox).find(".slider-" + title.toLowerCase()).on("pointerdown touchstart",function(e){
+			var cls = "slider-" + title.toLowerCase();
+			$(toolbox).append(
+				'<div style="display:flex;align-items:center;padding:2px 6px;gap:6px;font-size:11px;">' +
+					'<label style="flex:0 0 auto;min-width:46px;font-weight:bold;user-select:none;">' + title + '</label>' +
+					'<input class="slider-component ' + cls + '" value="' + value + '" type="range" min="' + min + '" max="' + max + '" step="1" style="flex:1 1 auto;min-width:0;background:transparent;height:18px;margin:0;" />' +
+					'<span style="flex:0 0 auto;min-width:26px;text-align:right;font-variant-numeric:tabular-nums;">' + value + '</span>' +
+				'</div>'
+			);
+			$(toolbox).find("." + cls).on("pointerdown touchstart",function(e){
 				e.stopPropagation();
 			}).on("input." + self._evns,function(e){
 				 $(this).next().text($(this).val());
@@ -790,6 +1190,33 @@
 			wrapper.on('pointerdown touchstart', function(e){ e.stopPropagation(); });
 			$(toolbox).append(wrapper);
 			return input;
+		};
+
+		/* create a collapsible section. returns the inner jQuery element for callers to append into.
+		   Header toggles the content. collapsedDefault=true starts hidden. */
+		plugin.create_collapsible = function(toolbox, title, collapsedDefault){
+			var uid = 'col-' + Math.random().toString(36).slice(2, 8);
+			var collapsed = !!collapsedDefault;
+			var $wrap = $(
+				'<div class="drawr-collapsible ' + uid + '" style="margin:6px 8px 4px;border-top:1px solid rgba(0,0,0,0.12);">' +
+					'<div class="drawr-collapsible-header" style="cursor:pointer;padding:6px 4px;font-weight:bold;font-size:12px;user-select:none;display:flex;align-items:center;">' +
+						'<span class="drawr-collapsible-chevron" style="display:inline-block;width:12px;transition:transform 0.1s;">' + (collapsed ? '▸' : '▾') + '</span>' +
+						'<span style="margin-left:6px;">' + title + '</span>' +
+					'</div>' +
+					'<div class="drawr-collapsible-content" style="' + (collapsed ? 'display:none;' : '') + '"></div>' +
+				'</div>'
+			);
+			$(toolbox).append($wrap);
+			var $content = $wrap.find('.drawr-collapsible-content');
+			var $header = $wrap.find('.drawr-collapsible-header');
+			var $chev = $wrap.find('.drawr-collapsible-chevron');
+			$header.on('pointerdown touchstart mousedown', function(e){ e.stopPropagation(); });
+			$header.on('click', function(){
+				collapsed = !collapsed;
+				$content.css('display', collapsed ? 'none' : '');
+				$chev.text(collapsed ? '▸' : '▾');
+			});
+			return $content;
 		};
 
 		//set some default settings. :)
@@ -1024,6 +1451,11 @@
 			$(toolbox).insertAfter($(this).parent());
 			$(toolbox).offset(position);
 			$(toolbox).hide();
+			//the plugin claims the middle mouse button for canvas panning, so block the browser's
+			//autoscroll-on-middle-click over any toolbox (otherwise a tall dialog will trigger it).
+			$(toolbox).on("mousedown." + self._evns, function(e){
+				if(e.button === 1) e.preventDefault();
+			});
 			$(toolbox).on("pointerdown." + self._evns + " touchstart." + self._evns, function(e){
 				if($(e.target).is("button, input, select, textarea, label, a") || $(e.target).closest("button, input, select, textarea, label, a").length) {
 					e.preventDefault();//prevent native scroll, even if we don't wanna drag the toolbox.
@@ -1146,6 +1578,11 @@
 		plugin.load_toolset = function(toolset){
 			var self = this;
 			self.current_toolset = toolset;
+
+			//hydrate persisted custom brushes (once globally) and apply built-in tool overrides before
+			//the toolbar is built. Both are idempotent / guarded.
+			$.fn.drawr.hydrate_custom_brushes();
+			plugin.apply_overrides();
 
 			if(toolset=="default"){
 				$.fn.drawr.availableTools.sort(function(a,b) {return (a.order > b.order) ? 1 : ((b.order > a.order) ? -1 : 0);} );
@@ -1432,15 +1869,40 @@
 				currentCanvas.$brushToolbox = plugin.create_toolbox.call(currentCanvas,"brush",{ left: $(currentCanvas).parent().offset().left, top: $(currentCanvas).parent().offset().top },"Tools",width);
 
 				plugin.bind_draw_events.call(currentCanvas);
+
+				//register this instance for cross-instance dynamics sync, and lazily install the storage listener.
+				if(!$.fn.drawr._instances) $.fn.drawr._instances = [];
+				$.fn.drawr._instances.push(currentCanvas);
+				plugin.bind_storage_listener();
 			}
 		});
 		return this;
  
 	};
 
+	//canonical brush-dynamics field names. snapshotted at register-time into tool._defaults
+	//so "Reset defaults" in the settings dialog can restore pristine values after an override.
+	$.fn.drawr._dynamicsFields = [
+		"size","alpha","flow","spacing",
+		"rotation_mode","fixed_angle","angle_jitter",
+		"size_jitter","opacity_jitter","scatter",
+		"smoothing","brush_fade_in",
+		"pressure_affects_alpha","pressure_affects_size"
+	];
+
 	/* Register a new tool */
 	$.fn.drawr.register = function (tool){
 		if(typeof $.fn.drawr.availableTools=="undefined") $.fn.drawr.availableTools=[];
+		//snapshot dynamics defaults so Reset-Defaults has a pristine target. Shallow copy of
+		//only the fields the tool actually declares — missing fields stay missing after reset.
+		if(typeof tool._defaults === "undefined"){
+			var defaults = {};
+			for(var i = 0; i < $.fn.drawr._dynamicsFields.length; i++){
+				var f = $.fn.drawr._dynamicsFields[i];
+				if(typeof tool[f] !== "undefined") defaults[f] = tool[f];
+			}
+			tool._defaults = defaults;
+		}
 		$.fn.drawr.availableTools.push(tool);
 	};
 

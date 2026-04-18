@@ -46,18 +46,24 @@ jQuery.fn.drawr.register({
 	order: 13,
 	pressure_affects_alpha: true,
 	smoothing: false,
+	flow: 1,
+	spacing: 0.25,
+	rotation_mode: "none",
 	_effect: "blur",
 
+	//Note: the tool object is shared across all drawr instances on a page, so DOM refs MUST live on
+	//`self` (the canvas), not on `brush`. `brush._effect` itself is intentionally still global —
+	//tool config (like pencil's spacing) is shared by design — but we keep a list of every per-canvas
+	//dropdown on the tool so a change in one canvas syncs the others.
 	buttonCreated: function(brush, button) {
 		var self = this;
-		brush._canvasInstance = self;
 
 		self.$effectsToolbox = self.plugin.create_toolbox.call(self, "effects", {
 			left: $(self).parent().offset().left,
 			top:  $(self).parent().offset().top + $(self).parent().innerHeight() /2
 		}, "Effect", 120);
 
-		brush.$effectDropdown = self.plugin.create_dropdown.call(self, self.$effectsToolbox, "Type", [
+		var $dd = self.plugin.create_dropdown.call(self, self.$effectsToolbox, "Type", [
 			{ value: "blur",    label: "Blur"    },
 			{ value: "sharpen", label: "Sharpen" },
 			{ value: "burn",    label: "Burn"    },
@@ -66,24 +72,29 @@ jQuery.fn.drawr.register({
 			{ value: "noise",   label: "Noise"   }
 		], brush._effect);
 
-		brush.$effectDropdown.on("change.drawr", function() {
-			brush._effect = $(this).val();
-			brush.smoothing = (brush._effect === "smudge");
+		if(!brush._effectDropdowns) brush._effectDropdowns = [];
+		brush._effectDropdowns.push($dd);
+
+		$dd.on("change.drawr", function() {
+			var val = $(this).val();
+			brush._effect = val;
+			brush.smoothing = (val === "smudge");
+			//mirror the change onto sibling dropdowns in other instances, without re-firing change.
+			var siblings = brush._effectDropdowns;
+			for(var i = 0; i < siblings.length; i++){
+				if(siblings[i][0] !== this) siblings[i].val(val);
+			}
 			self.plugin.is_dragging = false;
 		});
 	},
 
 	activate: function(brush, context) {
-		if (typeof brush._canvasInstance !== "undefined") {
-			brush._canvasInstance.$effectsToolbox.show();
-		}
+		if(this.$effectsToolbox) this.$effectsToolbox.show();
 	},
 
 	deactivate: function(brush, context) {
 		brush._smudge = null;
-		if (typeof brush._canvasInstance !== "undefined") {
-			brush._canvasInstance.$effectsToolbox.hide();
-		}
+		if(this.$effectsToolbox) this.$effectsToolbox.hide();
 	},
 
 	drawStart: function(brush, context, x, y, size, alpha, event) {

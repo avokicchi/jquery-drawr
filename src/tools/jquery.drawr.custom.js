@@ -3,119 +3,119 @@ jQuery.fn.drawr.register({
 	name: "custom",
 	type: "toggle",
 	order: 100,
+	//buttonCreated runs once per canvas, but the tool object itself is shared across all drawr instances.
+	//So any per-dialog DOM references must live on `self` (the canvas), not on `brush` (the shared tool),
+	//otherwise the last instance to boot overwrites the previous one's handles.
 	buttonCreated: function(brush,button){
-
 		var self = this;
 
-		self.$customToolbox = self.plugin.create_toolbox.call(self,"custom",{ left: $(self).parent().offset().left + $(self).parent().innerWidth() /2, top: $(self).parent().offset().top + $(self).parent().innerHeight() /2 },"Custom",160);
+		self.$customToolbox = self.plugin.create_toolbox.call(self,"custom",
+			{ left: $(self).parent().offset().left + $(self).parent().innerWidth()/2,
+			  top:  $(self).parent().offset().top  + $(self).parent().innerHeight()/2 },
+			"Custom brush", 160);
 
-		self.plugin.create_text.call(self, self.$customToolbox,"This tool allows you to create a custom brush.");
+		self.plugin.create_text.call(self, self.$customToolbox, "Create a new brush from an image.");
+
+		self.plugin.create_label.call(self, self.$customToolbox, "Name");
+		self._customNameInput = self.plugin.create_input(self.$customToolbox, "Name", "");
 
 		self.plugin.create_label.call(self, self.$customToolbox, "Icon");
-		self.icon_input = self.plugin.create_input(self.$customToolbox, "Icon", "mdi-puzzle");
+		self._customIconInput = self.plugin.create_input(self.$customToolbox, "Icon", "mdi-puzzle");
 
-		self.plugin.create_label.call(self, self.$customToolbox, "File");
-
-		var input = self.plugin.create_filepicker(self.$customToolbox, "Load Image", "image/*");
-		input.on('change', function() {
-			 var file = this.files[0];
-		      if (!file) return;
-		      var reader = new FileReader();
-		      reader.onload = function(e) {
-		          var dataUrl = e.target.result;
-		          // use dataUrl here, e.g.:
-		          self.brush_image = dataUrl;
-		      };
-		      reader.readAsDataURL(file);
+		self.plugin.create_label.call(self, self.$customToolbox, "Image");
+		self._customFilePicker = self.plugin.create_filepicker(self.$customToolbox, "Load Image", "image/*");
+		self._customImageDataUrl = null;
+		self._customFilePicker.on('change', function() {
+			var file = this.files[0];
+			if (!file) return;
+			var reader = new FileReader();
+			reader.onload = function(e) { self._customImageDataUrl = e.target.result; };
+			reader.readAsDataURL(file);
 		});
 
-		var btn = self.plugin.create_button.call(self, self.$customToolbox,"Create new brush");
-  		btn.on('click', function() {
+		//Advanced: the same dynamics controls exposed in the settings dialog, so users can
+		//tailor the brush at creation time. Everything defaults to sane starting values.
+		var $adv = self.plugin.create_collapsible.call(self, self.$customToolbox, "Advanced", true);
 
-  			var icon = self.icon_input.val();
+		self._customRotationMode  = self.plugin.create_dropdown.call(self, $adv, "Rotation", [
+			{ value: "none",           label: "None" },
+			{ value: "fixed",          label: "Fixed" },
+			{ value: "follow_stroke",  label: "Follow" },
+			{ value: "random_jitter",  label: "Random" },
+			{ value: "follow_jitter",  label: "Follow±" }
+		], "follow_stroke");
+		self._customSpacing    = self.plugin.create_slider.call(self, $adv, "spacing",    2, 200, 25);
+		self._customFlow       = self.plugin.create_slider.call(self, $adv, "flow",       0, 100, 100);
+		self._customSizeJit    = self.plugin.create_slider.call(self, $adv, "sizejitter", 0, 100, 0);
+		self._customOpJit      = self.plugin.create_slider.call(self, $adv, "opjitter",   0, 100, 0);
+		self._customAngleJit   = self.plugin.create_slider.call(self, $adv, "anglejit",   0, 100, 0);
+		self._customScatter    = self.plugin.create_slider.call(self, $adv, "scatter",    0, 100, 0);
+		self._customFixedAngle = self.plugin.create_slider.call(self, $adv, "angle",      0, 359, 0);
+		self._customSize       = self.plugin.create_slider.call(self, $adv, "basesize",   1, 100, 15);
+		self._customAlpha      = self.plugin.create_slider.call(self, $adv, "basealpha",  0, 100, 100);
+		self._customFadeIn     = self.plugin.create_slider.call(self, $adv, "fadein",     0, 200, 0);
+		self._customSmoothing   = self.plugin.create_checkbox.call(self, $adv, "Smoothing",  false);
+		self._customPressureA   = self.plugin.create_checkbox.call(self, $adv, "PressureAlpha", true);
+		self._customPressureS   = self.plugin.create_checkbox.call(self, $adv, "PressureSize",  false);
 
-  			var new_brush = {
-				icon: "mdi " + icon + " mdi-24px",
-				name: "test123",
-				size: 15,
-				alpha: 1,
-				order: 1001,
-				brush_fade_in: 20,
-				pressure_affects_alpha: true,
-				pressure_affects_size: false,
-				smoothing: false,
-				activate: function(brush,context){
-					brush._rawImage = new Image();
-					brush._rawImage.crossOrigin = "Anonymous";
-					brush._stampCache = null;
-					brush._stampCacheKey = null;
-					brush._rawImage.src = self.brush_image;
-				},
-				deactivate: function(brush,context){},
-				drawStart: function(brush,context,x,y,size,alpha,event){
-					context.globalCompositeOperation="source-over";
-					context.globalAlpha = alpha;
-					brush._lastX = x;
-					brush._lastY = y;
-					brush._strokeAngle = 0;
-				},
-				drawRotatedImage: function (context, image, x, y, angle, size) {
-					context.save();
-					context.translate(x,y);
-					context.rotate(angle);
-					if(image.width>=image.height){
-						var imageHeight=image.height/(image.width/size);
-						var imageWidth=size;
-					} else {
-						var imageWidth=image.width/(image.height/size)
-						var imageHeight=size;
-					}
-					var destx=-imageWidth/2;
-					var desty=-imageHeight/2;
-					context.drawImage(image,destx,desty,imageWidth,imageHeight);
-				    context.restore();
-				},
-				drawSpot: function(brush,context,x,y,size,alpha,event) {
-					if(!brush._rawImage || !brush._rawImage.complete) return;
-					var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-					var cacheKey = color.r + "," + color.g + "," + color.b;
-					if(brush._stampCacheKey !== cacheKey){
-						var img = brush._rawImage;
-						var buffer = document.createElement("canvas");
-						buffer.width = img.width;
-						buffer.height = img.height;
-						var bctx = buffer.getContext("2d");
-						bctx.fillStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
-						bctx.fillRect(0, 0, img.width, img.height);
-						bctx.globalCompositeOperation = "destination-atop";
-						bctx.drawImage(img, 0, 0);
-						brush._stampCache = buffer;
-						brush._stampCacheKey = cacheKey;
-					}
-					// compute stroke angle from movement direction, keeping the last angle when stationary
-					var dx = x - brush._lastX;
-					var dy = y - brush._lastY;
-					if(dx !== 0 || dy !== 0){
-						brush._strokeAngle = Math.atan2(dx, dy);
-					}
-					brush._lastX = x;
-					brush._lastY = y;
+		var $createBtn = self.plugin.create_button.call(self, self.$customToolbox, "Create new brush");
+		$createBtn.on('click', function(){
+			var name = self._customNameInput.val().trim();
+			if(!name){ alert("Brush needs a name."); return; }
+			if(!self._customImageDataUrl){ alert("Pick an image first."); return; }
+			//uniqueness check against display names already registered (both built-in and custom)
+			var clash = ($.fn.drawr.availableTools || []).some(function(t){
+				return (t._displayName || t.name) === name;
+			});
+			if(clash){ alert("A tool with that name already exists."); return; }
 
-					context.globalAlpha = alpha;
-					var calculated_size = parseInt(size);
-					if(calculated_size<2) calculated_size = 2;
-					brush.drawRotatedImage(context, brush._stampCache, x, y, brush._strokeAngle, calculated_size);
-				},
-				drawStop: function(brush,context,x,y,size,alpha,event){
-					return true;
-				}
+			var icon = self._customIconInput.val().trim() || "mdi-puzzle";
+			var id = (typeof crypto !== "undefined" && crypto.randomUUID)
+				? crypto.randomUUID()
+				: (Date.now() + "-" + Math.random().toString(36).slice(2, 10));
+
+			var record = {
+				id: id,
+				name: name,
+				icon: icon,
+				image_data_url: self._customImageDataUrl,
+				size:           parseInt(self._customSize.val()),
+				alpha:          parseFloat(self._customAlpha.val()) / 100,
+				flow:           parseFloat(self._customFlow.val()) / 100,
+				spacing:        parseFloat(self._customSpacing.val()) / 100,
+				rotation_mode:  self._customRotationMode.val(),
+				fixed_angle:    parseFloat(self._customFixedAngle.val()) * Math.PI / 180,
+				angle_jitter:   parseFloat(self._customAngleJit.val()) / 100,
+				size_jitter:    parseFloat(self._customSizeJit.val()) / 100,
+				opacity_jitter: parseFloat(self._customOpJit.val()) / 100,
+				scatter:        parseFloat(self._customScatter.val()) / 100,
+				smoothing:      self._customSmoothing.prop("checked"),
+				brush_fade_in:  parseInt(self._customFadeIn.val()),
+				pressure_affects_alpha: self._customPressureA.prop("checked"),
+				pressure_affects_size:  self._customPressureS.prop("checked")
 			};
-			jQuery.fn.drawr.register(new_brush);
-            self.plugin.create_toolbutton.call(self, self.$brushToolbox[0], "brush", new_brush);
 
-  		});
+			//persist first, then register + paint buttons on every active instance via reconcile.
+			var all = self.plugin.read_custom_brushes();
+			all.push(record);
+			self.plugin.write_custom_brushes(all);
+			$.fn.drawr.reconcile_custom_brushes();
 
-
+			//reset the form and close the dialog so the user's attention moves to the tools panel
+			//where the new brush has appeared. Without this, the Create click looks like a no-op.
+			self._customNameInput.val("");
+			self._customFilePicker.val("");
+			self._customImageDataUrl = null;
+			self.$customToolbox.hide();
+			//also untoggle the +-button, keeping its visual state in sync with the hidden dialog.
+			var $customBtn = self.$brushToolbox.find(".drawr-tool-btn.type-toggle").filter(function(){
+				return $(this).data("data") === brush;
+			});
+			if($customBtn.length && $customBtn.data("state")){
+				$customBtn.data("state", false);
+				self.plugin.set_button_state($customBtn[0], false);
+			}
+		});
 	},
 	action: function(brush,context){
 		var self = this;
@@ -126,5 +126,4 @@ jQuery.fn.drawr.register({
 		self.$customToolbox.remove();
 		delete self.$customToolbox;
 	}
-
 });

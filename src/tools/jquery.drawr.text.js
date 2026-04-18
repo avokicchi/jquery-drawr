@@ -4,13 +4,15 @@ jQuery.fn.drawr.register({
 	size: 22,
 	alpha: 1,
 	order: 14,
+	//The tool object is shared across drawr instances on a page, so per-canvas DOM/state
+	//(the floating input box, the pending text position) must live on `self` — never on `brush`.
 	activate: function(brush,context){
-		
+
 	},
 	deactivate: function(brush,context){
-		if(typeof brush.$floatyBox!=="undefined"){
-			brush.$floatyBox.remove();
-			delete brush.$floatyBox;
+		if(typeof this.$textFloatyBox!=="undefined"){
+			this.$textFloatyBox.remove();
+			delete this.$textFloatyBox;
 		}
 	},
 	canvasToViewport: function(x, y){
@@ -26,46 +28,43 @@ jQuery.fn.drawr.register({
 	},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		var self=this;
-		brush.currentPosition = {
-			"x" : x,
-			"y" : y
-		};
+		self._textPosition = { x: x, y: y };
 		context.globalAlpha=alpha
-		if(typeof brush.$floatyBox=="undefined"){
+		if(typeof self.$textFloatyBox=="undefined"){
 			var fontSizeForDisplay= parseInt(20 * self.zoomFactor);
-			brush.$floatyBox = $('<div style="z-index:6;position:absolute;width:100px;height:20px;"><input style="background:transparent;border:0px;padding:0px;font-size:' + fontSizeForDisplay + 'px;font-family:sans-serif;" type="text" value=""><button class="ok"><i class="mdi mdi-check"></i></button><button class="cancel"><i class="mdi mdi-close"></i></button></div>');
-			$(brush.$floatyBox).insertAfter($(this).parent());
+			self.$textFloatyBox = $('<div style="z-index:6;position:absolute;width:100px;height:20px;"><input style="background:transparent;border:0px;padding:0px;font-size:' + fontSizeForDisplay + 'px;font-family:sans-serif;" type="text" value=""><button class="ok"><i class="mdi mdi-check"></i></button><button class="cancel"><i class="mdi mdi-close"></i></button></div>');
+			$(self.$textFloatyBox).insertAfter($(self).parent());
 			var vp = brush.canvasToViewport.call(self, x, y);
-			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + vp.x,
-				top: $(this).parent().offset().top + vp.y,
+			self.$textFloatyBox.css({
+				left: $(self).parent().offset().left + vp.x,
+				top: $(self).parent().offset().top + vp.y,
 			});
-			brush.$floatyBox.find("input").on("pointerdown",function(e){
+			self.$textFloatyBox.find("input").on("pointerdown",function(e){
 				e.preventDefault();
 				e.stopPropagation();
-				brush.$floatyBox.find("input").focus();
+				self.$textFloatyBox.find("input").focus();
 			});
-			brush.$floatyBox.find("input").focus();
+			self.$textFloatyBox.find("input").focus();
 			event.preventDefault();
 			event.stopPropagation();
-			brush.$floatyBox.find(".ok").on("pointerdown",function(e){
+			self.$textFloatyBox.find(".ok").on("pointerdown",function(e){
 				e.preventDefault();
 				e.stopPropagation();
-				brush.applyText.call(self,context,brush,brush.currentPosition.x,brush.currentPosition.y,brush.$floatyBox.find("input").val());
-				brush.$floatyBox.remove();
-				delete brush.$floatyBox;
+				brush.applyText.call(self,context,brush,self._textPosition.x,self._textPosition.y,self.$textFloatyBox.find("input").val());
+				self.$textFloatyBox.remove();
+				delete self.$textFloatyBox;
 			});
-			brush.$floatyBox.find(".cancel").on("pointerdown",function(e){
+			self.$textFloatyBox.find(".cancel").on("pointerdown",function(e){
 				e.preventDefault();
 				e.stopPropagation();
-				brush.$floatyBox.remove();
-				delete brush.$floatyBox;
+				self.$textFloatyBox.remove();
+				delete self.$textFloatyBox;
 			});
 		} else {
 			var vp = brush.canvasToViewport.call(self, x, y);
-			brush.$floatyBox.css({
-				left: $(this).parent().offset().left + vp.x,
-				top: $(this).parent().offset().top + vp.y,
+			self.$textFloatyBox.css({
+				left: $(self).parent().offset().left + vp.x,
+				top: $(self).parent().offset().top + vp.y,
 			});
 		}
 	},
@@ -91,13 +90,10 @@ jQuery.fn.drawr.register({
 		this.plugin.record_undo_entry.call(this);
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		brush.currentPosition = {
-			"x" : x,
-			"y" : y
-		};
-		if(typeof brush.$floatyBox!=="undefined"){
+		this._textPosition = { x: x, y: y };
+		if(typeof this.$textFloatyBox!=="undefined"){
 			var vp = brush.canvasToViewport.call(this, x, y);
-			brush.$floatyBox.css({
+			this.$textFloatyBox.css({
 				left: $(this).parent().offset().left + vp.x,
 				top: $(this).parent().offset().top + vp.y,
 			});

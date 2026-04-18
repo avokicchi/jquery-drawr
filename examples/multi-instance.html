@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>drawr — multi-instance demo</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/MaterialDesign-Webfont/3.6.95/css/materialdesignicons.css" rel="stylesheet">
+<script src="https://code.jquery.com/jquery-3.4.1.slim.min.js"></script>
+<script src="../dist/jquery.drawr.combined.js"></script>
+<style>
+	body { margin: 0; font-family: sans-serif; background: #202024; color: #eee; }
+	header { padding: 12px 20px; border-bottom: 1px solid #333; }
+	header p { margin: 4px 0 0; font-size: 13px; color: #bbb; max-width: 720px; }
+	.row { display: flex; gap: 20px; padding: 20px; flex-wrap: wrap; }
+	.cell { flex: 1 1 380px; min-width: 320px; }
+	.cell h2 { margin: 0 0 6px; font-size: 14px; color: #9cf; }
+	.board { width: 380px; height: 380px; border: 2px dotted #666; background: #111; }
+	canvas { -webkit-touch-callout: none; -webkit-text-size-adjust: none; -webkit-user-select: none; }
+</style>
+</head>
+<body>
+
+<header>
+	<h1 style="margin:0;font-size:18px;">Multi-instance demo</h1>
+	<p>
+		Two independent drawr canvases share tool overrides and custom brushes in real time.
+		Tweak pencil spacing in the left settings dialog, then open the right one. The values are in sync.
+		Create a custom brush on either side and it appears in the other instantly.
+		Reload the page: both custom brushes and built-in tweaks persist though localStorage.
+	</p>
+</header>
+
+<div class="row">
+	<div class="cell">
+		<h2>Canvas A</h2>
+		<div class="board" id="board-a"><canvas class="demo-canvas"></canvas></div>
+	</div>
+	<div class="cell">
+		<h2>Canvas B</h2>
+		<div class="board" id="board-b"><canvas class="demo-canvas"></canvas></div>
+	</div>
+</div>
+
+<script>
+	//right-click is used for secondary-color drawing on the canvas; suppress the browser context menu.
+	window.addEventListener("contextmenu", function(e){ e.preventDefault(); return false; });
+
+	function boot(selector){
+		$(selector).drawr({
+			enable_transparency: true,
+			canvas_width: 600,
+			canvas_height: 600,
+			toolbox_cols: 3
+		});
+		$(selector).drawr("start");
+	}
+
+	boot("#board-a .demo-canvas");
+	boot("#board-b .demo-canvas");
+</script>
+
+</body>
+</html>

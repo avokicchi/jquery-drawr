@@ -8,6 +8,9 @@ jQuery.fn.drawr.register({
 	pressure_affects_size: false,
 	brush_fade_in: 20,
 	smoothing: true,
+	flow: 1,
+	spacing: 0.25,
+	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;
 		brush._stampCacheKey = null;

@@ -8,6 +8,10 @@ jQuery.fn.drawr.register({
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
 	smoothing: false,
+	flow: 1,
+	spacing: 0.25,
+	rotation_mode: "random_jitter",
+	angle_jitter: 1,
 	activate: function(brush,context){
 		brush._rawImage = new Image();
 		brush._rawImage.crossOrigin = "Anonymous";
@@ -24,8 +28,7 @@ jQuery.fn.drawr.register({
 	drawRotatedImage: function (context, image, x, y, angle, size) {
 		context.save();
 		context.translate(x,y);
-		var randomAngle = (Math.random()*360)+1;
-		context.rotate(randomAngle * Math.PI / 180); 
+		context.rotate(angle);
 		if(image.width>=image.height){
 			var imageHeight=image.height/(image.width/size);
 			var imageWidth=size;
@@ -38,7 +41,9 @@ jQuery.fn.drawr.register({
 		context.drawImage(image,destx,desty,imageWidth,imageHeight);
 	    context.restore();
 	},
-	drawSpot: function(brush,context,x,y,size,alpha,event) {
+	//angle is resolved by the engine's emit_spot from brush.rotation_mode. pencil's default is
+	//"random_jitter" so every stamp comes in rotated by the engine — no local randomisation needed.
+	drawSpot: function(brush,context,x,y,size,alpha,event,angle) {
 		if(!brush._rawImage || !brush._rawImage.complete) return;
 		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
 		var cacheKey = color.r + "," + color.g + "," + color.b;
@@ -58,7 +63,7 @@ jQuery.fn.drawr.register({
 		context.globalAlpha = alpha;
 		var calculated_size = parseInt(size);
 		if(calculated_size<2) calculated_size = 2;
-		brush.drawRotatedImage(context, brush._stampCache, x, y, 0, calculated_size);
+		brush.drawRotatedImage(context, brush._stampCache, x, y, angle || 0, calculated_size);
 	},
 	drawStop: function(brush,context,x,y,size,alpha,event){
 		return true;

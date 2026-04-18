@@ -7,6 +7,9 @@ jQuery.fn.drawr.register({
 	pressure_affects_alpha: false,
 	pressure_affects_size: true,
 	smoothing: true,
+	flow: 1,
+	spacing: 0.25,
+	rotation_mode: "none",
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
 	drawStart: function(brush,context,x,y,size,alpha,event){
