@@ -11,8 +11,8 @@ jQuery.fn.drawr.register({
 	flow: 0.5,
 	spacing: 0.05,
 	scatter: 0,
-	opacity_jitter: 0.3,
-	size_jitter: 0.15,
+	opacity_jitter: 0,
+	size_jitter: 0,
 	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;

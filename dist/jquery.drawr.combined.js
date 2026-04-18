@@ -18,7 +18,7 @@
 
 (function( $ ) {
 
-	var DRAWR_VERSION = "0.9.12";
+	var DRAWR_VERSION = "1.0.0";
 
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
@@ -2376,9 +2376,9 @@ jQuery.fn.drawr.register({
 	smoothing: false,
 	flow: 0.5,
 	spacing: 0.05,
-	scatter: 0.25,
-	opacity_jitter: 0.3,
-	size_jitter: 0.15,
+	scatter: 0,
+	opacity_jitter: 0,
+	size_jitter: 0,
 	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;
