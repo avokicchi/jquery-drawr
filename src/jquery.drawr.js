@@ -385,6 +385,7 @@
 						//so this call bypasses emit_spot to avoid double-incrementing the counter.
 						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
 						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
+						$(self).trigger("drawr:drawstart", [{x: mouse_data.x, y: mouse_data.y, tool: self.active_brush.name, size: calculatedSize, alpha: startAlpha, pressure: mouse_data.pressure}]);
 						plugin.request_redraw.call(self);
 					}
 				}
@@ -608,6 +609,7 @@
 					if(typeof result!=="undefined"){
 						plugin.record_undo_entry.call(self);
 					  }
+					$(self).trigger("drawr:drawstop", [{x: mouse_data.x, y: mouse_data.y, tool: self.active_brush.name, size: calculatedSize, alpha: calculatedAlpha, pressure: mouse_data.pressure}]);
 					plugin.request_redraw.call(self);
 				}
 				self._gestureAbortSnapshot = null;

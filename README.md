@@ -54,6 +54,24 @@ $("#canvas").drawr("start");
 - paper_color(#ffffff): configure the paper color used when paper_color_mode is solid
 - paper_color_mode(checkerboard/solid): configure the paper color display mode used if transparency is on.
 
+**Events**
+
+The plugin triggers jQuery events on the canvas element whenever the user starts or ends a valid stroke. Palm/wrist touches, pinch/rotate gestures, and middle-mouse pans are filtered out and do not fire events.
+
+- `drawr:drawstart` — fires once when a stroke begins
+- `drawr:drawstop` — fires once when the stroke ends
+
+Each event carries a data object: `{x, y, tool, size, alpha, pressure}`: canvas-local coordinates, the active tool's `name`, the resolved size/alpha for the stroke, and the input pressure (0..1; 0.5 for non-pressure-sensitive devices).
+
+```javascript
+$("#canvas").on("drawr:drawstart", function(e, data){
+    console.log("started drawing with", data.tool, "at", data.x, data.y);
+});
+$("#canvas").on("drawr:drawstop", function(e, data){
+    // e.g. enable a "save" button now that a stroke has landed
+});
+```
+
 Also available [on npm](https://www.npmjs.com/package/jquery-drawr). For installation,
 
 npm install jquery-drawr
