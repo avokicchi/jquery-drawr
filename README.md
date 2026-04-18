@@ -60,6 +60,87 @@ npm install jquery-drawr
 
 [demos and docs at this link](https://cachecat.io/jquery-drawr/ "demos and docs at this link")
 
+# Adding a new tool
+
+Tools live in `src/tools/` and self-register at load time by calling `jQuery.fn.drawr.register(tool)`. A tool is a plain object combining metadata, brush-dynamics defaults, and lifecycle hooks. The brush-dynamics engine in the main plugin applies a uniform set of per-spot dynamics to every registered tool; you just declare your defaults and implement `drawSpot`.
+
+**Skeleton**
+
+```javascript
+jQuery.fn.drawr.register({
+    //metadata — shown in the toolbox
+    name: "my_tool",
+    icon: "mdi mdi-brush mdi-24px",
+    order: 10,
+
+    //base per-stroke values
+    size: 6,
+    alpha: 1,
+
+    //pressure response
+    pressure_affects_alpha: true,
+    pressure_affects_size: true,
+
+    //dynamics (all optional — omit to skip that effect)
+    flow: 0.9,              //deterministic per-spot alpha multiplier (0..1)
+    spacing: 0.15,          //step distance as a fraction of size; replaces the old hardcoded size/4
+    smoothing: true,        //enables Catmull-Rom interpolation of the stroke path
+    brush_fade_in: 20,      //number of spots over which alpha ramps from 0 to full at stroke start
+    size_jitter: 0.15,      //0..1, per-spot random size variation
+    opacity_jitter: 0.2,    //0..1, per-spot random alpha variation
+    scatter: 0,             //0..1, random XY offset as a fraction of size
+
+    //rotation: "none" | "fixed" | "follow_stroke" | "random_jitter" | "follow_jitter"
+    rotation_mode: "random_jitter",
+    fixed_angle: 0,         // radians, used when rotation_mode is "fixed"
+    angle_jitter: 1,        // 0..1, fraction of π; used by "random_jitter" and "follow_jitter"
+
+    //lifecycle
+    activate: function(brush, context){ /* allocate stamp cache, preload images, ... */ },
+    deactivate: function(brush, context){ /* release anything allocated in activate */ },
+
+    drawStart: function(brush, context, x, y, size, alpha, event){
+        context.globalCompositeOperation = "source-over";
+        context.globalAlpha = alpha;
+    },
+
+    //8-argument signature. `angle` (radians) is resolved by the engine from rotation_mode —
+    //consume it if your stamp rotates (pencil, custom brushes), ignore it otherwise.
+    drawSpot: function(brush, context, x, y, size, alpha, event, angle){
+        //... draw one stamp at (x, y)
+    },
+
+    //return any non-undefined value to push an undo entry; return undefined to skip.
+    drawStop: function(brush, context, x, y, size, alpha, event){ return true; }
+});
+```
+
+**How spots get emitted**
+
+Every interpolated spot (linear (`drawMove`), Catmull-Rom (`draw_catmull_segment`), and the final flush in `drawStop`) funnels through `plugin.emit_spot(...)`.  That function resolves jitter, rotation, and scatter from the tool's declared dynamics before calling your `drawSpot`. Your hook receives the already-adjusted `size`, `alpha`, and `angle`; don't re-roll randomness yourself or you'll double up with the engine. The single exception is the initial spot placed by `drawStart`. It bypasses `emit_spot` (so `brush_fade_in` isn't counted twice) and is called with `angle = 0`.
+
+**Canonical dynamics fields**
+
+The complete list lives in `$.fn.drawr._dynamicsFields`:
+
+```
+size, alpha, flow, spacing,
+rotation_mode, fixed_angle, angle_jitter,
+size_jitter, opacity_jitter, scatter,
+smoothing, brush_fade_in,
+pressure_affects_alpha, pressure_affects_size
+```
+
+At `register()` time the engine snapshots whichever of these your tool declares into `tool._defaults`. The Settings > Advanced panel edits the live values and persists overrides to `localStorage["drawr.toolOverrides"]`; "Reset defaults" restores from that snapshot and wipes the override entry. Fields you don't declare stay absent after reset, there is no hidden fallback
+
+**Build the tool in**
+
+Drop your file into `src/tools/` and run `npm run build`. Gulp concatenates `src/tools/*.js` into `dist/jquery.drawr.combined.js`; the tool registers itself as soon as the bundle loads and appears in the toolbox on the next `start` / `loadtoolset` call. If you create a neat tool feel free to submit a pull request
+
+**Custom brushes at runtime**
+
+User-created image brushes go through the same pipeline. `$.fn.drawr.buildCustomBrush(record)` turns a saved JSON record (`{id, name, icon, image_data_url, ...dynamics}`) into a registered tool with `removable: true`. If you just want a new built-in stamp brush, authoring a file in `src/tools/` is simpler than going through the custom-brush storage format.
+
 # To build
 
 npm install

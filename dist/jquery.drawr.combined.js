@@ -2374,8 +2374,11 @@ jQuery.fn.drawr.register({
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
 	smoothing: false,
-	flow: 0.8,
-	spacing: 0.1,
+	flow: 0.5,
+	spacing: 0.05,
+	scatter: 0.25,
+	opacity_jitter: 0.3,
+	size_jitter: 0.15,
 	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;
@@ -2414,15 +2417,16 @@ jQuery.fn.drawr.register({
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-brush mdi-24px",
 	name: "brush",
-	size: 3,
+	size: 6,
 	alpha: 1,
 	order: 4,
 	pressure_affects_alpha: true,
-	pressure_affects_size: false,
+	pressure_affects_size: true,
 	brush_fade_in: 20,
 	smoothing: true,
-	flow: 1,
-	spacing: 0.25,
+	flow: 0.9,
+	spacing: 0.15,
+	opacity_jitter: 0.05,
 	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;
@@ -2883,7 +2887,7 @@ jQuery.fn.drawr.register({
 	pressure_affects_size: true,
 	smoothing: false,
 	flow: 1,
-	spacing: 0.25,
+	spacing: 0.15,
 	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;
@@ -3449,7 +3453,7 @@ jQuery.fn.drawr.register({
 	pressure_affects_size: true,
 	smoothing: true,
 	flow: 1,
-	spacing: 0.25,
+	spacing: 0.1,
 	rotation_mode: "none",
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
@@ -3479,8 +3483,10 @@ jQuery.fn.drawr.register({
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
 	smoothing: false,
-	flow: 1,
-	spacing: 0.25,
+	flow: 0.9,
+	spacing: 0.2,
+	size_jitter: 0.15,
+	opacity_jitter: 0.2,
 	rotation_mode: "random_jitter",
 	angle_jitter: 1,
 	activate: function(brush,context){

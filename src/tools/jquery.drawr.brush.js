@@ -1,15 +1,16 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-brush mdi-24px",
 	name: "brush",
-	size: 3,
+	size: 6,
 	alpha: 1,
 	order: 4,
 	pressure_affects_alpha: true,
-	pressure_affects_size: false,
+	pressure_affects_size: true,
 	brush_fade_in: 20,
 	smoothing: true,
-	flow: 1,
-	spacing: 0.25,
+	flow: 0.9,
+	spacing: 0.15,
+	opacity_jitter: 0.05,
 	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;

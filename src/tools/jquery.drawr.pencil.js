@@ -8,8 +8,10 @@ jQuery.fn.drawr.register({
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
 	smoothing: false,
-	flow: 1,
-	spacing: 0.25,
+	flow: 0.9,
+	spacing: 0.2,
+	size_jitter: 0.15,
+	opacity_jitter: 0.2,
 	rotation_mode: "random_jitter",
 	angle_jitter: 1,
 	activate: function(brush,context){
