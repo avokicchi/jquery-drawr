@@ -125,6 +125,244 @@
 			return "translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)";
 		};
 
+		//---- Layers -----------------------------------------------------------------------
+		//Multi-layer support. Layer 0 is the main <canvas> element itself; additional layers
+		//are sibling <canvas> elements added into the drawr-container. The browser composites
+		//them via CSS mix-blend-mode on the GPU, so drawing still targets exactly one context
+		//per stroke — perf is unchanged vs. single-canvas mode.
+		//
+		//Blending scope: multiply reaches through transparent regions of layers below to
+		//$bgCanvas (checkerboard or solid paper). This is intentional (cheap + correct for
+		//solid paper) — export compositing in JS ignores $bgCanvas so saved output is clean.
+		plugin.MAX_LAYERS = 3;
+
+		//returns the 2D context of the currently-active layer. safe to call repeatedly; the
+		//browser caches getContext on a given canvas, so a fresh call per spot is free.
+		plugin.active_context = function(){
+			var layer = this.layers[this.activeLayerIndex];
+			return layer.canvas.getContext("2d", { alpha: true });
+		};
+
+		//resolves a stable layer id to its current array index. undo records use ids so that
+		//reorder/delete don't invalidate history. returns -1 if the layer no longer exists.
+		plugin.resolve_layer_by_id = function(id){
+			if(!this.layers) return -1;
+			for(var i = 0; i < this.layers.length; i++){
+				if(this.layers[i].id === id) return i;
+			}
+			return -1;
+		};
+
+		//returns id of the currently-active layer.
+		plugin.active_layer_id = function(){
+			return this.layers[this.activeLayerIndex].id;
+		};
+
+		//apply this instance's transform + zoom-scaled CSS size to every layer canvas and $bgCanvas.
+		//called from apply_scroll/apply_rotation/apply_zoom so multi-layer stays in perfect alignment.
+		plugin.broadcast_transform = function(){
+			var self = this;
+			var transform = plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0);
+			$(self).css("transform", transform);
+			if(self.layers){
+				for(var i = 1; i < self.layers.length; i++){
+					self.layers[i].$el.css("transform", transform);
+				}
+			}
+			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
+		};
+
+		//mirror the main canvas's zoomed CSS display size onto every extra layer canvas.
+		plugin.broadcast_zoom_css = function(){
+			var self = this;
+			if(!self.layers) return;
+			var zoom = self.zoomFactor || 1;
+			for(var i = 1; i < self.layers.length; i++){
+				self.layers[i].$el.width(self.width * zoom);
+				self.layers[i].$el.height(self.height * zoom);
+			}
+		};
+
+		//Create a new layer canvas as a sibling of the main canvas inside the drawr-container.
+		//pixel dimensions match self.width x self.height; CSS display size tracks zoom.
+		//z-index is indexForInsert+2 (layer 0 is z=1, extras start at z=2). opacity/visibility/
+		//mix-blend-mode applied per mode.
+		plugin.add_layer = function(mode, name){
+			var self = this;
+			if(self.layers.length >= plugin.MAX_LAYERS) return null;
+			mode = mode || "normal";
+			var c = document.createElement("canvas");
+			c.width = self.width;
+			c.height = self.height;
+			var $c = $(c);
+			$c.addClass("drawr-layer");
+			$c.css({
+				"position": "absolute",
+				"top": 0, "left": 0,
+				"pointer-events": "none",
+				"width": (self.width * (self.zoomFactor || 1)) + "px",
+				"height": (self.height * (self.zoomFactor || 1)) + "px",
+				"transform-origin": "50% 50%",
+				"transform": plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0),
+				"mix-blend-mode": mode === "multiply" ? "multiply" : "normal",
+				"opacity": 1
+			});
+			//insert above the last existing layer canvas (main or extra). z-index rises with index.
+			$c.insertAfter(self.layers[self.layers.length - 1].$el);
+			var layer = {
+				id: self._nextLayerId++,
+				canvas: c,
+				$el: $c,
+				name: name || "New layer",
+				mode: mode,
+				visible: true,
+				opacity: 1,
+				history_trimmed: false
+			};
+			self.layers.push(layer);
+			plugin.restack_layers.call(self);
+			return layer;
+		};
+
+		//re-apply z-indices to match current array order. called after add/delete/reorder.
+		plugin.restack_layers = function(){
+			var self = this;
+			for(var i = 0; i < self.layers.length; i++){
+				self.layers[i].$el.css("z-index", 1 + i);
+			}
+		};
+
+		//delete a layer. guaranteed to leave at least one layer standing.
+		//special case: if the targeted layer happens to use the main canvas DOM element
+		//(which can't be removed from the page), we instead copy an adjacent layer's pixels
+		//into the main canvas and delete that adjacent layer. the main canvas adopts the
+		//adjacent layer's id/name/mode/opacity — so from the user's perspective, the layer
+		//they clicked delete on really is gone, and the neighbour now sits on the main canvas.
+		plugin.delete_layer = function(index){
+			var self = this;
+			if(self.layers.length <= 1) return;
+			if(index < 0 || index >= self.layers.length) return;
+			var target = self.layers[index];
+			if(target.canvas === self){
+				//pick a donor — prefer the layer directly above; fall back to the one below.
+				var donorIdx = (index + 1 < self.layers.length) ? index + 1 : index - 1;
+				var donor = self.layers[donorIdx];
+				var mctx = target.canvas.getContext("2d", { alpha: true });
+				mctx.globalCompositeOperation = "source-over";
+				mctx.globalAlpha = 1;
+				mctx.clearRect(0, 0, self.width, self.height);
+				mctx.drawImage(donor.canvas, 0, 0);
+				//main canvas adopts donor's identity so undo entries keyed by the donor's id
+				//continue to work (they now restore to the main canvas). the original target
+				//layer's id is abandoned — its undo entries get skipped by resolve_layer_by_id.
+				target.id = donor.id;
+				target.name = donor.name;
+				target.mode = donor.mode;
+				target.visible = donor.visible;
+				target.opacity = donor.opacity;
+				target.history_trimmed = !!donor.history_trimmed;
+				//apply the adopted CSS state to the main canvas.
+				target.$el.css("mix-blend-mode", donor.mode === "multiply" ? "multiply" : "normal");
+				target.$el.css("opacity", donor.opacity);
+				target.$el.css("display", donor.visible ? "" : "none");
+				//remove the donor.
+				donor.$el.remove();
+				self.layers.splice(donorIdx, 1);
+				//active pointer: if donor was active, main canvas now holds its data — point at main.
+				if(self.activeLayerIndex === donorIdx) self.activeLayerIndex = self.layers.indexOf(target);
+				else if(self.activeLayerIndex > donorIdx) self.activeLayerIndex--;
+			} else {
+				//simple case — detach the DOM element and splice out.
+				target.$el.remove();
+				self.layers.splice(index, 1);
+				if(self.activeLayerIndex > index) self.activeLayerIndex--;
+				else if(self.activeLayerIndex === index){
+					if(self.activeLayerIndex >= self.layers.length) self.activeLayerIndex = self.layers.length - 1;
+				}
+			}
+			if(self.activeLayerIndex < 0) self.activeLayerIndex = 0;
+			plugin.restack_layers.call(self);
+		};
+
+		//swap layer at index with the one below it (index-1). covers "move up" by symmetry.
+		//the main canvas element can sit at any array position — z-index handles stacking
+		//regardless of which canvas is position:relative vs absolute.
+		plugin.move_layer_down = function(index){
+			var self = this;
+			if(index < 1 || index >= self.layers.length) return;
+			var tmp = self.layers[index];
+			self.layers[index] = self.layers[index - 1];
+			self.layers[index - 1] = tmp;
+			//keep DOM order in sync with array order (cosmetic — z-index is authoritative).
+			tmp.$el.insertBefore(self.layers[index].$el);
+			if(self.activeLayerIndex === index) self.activeLayerIndex = index - 1;
+			else if(self.activeLayerIndex === index - 1) self.activeLayerIndex = index;
+			plugin.restack_layers.call(self);
+		};
+
+		plugin.set_active_layer = function(index){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.activeLayerIndex = index;
+		};
+
+		plugin.set_layer_mode = function(index, mode){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].mode = mode;
+			//apply to every layer including the main canvas — multiply on the bottom-most
+			//layer is a no-op visually (nothing below to blend with), but after reorder any
+			//layer may end up on top.
+			self.layers[index].$el.css("mix-blend-mode", mode === "multiply" ? "multiply" : "normal");
+		};
+
+		plugin.set_layer_visibility = function(index, visible){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].visible = !!visible;
+			self.layers[index].$el.css("display", visible ? "" : "none");
+		};
+
+		plugin.set_layer_opacity = function(index, opacity){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			var op = Math.max(0, Math.min(1, opacity));
+			self.layers[index].opacity = op;
+			self.layers[index].$el.css("opacity", op);
+		};
+
+		plugin.set_layer_name = function(index, name){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].name = name;
+		};
+
+		//composite all visible layers into a fresh canvas for export. mirrors what the GPU
+		//does on screen via mix-blend-mode, but without $bgCanvas — saved output carries
+		//only the artwork.
+		plugin.composite_for_export = function(){
+			var self = this;
+			var out = document.createElement("canvas");
+			out.width = self.width;
+			out.height = self.height;
+			var ctx = out.getContext("2d", { alpha: self.settings.enable_transparency });
+			if(self.settings.enable_transparency == false){
+				ctx.fillStyle = "white";
+				ctx.fillRect(0, 0, self.width, self.height);
+			}
+			for(var i = 0; i < self.layers.length; i++){
+				var layer = self.layers[i];
+				if(!layer.visible) continue;
+				ctx.globalAlpha = layer.opacity;
+				ctx.globalCompositeOperation = (i > 0 && layer.mode === "multiply") ? "multiply" : "source-over";
+				ctx.drawImage(layer.canvas, 0, 0);
+			}
+			ctx.globalAlpha = 1;
+			ctx.globalCompositeOperation = "source-over";
+			return out;
+		};
+		//---- /Layers ----------------------------------------------------------------------
+
 		//reads border-top and border-left pixel widths from an element's computed style.
 		plugin.get_border = function(el){
 			var cs = window.getComputedStyle(el, null);
@@ -271,7 +509,9 @@
 		//Binds touch event listeners to the canvas's parent container
 		plugin.bind_draw_events = function(){
 			var self=this;
-			var context = self.getContext("2d", { alpha: self.settings.enable_transparency });
+			//active-layer context resolver. re-fetched per call so layer switches take effect
+			//immediately. getContext is cached by the browser, so repeat calls are free.
+			var ctx = function(){ return plugin.active_context.call(self); };
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
 			$(self).parent().on("touchstart." + self._evns, function(e){ e.preventDefault(); });//cancel scroll.
 
@@ -338,7 +578,7 @@
 					if(pts.length >= 2){
 						//erase any dot drawn by the first touch before the gesture was detected
 						if(self._gestureAbortSnapshot){
-							context.putImageData(self._gestureAbortSnapshot, 0, 0);
+							ctx().putImageData(self._gestureAbortSnapshot, 0, 0);
 							self._gestureAbortSnapshot = null;
 						}
 						var t1 = pts[0], t2 = pts[1];
@@ -361,11 +601,13 @@
 				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true && self.containerBoundCheck.call(self,e)==true){//yay! We're drawing!
 					if(plugin.is_dragging==false){
 						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
-						//save snapshot so the second touch can erase this stroke start if a gesture is detected
-						if(e.originalEvent.pointerType === "touch") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
+						//save snapshot of the active layer so the second touch can erase this stroke
+						//start if a gesture is detected. only the active layer can have changed.
+						var _startCtx = ctx();
+						if(e.originalEvent.pointerType === "touch") self._gestureAbortSnapshot = _startCtx.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
 						self._activeButton = e.button;//store button, since pointer events only have useful button info in pointerdown, and we catch pointermove later.
-						context.lineCap = "round";context.lineJoin = 'round';
+						_startCtx.lineCap = "round";_startCtx.lineJoin = 'round';
 
 						//reset fade-in counter at start of stroke
 						self._fadeInSpotCount = 0;
@@ -381,11 +623,23 @@
 							self._fadeInSpotCount++;
 							startAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
 						}
-						//first spot has no stroke direction yet so we pass angle=0 so tools consuming
-						//the 8th arg get a deterministic value. fade-in already applied inline above,
-						//so this call bypasses emit_spot to avoid double-incrementing the counter.
-						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
+						//resolve the first spot's angle per rotation_mode. stroke direction isn't
+						//available yet (no movement), so follow_stroke/follow_jitter fall back to
+						//base=0; fixed uses fixed_angle; random_jitter randomises. this mirrors
+						//emit_spot so the first stamp doesn't look different from the rest.
+						//fade-in already applied inline above, so this call bypasses emit_spot to
+						//avoid double-incrementing the counter.
+						var _startMode = self.active_brush.rotation_mode || "none";
+						var _startAngle = 0;
+						if(_startMode === "fixed"){
+							_startAngle = self.active_brush.fixed_angle || 0;
+						} else if(_startMode === "random_jitter"){
+							_startAngle = Math.random() * Math.PI * 2;
+						} else if(_startMode === "follow_jitter"){
+							_startAngle = (Math.random() * 2 - 1) * (self.active_brush.angle_jitter || 0) * Math.PI;
+						}
+						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,_startAngle);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,_startAngle);
 						$(self).trigger("drawr:drawstart", [{x: mouse_data.x, y: mouse_data.y, tool: self.active_brush.name, size: calculatedSize, alpha: startAlpha, pressure: mouse_data.pressure}]);
 						plugin.request_redraw.call(self);
 					}
@@ -436,6 +690,7 @@
 						self.zoomFactor = newZoom;
 						$(self).width(self.width * newZoom);
 						$(self).height(self.height * newZoom);
+						plugin.broadcast_zoom_css.call(self);
 						plugin.draw_checkerboard.call(self);
 						plugin.apply_scroll.call(self, newScrollX, newScrollY, true);
 						plugin.apply_rotation.call(self, gs.rotation + dAngle, false);
@@ -465,55 +720,67 @@
 
 					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure, self.pen_pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
-					//spacing as a fraction of size (brush dynamics). fallback to 0.25 matches the old hardcoded /4.
-					var spacingFrac = (typeof self.active_brush.spacing === "number") ? self.active_brush.spacing : 0.25;
-					var stepSize = calculatedSize * spacingFrac;
-					if(stepSize<1) stepSize = 1;
 
-					if(self.active_brush.smoothing) {
-						//smooth path: buffer raw knots and draw a Catmull-Rom segment lagging one event behind,
-						//using the new knot as the lookahead (P3) that shapes the tangent of the previous segment.
-						//Only accept a new knot if it is far enough from the last one. Sub-pixel (or near-pixel)
-						//knot spacing gives the spline no room to round corners, so high-precision stylus input
-						//would pass through every jitter point rather than smoothing over them.
-						//Cutoff is a fraction of brush size (not stepSize) — knot decimation is about jitter
-						//tolerance for the spline, which is unrelated to how densely the spline is sampled.
-						var knotCutoff = calculatedSize * 0.375;
-						if(knotCutoff < 1) knotCutoff = 1;
-						var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
-						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < knotCutoff) return;
-						self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
-						var knots = self._smoothKnots;
-						var n = knots.length - 1; //last index
-						if(n >= 2) {
-							//draw segment knots[n-2]->knots[n-1]; knots[n] is the lookahead control point
-							var p0 = knots[Math.max(0, n-3)];
-							var p1 = knots[n-2];
-							var p2 = knots[n-1];
-							var p3 = knots[n];
-							//rescale accumDist when stepSize changes (e.g. stylus pressure shift) so the
-							//fractional progress towards the next spot is preserved, preventing the while
-							//loop in draw_catmull_segment from firing multiple times at the same point.
-							if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
-								self._smoothAccumDist = self._smoothAccumDist * (stepSize / self._smoothLastStepSize);
-							}
-							self._smoothLastStepSize = stepSize;
-							self._smoothAccumDist = plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
+					//navigation tools (move, eyedropper) operate on raw pointer events — bypass the
+					//spacing/smoothing/jitter pipeline so every pointermove forwards straight to drawSpot.
+					//otherwise leftover brushSize/spacing from the previously-active paint tool would
+					//throttle the event rate and make panning/rotating choppy.
+					if(self.active_brush.raw_input){
+						if(typeof self.active_brush.drawSpot !== "undefined"){
+							self.active_brush.drawSpot.call(self, self.active_brush, ctx(), mouse_data.x, mouse_data.y, calculatedSize, calculatedAlpha, e, 0);
 						}
 					} else {
-						//original linear interpolation along the line between the last drawn spot and the current position
-						var positions = $(self).data("positions");
-						var currentSpot = {x:mouse_data.x,y:mouse_data.y};
-						var lastSpot=positions[positions.length-1];
-						var dist = plugin.distance_between(lastSpot, currentSpot);
-						var angle = plugin.angle_between(lastSpot, currentSpot);
-						for (var i = stepSize; i < dist; i+=stepSize) {
-							x = lastSpot.x + (Math.sin(angle) * i);
-							y = lastSpot.y + (Math.cos(angle) * i);
-							plugin.emit_spot.call(self, context, self.active_brush, x, y, angle, calculatedSize, calculatedAlpha, e);
-							positions.push({x:x,y:y});
+						//spacing as a fraction of size (brush dynamics). fallback to 0.25 matches the old hardcoded /4.
+						var spacingFrac = (typeof self.active_brush.spacing === "number") ? self.active_brush.spacing : 0.25;
+						var stepSize = calculatedSize * spacingFrac;
+						if(stepSize<1) stepSize = 1;
+
+						if(self.active_brush.smoothing) {
+							//smooth path: buffer raw knots and draw a Catmull-Rom segment lagging one event behind,
+							//using the new knot as the lookahead (P3) that shapes the tangent of the previous segment.
+							//Only accept a new knot if it is far enough from the last one. Sub-pixel (or near-pixel)
+							//knot spacing gives the spline no room to round corners, so high-precision stylus input
+							//would pass through every jitter point rather than smoothing over them.
+							//Cutoff is a fraction of brush size (not stepSize) — knot decimation is about jitter
+							//tolerance for the spline, which is unrelated to how densely the spline is sampled.
+							var knotCutoff = calculatedSize * 0.375;
+							if(knotCutoff < 1) knotCutoff = 1;
+							var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
+							if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < knotCutoff) return;
+							self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
+							var knots = self._smoothKnots;
+							var n = knots.length - 1; //last index
+							if(n >= 2) {
+								//draw segment knots[n-2]->knots[n-1]; knots[n] is the lookahead control point
+								var p0 = knots[Math.max(0, n-3)];
+								var p1 = knots[n-2];
+								var p2 = knots[n-1];
+								var p3 = knots[n];
+								//rescale accumDist when stepSize changes (e.g. stylus pressure shift) so the
+								//fractional progress towards the next spot is preserved, preventing the while
+								//loop in draw_catmull_segment from firing multiple times at the same point.
+								if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
+									self._smoothAccumDist = self._smoothAccumDist * (stepSize / self._smoothLastStepSize);
+								}
+								self._smoothLastStepSize = stepSize;
+								self._smoothAccumDist = plugin.draw_catmull_segment.call(self, ctx(), self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
+							}
+						} else {
+							//original linear interpolation along the line between the last drawn spot and the current position
+							var positions = $(self).data("positions");
+							var currentSpot = {x:mouse_data.x,y:mouse_data.y};
+							var lastSpot=positions[positions.length-1];
+							var dist = plugin.distance_between(lastSpot, currentSpot);
+							var angle = plugin.angle_between(lastSpot, currentSpot);
+							var _moveCtx = ctx();
+							for (var i = stepSize; i < dist; i+=stepSize) {
+								x = lastSpot.x + (Math.sin(angle) * i);
+								y = lastSpot.y + (Math.cos(angle) * i);
+								plugin.emit_spot.call(self, _moveCtx, self.active_brush, x, y, angle, calculatedSize, calculatedAlpha, e);
+								positions.push({x:x,y:y});
+							}
+							$(self).data("positions",positions);
 						}
-						$(self).data("positions",positions);
 					}
 				}
 				var tbPageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
@@ -603,13 +870,13 @@
 						if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
 							flushAccum = flushAccum * (stepSize / self._smoothLastStepSize);
 						}
-						plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, flushAccum);
+						plugin.draw_catmull_segment.call(self, ctx(), self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, flushAccum);
 						self._smoothKnots = null;
 						self._smoothAccumDist = 0;
 						self._smoothLastStepSize = null;
 					}
 
-					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,ctx(),mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					//if there is an action to undo
 					if(typeof result!=="undefined"){
 						plugin.record_undo_entry.call(self);
@@ -640,18 +907,35 @@
 
 		//function that can be called to clear the canvas from elsewhere in the plugin 
 		//as long as you call it with a "this" of the canvas
-		plugin.clear_canvas = function(record_undo){
+		//scope: "active" (default) clears only the active layer; "all" clears every layer.
+		//the public "clear" action passes "all" to wipe the whole artwork; internal callers
+		//(undo/redo restoring a single layer, post-load reset) use "active".
+		plugin.clear_canvas = function(record_undo, scope){
 			if(record_undo) {
 				this.plugin.record_undo_entry.call(this);
 			}
-			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
-			if(this.settings.enable_transparency==false){
-				context.fillStyle="white";
-				context.globalCompositeOperation="source-over";
-				context.globalAlpha=1;
-				context.fillRect(0,0,this.width,this.height);
+			scope = scope || "active";
+			var self = this;
+			var clearOne = function(canvas, fillWhite){
+				var c = canvas.getContext("2d", { alpha: true });
+				if(fillWhite){
+					c.fillStyle = "white";
+					c.globalCompositeOperation = "source-over";
+					c.globalAlpha = 1;
+					c.fillRect(0, 0, self.width, self.height);
+				} else {
+					c.clearRect(0, 0, self.width, self.height);
+				}
+			};
+			if(scope === "all" && self.layers){
+				//layer 0 honours enable_transparency; extras always clear transparent so blending
+				//composes correctly with layer 0.
+				clearOne(self.layers[0].canvas, self.settings.enable_transparency == false);
+				for(var i = 1; i < self.layers.length; i++) clearOne(self.layers[i].canvas, false);
 			} else {
-				context.clearRect(0,0,this.width,this.height);
+				var idx = self.layers ? self.activeLayerIndex : 0;
+				var target = self.layers ? self.layers[idx].canvas : self;
+				clearOne(target, idx === 0 && self.settings.enable_transparency == false);
 			}
 		};
 
@@ -661,8 +945,23 @@
 			if(typeof this.$undoButton!=="undefined"){
 				this.$undoButton.css("opacity",1);
 			}
-			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
-			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
+			//snapshot the active layer's state AFTER the action. undo will walk the stack for
+			//the previous entry matching this layerId and restore that; if none, it clears.
+			var layer = this.layers[this.activeLayerIndex];
+			this.undoStack.push({data: layer.canvas.toDataURL("image/png"), layerId: layer.id});
+			//enforce the cap by dropping the oldest non-sticky entry. sticky entries are
+			//baselines (loaded image) and shouldn't count toward the cap. when we drop a
+			//real entry, mark its layer as history-trimmed — undo's fallback-to-clear must
+			//refuse once we've lost the layer's oldest state.
+			if(this.undoStack.length > (this.settings.undo_max_levels + 1)){
+				for(var i = 0; i < this.undoStack.length; i++){
+					if(this.undoStack[i].sticky) continue;
+					var dropped = this.undoStack.splice(i, 1)[0];
+					var didx = plugin.resolve_layer_by_id.call(this, dropped.layerId);
+					if(didx >= 0) this.layers[didx].history_trimmed = true;
+					break;
+				}
+			}
 			//new drawing action invalidates redo history
 			this.redoStack = [];
 			if(typeof this.$redoButton!=="undefined"){
@@ -1025,7 +1324,7 @@
 		};
 
 		plugin.activate_brush = function(brush){
-			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
+			var context = plugin.active_context.call(this);
 			if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
 				this.active_brush.deactivate.call(this,this.active_brush,context);
 			}
@@ -1058,7 +1357,7 @@
 			el.on("pointerdown." + self._evns, function(e){
 				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
 				if(typeof data.action!=="undefined") {
-					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
+					var ctx = plugin.active_context.call(self);
 					data.action.call(self,data,ctx);
 				}
 				if($(this).data("type")=="toggle") {//toggle data attribute and select effect
@@ -1074,10 +1373,12 @@
 			//stopPropagation so clicking × doesn't also select the brush underneath.
 			if(data.removable){
 				el.css("position", "relative");
-				var $x = $("<span class='drawr-tool-x' title='Remove brush'>×</span>");
+				//use an MDI glyph rather than the × unicode character — the latter falls back
+				//to tofu on systems whose default font lacks the geometric-shape range.
+				var $x = $("<span class='drawr-tool-x mdi mdi-close' title='Remove brush'></span>");
 				$x.css({
 					position: "absolute", top: "0px", right: "2px",
-					width: "12px", height: "12px", lineHeight: "10px", fontSize: "14px",
+					width: "12px", height: "12px", lineHeight: "12px", fontSize: "12px",
 					color: "#900", background: "rgba(255,255,255,0.7)", borderRadius: "50%",
 					textAlign: "center", cursor: "pointer", userSelect: "none", zIndex: 1
 				});
@@ -1293,7 +1594,11 @@
 			this.origStyles = plugin.get_styles(this);
 			this.origParentStyles = plugin.get_styles($(this).parent()[0]);
 			$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none", "position": "relative", "z-index": 1 });
-			$(this).parent().css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none" });
+			//`isolation: isolate` confines mix-blend-mode (used by multiply layers) to the
+			//drawr-container, so blending never reaches the surrounding page. $bgCanvas is
+			//still inside the isolated context — by design; multiply reaches through
+			//transparent regions of layer 0 to the paper background.
+			$(this).parent().css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none", "isolation": "isolate" });
 
 			const style = document.createElement('style');
 			style.textContent = `
@@ -1312,8 +1617,16 @@
 			if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
 				this.width=width;
 				this.height=height;
+				//resize extra layer canvases to match. drops their pixel data — acceptable during
+				//explicit resize/load flows.
+				if(this.layers){
+					for(var li = 1; li < this.layers.length; li++){
+						this.layers[li].canvas.width = width;
+						this.layers[li].canvas.height = height;
+					}
+				}
 			}
-			
+
 			if(reset==true){
 				this.zoomFactor = 1;
 				this.rotationAngle = 0;
@@ -1321,12 +1634,18 @@
 				plugin.apply_scroll.call(this,0,0,false);
 				$(this).width(width);
 				$(this).height(height);
+				if(this.layers){
+					for(var lj = 1; lj < this.layers.length; lj++){
+						this.layers[lj].$el.width(width);
+						this.layers[lj].$el.height(height);
+					}
+				}
 			}
 
 			plugin.draw_checkerboard.call(this);
 
 			this.pen_pressure = false;//switches mode once it detects.
-			
+
 			var context = this.getContext("2d", { alpha: true });
 			if(this.settings.clear_on_init==true){
 				context.globalAlpha = 1;
@@ -1336,7 +1655,15 @@
 				} else {
 					context.clearRect(0,0,width,height);
 				}
-			} 
+				//clear extra layers to transparent (regardless of paper setting — extras must be
+				//transparent for multiply/normal blending to compose correctly with layer 0).
+				if(this.layers){
+					for(var lk = 1; lk < this.layers.length; lk++){
+						var lctx = this.layers[lk].canvas.getContext("2d", { alpha: true });
+						lctx.clearRect(0, 0, width, height);
+					}
+				}
+			}
 
 			//memory canvas
 			var context = this.$memoryCanvas[0].getContext("2d");
@@ -1650,12 +1977,9 @@
 		//we should probably do that with more operations later on. rotation could affect scroll, so
 		plugin.apply_scroll = function(x,y,setTimer){
 			var self = this;
-			var angle = self.rotationAngle || 0;
-			var transform = plugin.canvas_transform(x, y, angle);
-			$(self).css("transform", transform);
-			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
 			self.scrollX = x;
 			self.scrollY = y;
+			plugin.broadcast_transform.call(self);
 			if(setTimer==true){
 				self.scrollTimer= 500;
 			}
@@ -1666,9 +1990,7 @@
 		plugin.apply_rotation = function(angle,setTimer){
 			var self = this;
 			self.rotationAngle = angle;
-			var transform = plugin.canvas_transform(self.scrollX, self.scrollY, angle);
-			$(self).css("transform", transform);
-			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
+			plugin.broadcast_transform.call(self);
 			if(setTimer==true){
 				self.scrollTimer= 500;
 			}
@@ -1685,6 +2007,7 @@
 			self.zoomFactor = zoomFactor;
 			$(self).width(self.width*zoomFactor);
 			$(self).height(self.height*zoomFactor);
+			plugin.broadcast_zoom_css.call(self);
 			plugin.draw_checkerboard.call(self);
 			if(oldZoom > 0 && zoomFactor !== oldZoom){
 				if(focalX !== undefined){
@@ -1744,6 +2067,11 @@
 			var currentCanvas = this.first()[0];
 			if(typeof param !== "undefined" && typeof param !== "string") throw new Error("drawr export: mime type must be a string");
 			var mime = typeof param=="undefined" ? "image/png" : param;
+			//with multiple layers, composite in JS so saved output matches the GPU-blended display.
+			//a single-layer instance falls straight through to toDataURL on the main canvas.
+			if(currentCanvas.layers && currentCanvas.layers.length > 1){
+				return plugin.composite_for_export.call(currentCanvas).toDataURL(mime);
+			}
 			return currentCanvas.toDataURL(mime);
 		}
 
@@ -1780,7 +2108,8 @@
 
 				if(typeof param !== "undefined" && typeof param !== "boolean") throw new Error("drawr clear: clear_undo must be a boolean");
 				var clear_undo = typeof param!=="undefined" ? param : false;
-				currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
+				//public clear wipes every layer.
+				currentCanvas.plugin.clear_canvas.call(currentCanvas,false,"all");
 
 				if(clear_undo) {//re-add current version of the canvas.
 					if(typeof currentCanvas.$undoButton!=="undefined") currentCanvas.$undoButton.css("opacity",0.5);
@@ -1789,7 +2118,9 @@
 					currentCanvas.redoStack = [];
 				}
 
-				currentCanvas.undoStack.push({data: currentCanvas.toDataURL("image/png"),current:true});
+				//record the active layer's cleared state so the first undo does something sensible.
+				var _active = currentCanvas.layers[currentCanvas.activeLayerIndex];
+				currentCanvas.undoStack.push({data: _active.canvas.toDataURL("image/png"), layerId: _active.id});
 
 			} else if ( action === "stop" ) {
 				if(!$(currentCanvas).hasClass("active-drawr")) {
@@ -1864,10 +2195,23 @@
 				img.crossOrigin = "Anonymous";
 
 				img.onload = function(){
-					var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_transparency });
 					plugin.initialize_canvas.call(currentCanvas,img.width,img.height,true);
-					currentCanvas.undoStack = [{data: currentCanvas.toDataURL("image/png"),current:true}];
+					//load replaces the active layer. the canvas resize/reset above has already
+					//cleared every layer to white/transparent, so drawImage straight onto the
+					//active layer context is all that's left.
+					var context = plugin.active_context.call(currentCanvas);
 					context.drawImage(img,0,0);
+					//drop prior history — dimensions changed, older snapshots no longer align —
+					//and mark the loaded state sticky so undo treats it as a baseline: it serves
+					//as a restore target for later strokes, but undo refuses to pop it.
+					currentCanvas.undoStack = [];
+					currentCanvas.redoStack = [];
+					var _lb = currentCanvas.layers[currentCanvas.activeLayerIndex];
+					currentCanvas.undoStack.push({
+						data: _lb.canvas.toDataURL("image/png"),
+						layerId: _lb.id,
+						sticky: true
+					});
 				};
 				img.src=param;
 			//call with $(selector).drawr("destroy") 
@@ -1899,6 +2243,15 @@
 
 				currentCanvas.$memoryCanvas.remove();
 				if(currentCanvas.$bgCanvas){ currentCanvas.$bgCanvas.remove(); delete currentCanvas.$bgCanvas; }
+				//remove extra layer canvases (layer 0 is the main canvas — left in place).
+				if(currentCanvas.layers){
+					for(var _li = 1; _li < currentCanvas.layers.length; _li++){
+						currentCanvas.layers[_li].$el.remove();
+					}
+					delete currentCanvas.layers;
+					delete currentCanvas.activeLayerIndex;
+					delete currentCanvas._nextLayerId;
+				}
 				currentCanvas.$brushToolbox.remove();
 
 				delete currentCanvas.$memoryCanvas;
@@ -1995,9 +2348,27 @@
 				currentCanvas.paperColorMode = currentCanvas.settings.paper_color_mode;
 				currentCanvas.paperColor = currentCanvas.settings.paper_color;
 
+				//seed layer registry. layer 0 is the main canvas element itself. add_layer/
+				//delete_layer/move_layer_down manage extras. undo records reference layer.id
+				//so reorder/delete don't invalidate history.
+				currentCanvas.layers = [{
+					id: 0,
+					canvas: currentCanvas,
+					$el: $(currentCanvas),
+					name: "New layer",
+					mode: "normal",
+					visible: true,
+					opacity: 1,
+					history_trimmed: false
+				}];
+				currentCanvas.activeLayerIndex = 0;
+				currentCanvas._nextLayerId = 1;
+
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
-				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
+				//undo/redo use "walk for prev same-layer" semantics with fallback-to-clear.
+				//no initial seed needed — the first stroke's undo will fallback-clear.
+				currentCanvas.undoStack = [];
 				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				context.imageSmoothingEnabled= false;
