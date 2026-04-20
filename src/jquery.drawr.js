@@ -337,6 +337,30 @@
 			self.layers[index].name = name;
 		};
 
+		//collapse back to a single base layer: strips every extra sibling canvas and resets
+		//the base layer's metadata (name/mode/opacity/visibility) to defaults. the base layer
+		//is always self.layers[0] — delete_layer preserves this invariant by copying donor
+		//pixels into the main canvas when the main canvas itself is the deletion target.
+		//caller is responsible for clearing pixels first (or not) as appropriate.
+		plugin.collapse_to_base_layer = function(){
+			var self = this;
+			if(!self.layers || self.layers.length === 0) return;
+			for(var i = self.layers.length - 1; i >= 1; i--){
+				self.layers[i].$el.remove();
+				self.layers.splice(i, 1);
+			}
+			var base = self.layers[0];
+			base.name = "New layer";
+			base.mode = "normal";
+			base.visible = true;
+			base.opacity = 1;
+			base.history_trimmed = false;
+			base.$el.css({ "mix-blend-mode": "normal", "opacity": 1, "display": "" });
+			self.activeLayerIndex = 0;
+			plugin.restack_layers.call(self);
+			if(typeof self._layersPanelRender === "function") self._layersPanelRender();
+		};
+
 		//composite all visible layers into a fresh canvas for export. mirrors what the GPU
 		//does on screen via mix-blend-mode, but without $bgCanvas — saved output carries
 		//only the artwork.
@@ -2108,8 +2132,10 @@
 
 				if(typeof param !== "undefined" && typeof param !== "boolean") throw new Error("drawr clear: clear_undo must be a boolean");
 				var clear_undo = typeof param!=="undefined" ? param : false;
-				//public clear wipes every layer.
+				//public clear wipes every layer, then collapses back to a single base layer
+				//so callers get a clean single-layer state (matches fresh-canvas semantics).
 				currentCanvas.plugin.clear_canvas.call(currentCanvas,false,"all");
+				currentCanvas.plugin.collapse_to_base_layer.call(currentCanvas);
 
 				if(clear_undo) {//re-add current version of the canvas.
 					if(typeof currentCanvas.$undoButton!=="undefined") currentCanvas.$undoButton.css("opacity",0.5);
