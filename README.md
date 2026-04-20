@@ -23,7 +23,9 @@ $("#canvas").drawr("start");
 - Excellent mobile support
 - Basic pen pressure support for Samsung / Apple devices / Wacom
 - Text insertion
-- Undo
+- Undo / redo
+- Layers (with per-layer opacity and blend mode)
+- User-definable custom image brushes
 - Ignores unintended touches
 - Rotation, pinch to zoom and dragging on mobile, right click to draw and mousewheel zooming on desktop
 
@@ -38,6 +40,7 @@ $("#canvas").drawr("start");
 - clear(clear_undo): clears the canvas and optionally resets the undo/redo buffers. Also collapses any extra layers, leaving a single base layer.
 - createtoolset(name,tools): see minimal.html. Creates a set of tools.
 - loadtoolset(name): see minimal.html. Loads a set of tools.
+- activate_tool(name): selects the tool with the given `name` (as declared in its `register()` call).
 - movetoolbox({x:a,y:b}) moves the main tool palette offset from the topleft of the canvas.
 - zoom(factor) sets the zoom factor.
 - center: centers the view in the parent container.
@@ -50,7 +53,7 @@ $("#canvas").drawr("start");
 - undo_max_levels(5)
 - clear_on_init(true): whether to erase the canvas when it is loaded.
 - enable_scrollwheel_zooming(true)
-- toolbox_cols(2): configure the toolbox size
+- toolbox_cols(3): configure the toolbox size
 - paper_color(#ffffff): configure the paper color used when paper_color_mode is solid
 - paper_color_mode(checkerboard/solid): configure the paper color display mode used if transparency is on.
 
