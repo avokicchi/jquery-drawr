@@ -188,7 +188,7 @@ jQuery.fn.drawr.register({
 			{ value: "fixed",          label: "Fixed" },
 			{ value: "follow_stroke",  label: "Follow" },
 			{ value: "random_jitter",  label: "Random" },
-			{ value: "follow_jitter",  label: "Follow±" }
+			{ value: "follow_jitter",  label: "Follow" }
 		], "none");
 		self.$rotationModeDropdown.on("change.drawr", function(){
 			if(!self.active_brush) return;
