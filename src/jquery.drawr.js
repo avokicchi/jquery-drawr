@@ -1654,7 +1654,6 @@
 			if(reset==true){
 				this.zoomFactor = 1;
 				this.rotationAngle = 0;
-				if(typeof this.$zoomToolbox!=="undefined") this.$zoomToolbox.find("input").val(100).trigger("input");
 				plugin.apply_scroll.call(this,0,0,false);
 				$(this).width(width);
 				$(this).height(height);
