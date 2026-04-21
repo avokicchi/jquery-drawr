@@ -7,7 +7,7 @@ jQuery.fn.drawr.register({
 	brush_fade_in: 25,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
-	smoothing: false,
+	smoothing: true,
 	flow: 0.9,
 	spacing: 0.25,
 	rotation_mode: "follow_stroke",
