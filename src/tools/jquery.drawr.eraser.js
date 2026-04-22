@@ -6,6 +6,7 @@ jQuery.fn.drawr.register({
 	order: 5,
 	pressure_affects_alpha: true,
 	pressure_affects_size: true,
+	size_max: 20,
 	smoothing: false,
 	flow: 1,
 	spacing: 0.15,

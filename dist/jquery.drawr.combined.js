@@ -143,12 +143,29 @@
 		//(see plugin.read_pressure_curve). gamma<1 boosts low pressure so gentle stylus strokes (Apple
 		//Pencil resting pressure sits around 0.2-0.3) reach a useful fraction of the base; gamma=1 is
 		//linear; gamma>1 requires a firmer press.
+		//Size and alpha handle pressure differently on purpose. Alpha has a natural ceiling of 1,
+		//so `brushAlpha * pow(pressure, gamma)` gives a well-shaped 0..target sweep. Size has no
+		//such ceiling, and treating `size` as a max with a 1 px floor made the dynamic range
+		//proportional to size (tiny at small sizes, huge at large). Instead: `size` is the base /
+		//low-pressure value (what draws on a pressureless device), and `size_max` is the absolute
+		//pixel size at full press. Pressure interpolates: size + (size_max - size) * shaped.
+		//If size_max < size we clamp to size (no growth) so users can't accidentally invert it.
 		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure, pen_pressure){
-			var shaped = Math.pow(pressure, plugin.read_pressure_curve());
-			return {
-				alpha: (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha,
-				size:  parseFloat((brush.pressure_affects_size && pen_pressure) ? Math.max(1, brushSize * shaped) : brushSize)
-			};
+			var gamma  = plugin.read_pressure_curve();
+			var shaped = Math.pow(pressure, gamma);
+			var alpha  = (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha;
+			var size;
+			if(brush.pressure_affects_size){
+				var maxSize = (typeof brush.size_max === "number") ? brush.size_max : brushSize;
+				if(maxSize < brushSize) maxSize = brushSize;
+				//No pen pressure → base size, no growth. On stylus, pressure lerps from size→size_max.
+				var sizePressure = pen_pressure ? pressure : 0;
+				var sizeShaped   = Math.pow(sizePressure, gamma);
+				size = Math.max(0.5, brushSize + (maxSize - brushSize) * sizeShaped);
+			}else{
+				size = brushSize;
+			}
+			return { alpha: alpha, size: parseFloat(size) };
 		};
 
 		//returns the CSS transform string shared by the canvas and background canvas.
@@ -720,8 +737,16 @@
 						} else if(_startMode === "follow_jitter"){
 							_startAngle = (Math.random() * 2 - 1) * (self.active_brush.angle_jitter || 0) * Math.PI;
 						}
-						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,_startAngle);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,_startAngle);
+						//The first spot draws at the brush's base size, never the pressure-scaled size.
+						//Why: the Pointer Events spec reports pressure=0.5 on pointerdown when the
+						//hardware hasn't yet returned a real reading (Apple Pencil / Surface Pen both
+						//do this). With `pressure_affects_size` on and a wide size_max, that bogus 0.5
+						//becomes a huge first dot before pointermove delivers the real pressure. Using
+						//base size here matches the Photoshop/Krita convention of de-emphasising the
+						//landing pressure; alpha still gets pressure-scaled so fade-in keeps working.
+						var _startSize = self.active_brush.pressure_affects_size ? self.brushSize : calculatedSize;
+						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
 						$(self).trigger("drawr:drawstart", [{x: mouse_data.x, y: mouse_data.y, tool: self.active_brush.name, size: calculatedSize, alpha: startAlpha, pressure: mouse_data.pressure}]);
 						plugin.request_redraw.call(self);
 					}
@@ -2567,7 +2592,7 @@
 		"rotation_mode","fixed_angle","angle_jitter",
 		"size_jitter","opacity_jitter","scatter",
 		"smoothing","brush_fade_in",
-		"pressure_affects_alpha","pressure_affects_size"
+		"pressure_affects_alpha","pressure_affects_size","size_max"
 	];
 
 	/* Register a new tool */
@@ -3412,6 +3437,7 @@ jQuery.fn.drawr.register({
 		self._customSize       = self.plugin.create_slider.call(self, $adv, "basesize",   1, 100, 15);
 		self._customAlpha      = self.plugin.create_slider.call(self, $adv, "basealpha",  0, 100, 100);
 		self._customFadeIn     = self.plugin.create_slider.call(self, $adv, "fadein",     0, 200, 0);
+		self._customSizeMax    = self.plugin.create_slider.call(self, $adv, "sizemax",    1, 200, 20);
 		self._customSmoothing   = self.plugin.create_checkbox.call(self, $adv, "Smoothing",  false);
 		self._customPressureA   = self.plugin.create_checkbox.call(self, $adv, "PressureAlpha", true);
 		self._customPressureS   = self.plugin.create_checkbox.call(self, $adv, "PressureSize",  false);
@@ -3450,7 +3476,8 @@ jQuery.fn.drawr.register({
 				smoothing:      self._customSmoothing.prop("checked"),
 				brush_fade_in:  parseInt(self._customFadeIn.val()),
 				pressure_affects_alpha: self._customPressureA.prop("checked"),
-				pressure_affects_size:  self._customPressureS.prop("checked")
+				pressure_affects_size:  self._customPressureS.prop("checked"),
+				size_max: parseFloat(self._customSizeMax.val())
 			};
 
 			//persist first, then register + paint buttons on every active instance via reconcile.
@@ -3686,6 +3713,7 @@ jQuery.fn.drawr.register({
 	order: 5,
 	pressure_affects_alpha: true,
 	pressure_affects_size: true,
+	size_max: 20,
 	smoothing: false,
 	flow: 1,
 	spacing: 0.15,
@@ -4358,11 +4386,12 @@ jQuery.fn.drawr.register({
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-fountain-pen-tip mdi-24px",
 	name: "pen",
-	size: 2,
+	size: 1,
 	alpha: 1,
 	order: 2,
 	pressure_affects_alpha: false,
 	pressure_affects_size: true,
+	size_max: 3,
 	smoothing: true,
 	flow: 1,
 	spacing: 0.25,
@@ -4751,6 +4780,10 @@ jQuery.fn.drawr.register({
 		self.$scatterSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "scatter",    0, 100, 0);
 		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0);
 		self.$fadeInSlider     = self.plugin.create_slider.call(self, self.$advancedSection, "fadein",     0, 200, 0);
+		//size_max: absolute max size in pixels at full pen pressure. Only meaningful when
+		//pressure_affects_size is on. Same range as the main size slider. If set below the current
+		//`size`, the engine clamps up so you never invert the sweep.
+		self.$sizeMaxSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizemax",    1, 200, 20);
 
 		//bind each slider to its canonical field on active_brush, with its own mapping.
 		//update() sets _suppressSettingsWrite=true while repopulating, so we don't write-back defaults on every tool switch.
@@ -4771,6 +4804,7 @@ jQuery.fn.drawr.register({
 		bindSlider(self.$scatterSlider,    "scatter",        function(v){ return v / 100; });
 		bindSlider(self.$fixedAngleSlider, "fixed_angle",    function(v){ return v * Math.PI / 180; });
 		bindSlider(self.$fadeInSlider,     "brush_fade_in",  function(v){ return Math.round(v); });
+		bindSlider(self.$sizeMaxSlider,    "size_max",       function(v){ return v; });
 
 		self.$cbSmoothing = self.plugin.create_checkbox.call(self, self.$advancedSection, "Smoothing", false);
 		self.$cbSmoothing.on("change.drawr", function(){
@@ -4887,6 +4921,7 @@ jQuery.fn.drawr.register({
 				if(self.$scatterSlider)    self.$scatterSlider.val(Math.round((b.scatter || 0) * 100)).trigger("input");
 				if(self.$fixedAngleSlider) self.$fixedAngleSlider.val(Math.round(((b.fixed_angle || 0) * 180 / Math.PI) % 360)).trigger("input");
 				if(self.$fadeInSlider)     self.$fadeInSlider.val(b.brush_fade_in || 0).trigger("input");
+				if(self.$sizeMaxSlider)    self.$sizeMaxSlider.val(Math.round((typeof b.size_max === "number") ? b.size_max : (b.size || 20))).trigger("input");
 				if(self.$cbSmoothing)      self.$cbSmoothing.prop("checked", !!b.smoothing);
 				//Reset hidden for custom brushes (their "defaults" are the record fields)
 				if(self.$resetButton)      self.$resetButton.css("display", b.removable ? "none" : "");
@@ -4934,6 +4969,7 @@ jQuery.fn.drawr.register({
 		delete self.$scatterSlider;
 		delete self.$fixedAngleSlider;
 		delete self.$fadeInSlider;
+		delete self.$sizeMaxSlider;
 		delete self.$cbSmoothing;
 		delete self.$resetButton;
 		delete self.$pressureCurveSlider;

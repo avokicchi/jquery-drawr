@@ -1,11 +1,12 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-fountain-pen-tip mdi-24px",
 	name: "pen",
-	size: 2,
+	size: 1,
 	alpha: 1,
 	order: 2,
 	pressure_affects_alpha: false,
 	pressure_affects_size: true,
+	size_max: 3,
 	smoothing: true,
 	flow: 1,
 	spacing: 0.25,

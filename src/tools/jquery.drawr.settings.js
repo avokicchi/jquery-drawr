@@ -207,6 +207,10 @@ jQuery.fn.drawr.register({
 		self.$scatterSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "scatter",    0, 100, 0);
 		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0);
 		self.$fadeInSlider     = self.plugin.create_slider.call(self, self.$advancedSection, "fadein",     0, 200, 0);
+		//size_max: absolute max size in pixels at full pen pressure. Only meaningful when
+		//pressure_affects_size is on. Same range as the main size slider. If set below the current
+		//`size`, the engine clamps up so you never invert the sweep.
+		self.$sizeMaxSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizemax",    1, 200, 20);
 
 		//bind each slider to its canonical field on active_brush, with its own mapping.
 		//update() sets _suppressSettingsWrite=true while repopulating, so we don't write-back defaults on every tool switch.
@@ -227,6 +231,7 @@ jQuery.fn.drawr.register({
 		bindSlider(self.$scatterSlider,    "scatter",        function(v){ return v / 100; });
 		bindSlider(self.$fixedAngleSlider, "fixed_angle",    function(v){ return v * Math.PI / 180; });
 		bindSlider(self.$fadeInSlider,     "brush_fade_in",  function(v){ return Math.round(v); });
+		bindSlider(self.$sizeMaxSlider,    "size_max",       function(v){ return v; });
 
 		self.$cbSmoothing = self.plugin.create_checkbox.call(self, self.$advancedSection, "Smoothing", false);
 		self.$cbSmoothing.on("change.drawr", function(){
@@ -343,6 +348,7 @@ jQuery.fn.drawr.register({
 				if(self.$scatterSlider)    self.$scatterSlider.val(Math.round((b.scatter || 0) * 100)).trigger("input");
 				if(self.$fixedAngleSlider) self.$fixedAngleSlider.val(Math.round(((b.fixed_angle || 0) * 180 / Math.PI) % 360)).trigger("input");
 				if(self.$fadeInSlider)     self.$fadeInSlider.val(b.brush_fade_in || 0).trigger("input");
+				if(self.$sizeMaxSlider)    self.$sizeMaxSlider.val(Math.round((typeof b.size_max === "number") ? b.size_max : (b.size || 20))).trigger("input");
 				if(self.$cbSmoothing)      self.$cbSmoothing.prop("checked", !!b.smoothing);
 				//Reset hidden for custom brushes (their "defaults" are the record fields)
 				if(self.$resetButton)      self.$resetButton.css("display", b.removable ? "none" : "");
@@ -390,6 +396,7 @@ jQuery.fn.drawr.register({
 		delete self.$scatterSlider;
 		delete self.$fixedAngleSlider;
 		delete self.$fadeInSlider;
+		delete self.$sizeMaxSlider;
 		delete self.$cbSmoothing;
 		delete self.$resetButton;
 		delete self.$pressureCurveSlider;

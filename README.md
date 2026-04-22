@@ -101,6 +101,13 @@ jQuery.fn.drawr.register({
     //pressure response
     pressure_affects_alpha: true,
     pressure_affects_size: true,
+    size_max: 3,            //with pressure_affects_size on, `size` is the base (low-pressure, and
+                            //what draws on devices without pen pressure) and the stroke lerps up to
+                            //`size_max` (px) at full press. So size=1, size_max=3 stays hairline on
+                            //desktop mouse and sweeps 1..3 px on a stylus — ideal for inking. Set
+                            //size_max to the same value as size to disable growth. Alpha uses the
+                            //simpler multiplicative form — its natural ceiling at 1 makes that
+                            //correct.
 
     //dynamics (all optional — omit to skip that effect)
     flow: 0.9,              //deterministic per-spot alpha multiplier (0..1)
@@ -149,7 +156,7 @@ size, alpha, flow, spacing,
 rotation_mode, fixed_angle, angle_jitter,
 size_jitter, opacity_jitter, scatter,
 smoothing, brush_fade_in,
-pressure_affects_alpha, pressure_affects_size
+pressure_affects_alpha, pressure_affects_size, size_max
 ```
 
 At `register()` time the engine snapshots whichever of these your tool declares into `tool._defaults`. The Settings > Advanced panel edits the live values and persists overrides to `localStorage["drawr.toolOverrides"]`; "Reset defaults" restores from that snapshot and wipes the override entry. Fields you don't declare stay absent after reset, there is no hidden fallback
