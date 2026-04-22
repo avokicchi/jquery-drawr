@@ -9,8 +9,8 @@ jQuery.fn.drawr.register({
 		var self = this;
 
 		self.$loadToolbox = self.plugin.create_toolbox.call(self,"load",
-			{ left: $(self).parent().offset().left + $(self).parent().innerWidth()/2,
-			  top:  $(self).parent().offset().top  + $(self).parent().innerHeight()/2 },
+			{ left: self.$container.offset().left + self.$container.innerWidth()/2,
+			  top:  self.$container.offset().top  + self.$container.innerHeight()/2 },
 			"Load image", 160);
 
 		self.plugin.create_text.call(self, self.$loadToolbox, "Load an image onto the canvas.");

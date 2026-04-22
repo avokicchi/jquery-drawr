@@ -578,14 +578,14 @@
 			//immediately. getContext is cached by the browser, so repeat calls are free.
 			var ctx = function(){ return plugin.active_context.call(self); };
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
-			$(self).parent().on("touchstart." + self._evns, function(e){ e.preventDefault(); });//cancel scroll.
+			self.$container.on("touchstart." + self._evns, function(e){ e.preventDefault(); });//cancel scroll.
 
 			//true if inside canvas, false if outside canvas.
 			//used to check if an initial click or touch start event is valid inside the container
 			//and needs to be tracked through move/end events.
 			self.boundCheck = function(event){
 				//new rotation-aware hit test
-				var parent = $(self).parent()[0];
+				var parent = self.$container[0];
 				var border = plugin.get_border(parent);
 				var box = parent.getBoundingClientRect();
 				var eventX = event.pageX;
@@ -608,7 +608,7 @@
 			//returns true if the event's pointer is within the container element.
 			//used for right-drag pan initiation and hover highlight, where an approximate test is sufficient.
 			self.containerBoundCheck = function(event){
-				var parent = $(self).parent()[0];
+				var parent = self.$container[0];
 				var box = parent.getBoundingClientRect();
 				var eventX = event.originalEvent.clientX;
 				var eventY = event.originalEvent.clientY;
@@ -665,7 +665,7 @@
 
 				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true && self.containerBoundCheck.call(self,e)==true){//yay! We're drawing!
 					if(plugin.is_dragging==false){
-						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
+						mouse_data = plugin.get_mouse_data.call(self,e,self.$container[0],self);
 						//save snapshot of the active layer so the second touch can erase this stroke
 						//start if a gesture is detected. only the active layer can have changed.
 						var _startCtx = ctx();
@@ -734,7 +734,7 @@
 						var newMidY  = (t1.y + t2.y) / 2;
 						/*keep the canvas point under the initial pinch centre pinned to the
 						current finger midpoint, combine zoom-centering and panning in one step */
-						var rect  = $(self).parent()[0].getBoundingClientRect();
+						var rect  = self.$container[0].getBoundingClientRect();
 						var cLeft = rect.left + window.scrollX;
 						var cTop  = rect.top  + window.scrollY;
 						var newScrollX = (gs.midX - cLeft + gs.scrollX) * (newZoom / gs.zoom) - (newMidX - cLeft);
@@ -776,12 +776,12 @@
 				var bound_check = self.boundCheck.call(self,e) && self.containerBoundCheck.call(self,e);
 
 				if(bound_check){
-					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue inset";
+					self.$container.find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue inset";
 				} else {
-					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="";
+					self.$container.find(".sfx-canvas")[0].style.boxShadow="";
 				}
 
-				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
+				var mouse_data = plugin.get_mouse_data.call(self,e,self.$container[0],self);
 
 				if($(self).data("is_drawing")==true && plugin.check_ignore(e)==false){
 
@@ -869,24 +869,24 @@
 					var delta = Math.max(-0.1, Math.min(0.1, e.originalEvent.deltaY * -0.005));
 
 					var newZoomies = self.zoomFactor + delta;
-					var containerOffset = $(self).parent().offset();
+					var containerOffset = self.$container.offset();
 					var focalX = e.pageX - containerOffset.left;
 					var focalY = e.pageY - containerOffset.top;
 					plugin.apply_zoom.call(self, newZoomies, focalX, focalY);
 				};
-				$(self).parent().on("wheel." + self._evns, function(e){
+				self.$container.on("wheel." + self._evns, function(e){
 					e.preventDefault();
 					self.scrollWheel(e);
 				});
 			}
-			$(self).parent().on("contextmenu." + self._evns, function(e){ e.preventDefault(); });
+			self.$container.on("contextmenu." + self._evns, function(e){ e.preventDefault(); });
 			//middle mouse button is claimed for canvas panning, so block the browser's autoscroll-on-middle-click
 			//over the whole container. Autoscroll fires on `mousedown` (not pointerdown), hence the separate bind.
-			$(self).parent().on("mousedown." + self._evns, function(e){
+			self.$container.on("mousedown." + self._evns, function(e){
 				if(e.button === 1) e.preventDefault();
 			});
 			//prevent browser native touch gestures (scroll, pinch-zoom) so pointer events fire uninterrupted
-			$(self).parent().css("touch-action", "none");
+			self.$container.css("touch-action", "none");
 
 			$(window).bind("pointermove." + self._evns, self.drawMove);
 
@@ -957,7 +957,7 @@
 					if($(this).data("dragging") == true){
 						var owner = this.ownerCanvas;
 						if(owner && owner._toolboxPositions){
-							var containerOffset = $(owner).parent().offset();
+							var containerOffset = owner.$container.offset();
 							var o = $(this).offset();
 							owner._toolboxPositions[$(this).data("toolbox-id")] = {
 								left: o.left - containerOffset.left,
@@ -1662,13 +1662,13 @@
 		plugin.initialize_canvas = function(width,height,reset){
 
 			this.origStyles = plugin.get_styles(this);
-			this.origParentStyles = plugin.get_styles($(this).parent()[0]);
+			this.origParentStyles = plugin.get_styles(this.$container[0]);
 			$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none", "position": "relative", "z-index": 1 });
 			//`isolation: isolate` confines mix-blend-mode (used by multiply layers) to the
 			//drawr-container, so blending never reaches the surrounding page. $bgCanvas is
 			//still inside the isolated context — by design; multiply reaches through
 			//transparent regions of layer 0 to the paper background.
-			$(this).parent().css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none", "isolation": "isolate" });
+			this.$container.css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none", "isolation": "isolate" });
 
 			const style = document.createElement('style');
 			style.textContent = `
@@ -1681,7 +1681,26 @@
 			if(!this.$bgCanvas){
 				this.$bgCanvas = $("<canvas class='drawr-bg-canvas'></canvas>");
 				this.$bgCanvas.css({"position":"absolute","z-index":0,"top":0,"left":0,"pointer-events":"none"});
-				this.$bgCanvas.insertBefore(this);
+				this.$container.prepend(this.$bgCanvas);
+			}
+
+			//drawr-layer-stack: inner wrapper that holds the main canvas + extra layer canvases.
+			//its `isolation: isolate` creates a fresh stacking context so layer mix-blend-mode
+			//only reaches sibling layers — the checkerboard ($bgCanvas) and UI overlay
+			//($memoryCanvas) sit outside and never participate in blending.
+			if(!this.$layerStack){
+				this.$layerStack = $("<div class='drawr-layer-stack'></div>").css({
+					"position": "absolute",
+					"top": 0, "left": 0,
+					"width":  "100%",
+					"height": "100%",
+					"z-index": 1,
+					"isolation": "isolate"
+				});
+				this.$container.append(this.$layerStack);
+				//reparent the main canvas into the stack. extra layer canvases already live
+				//here because add_layer inserts them after the last existing layer's $el.
+				this.$layerStack.append(this);
 			}
 
 			if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
@@ -1738,8 +1757,8 @@
 			var context = this.$memoryCanvas[0].getContext("2d");
 			context.fillStyle="blue";
 			context.fillRect(0,0,width,height);
-			var parent_width = $(this).parent().innerWidth();
-			var parent_height = $(this).parent().innerHeight();
+			var parent_width = this.$container.innerWidth();
+			var parent_height = this.$container.innerHeight();
 
 			this.$memoryCanvas.css({
 				"z-index": 5,
@@ -1951,7 +1970,7 @@
 				//while still letting native scroll/pan pass through range sliders and select dropdowns.
 				"touch-action": "manipulation"
 			});
-			$(toolbox).insertAfter($(this).parent());
+			$(toolbox).insertAfter(this.$container);
 			if(position){ $(toolbox).offset(position); }
 			$(toolbox).data("toolbox-id", id);
 			$(toolbox).hide();
@@ -1984,7 +2003,7 @@
 
 		plugin.get_best_toolbox_position = function(id, width, height, $exclude) {
 
-			var container = $(this).parent();
+			var container = this.$container;
 			var cw = container.innerWidth();
 			var ch = container.innerHeight();
 			var P = 6;
@@ -2043,7 +2062,7 @@
 			var w = $toolbox.outerWidth();
 			var h = $toolbox.outerHeight() || 100;
 			var pos = plugin.get_best_toolbox_position.call(self, id, w, h, $toolbox);
-			var containerOffset = $(self).parent().offset();
+			var containerOffset = self.$container.offset();
 			$toolbox.offset({
 				left: containerOffset.left + pos.left,
 				top:  containerOffset.top  + pos.top
@@ -2298,8 +2317,8 @@
 
 				if(typeof param !== "object" || param === null || Array.isArray(param)) throw new Error("drawr movetoolbox: param must be an object");
 				if(typeof param.x !== "number" || typeof param.y !== "number") throw new Error("drawr movetoolbox: param.x and param.y must be numbers");
-				currentCanvas.$brushToolbox.css("left",($(currentCanvas).parent().offset().left + param.x) + "px");
-				currentCanvas.$brushToolbox.css("top",($(currentCanvas).parent().offset().top + param.y) + "px");
+				currentCanvas.$brushToolbox.css("left",(currentCanvas.$container.offset().left + param.x) + "px");
+				currentCanvas.$brushToolbox.css("top",(currentCanvas.$container.offset().top + param.y) + "px");
 				
 			//call with $(selector).drawr("load",something) to load an image.
 			//todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
@@ -2338,14 +2357,14 @@
 					console.error("The element you are running this command on is not a drawr canvas.");
 					return false;//can't destroy if not initialized.
 				}
-				var parent = $(currentCanvas).parent();
+				var $container = currentCanvas.$container;
 				var evns = currentCanvas._evns;
-				parent.off("touchstart." + evns);
-				parent.off("wheel." + evns);
-				parent.off("contextmenu." + evns);
-				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown." + evns);
-				parent.find(".drawr-toolbox .slider-component").off("input." + evns);
-				parent.find(".drawr-toolbox").off("pointerdown." + evns + " touchstart." + evns);
+				$container.off("touchstart." + evns);
+				$container.off("wheel." + evns);
+				$container.off("contextmenu." + evns);
+				$container.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown." + evns);
+				$container.find(".drawr-toolbox .slider-component").off("input." + evns);
+				$container.find(".drawr-toolbox").off("pointerdown." + evns + " touchstart." + evns);
 				$(window).unbind("pointerup." + evns + " pointercancel." + evns, currentCanvas.drawStop);
 				$(window).unbind("pointermove." + evns, currentCanvas.drawMove);
 				$(window).unbind("pointerdown." + evns, currentCanvas.drawStart);
@@ -2368,6 +2387,14 @@
 					delete currentCanvas.layers;
 					delete currentCanvas.activeLayerIndex;
 					delete currentCanvas._nextLayerId;
+				}
+				//unwrap drawr-layer-stack: move the main canvas back to drawr-container so
+				//the DOM returns to its pre-init shape. must happen before style/class resets
+				//below, which expect $(currentCanvas).parent() === drawr-container.
+				if(currentCanvas.$layerStack){
+					currentCanvas.$container.append(currentCanvas);
+					currentCanvas.$layerStack.remove();
+					delete currentCanvas.$layerStack;
 				}
 				currentCanvas.$brushToolbox.remove();
 
@@ -2409,27 +2436,33 @@
 
 				//reset styles to what they were.
 				$(currentCanvas).attr('style', '');
-				$(currentCanvas).parent().attr('style', '');
+				currentCanvas.$container.attr('style', '');
 				$(currentCanvas).css(currentCanvas.origStyles);
-				$(currentCanvas).parent().css(currentCanvas.origParentStyles);
+				currentCanvas.$container.css(currentCanvas.origParentStyles);
 
 				delete currentCanvas.origStyles;
 				delete currentCanvas.origParentStyles;
 
 				$(currentCanvas).removeClass("active-drawr");
-				$(currentCanvas).parent().removeClass("drawr-container");
+				currentCanvas.$container.removeClass("drawr-container");
+				delete currentCanvas.$container;
 			//not an action, but an init call
 			} else if ( typeof action == "object" || typeof action =="undefined" ){
 				if($(currentCanvas).hasClass("active-drawr")) return false;//prevent double init
 				currentCanvas.className = currentCanvas.className + " active-drawr";
-				$(currentCanvas).parent().addClass("drawr-container");
+				//cached reference to drawr-container. stashed first so every later code path
+				//(tools, event handlers, positioning math) can use it instead of
+				//$(this).parent(), which becomes the inner drawr-layer-stack div once
+				//initialize_canvas reparents the main canvas for blend-mode isolation.
+				currentCanvas.$container = $(currentCanvas).parent();
+				currentCanvas.$container.addClass("drawr-container");
 
 				//determine settings
 				var defaultSettings = {
 					"enable_transparency" : true,
 					"enable_scrollwheel_zooming" : true,
-					"canvas_width" : $(currentCanvas).parent().innerWidth(),
-					"canvas_height" : $(currentCanvas).parent().innerHeight(),
+					"canvas_width" : currentCanvas.$container.innerWidth(),
+					"canvas_height" : currentCanvas.$container.innerHeight(),
 					"undo_max_levels" : 5,
 					"color_mode" : "picker",
 					"clear_on_init" : true,
@@ -2448,13 +2481,12 @@
 				currentCanvas.memoryContext.imageSmoothingEnabled= false;
 
 				//cache container dimensions; kept up to date via resize handler
-				var _parent = $(currentCanvas).parent();
-				currentCanvas.containerWidth = _parent.width();
-				currentCanvas.containerHeight = _parent.height();
+				currentCanvas.containerWidth = currentCanvas.$container.width();
+				currentCanvas.containerHeight = currentCanvas.$container.height();
 				currentCanvas._evns = "drawr_" + Math.random().toString(36).slice(2, 9);//event namespace so destroying one drawr instance doesn't affect others.
 				currentCanvas.onWindowResize = function() {
-					currentCanvas.containerWidth = _parent.width();
-					currentCanvas.containerHeight = _parent.height();
+					currentCanvas.containerWidth = currentCanvas.$container.width();
+					currentCanvas.containerHeight = currentCanvas.$container.height();
 				};
 				$(window).on("resize." + currentCanvas._evns, currentCanvas.onWindowResize);
 

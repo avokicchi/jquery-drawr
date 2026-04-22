@@ -80,11 +80,11 @@ jQuery.fn.drawr.register({
 					'<input style="' + inputStyle + '" type="text" value="">' +
 				'</div>'
 			);
-			$(self.$textFloatyBox).insertAfter($(self).parent());
+			$(self.$textFloatyBox).insertAfter(self.$container);
 			var vp = brush.canvasToViewport.call(self, x, y);
 			self.$textFloatyBox.css({
-				left: $(self).parent().offset().left + vp.x,
-				top: $(self).parent().offset().top + vp.y,
+				left: self.$container.offset().left + vp.x,
+				top: self.$container.offset().top + vp.y,
 			});
 			self.$textFloatyBox.find("input").on("pointerdown",function(e){
 				e.preventDefault();
@@ -110,8 +110,8 @@ jQuery.fn.drawr.register({
 		} else {
 			var vp = brush.canvasToViewport.call(self, x, y);
 			self.$textFloatyBox.css({
-				left: $(self).parent().offset().left + vp.x,
-				top: $(self).parent().offset().top + vp.y,
+				left: self.$container.offset().left + vp.x,
+				top: self.$container.offset().top + vp.y,
 			});
 		}
 	},
@@ -161,8 +161,8 @@ jQuery.fn.drawr.register({
 		if(typeof this.$textFloatyBox!=="undefined"){
 			var vp = brush.canvasToViewport.call(this, x, y);
 			this.$textFloatyBox.css({
-				left: $(this).parent().offset().left + vp.x,
-				top: $(this).parent().offset().top + vp.y,
+				left: this.$container.offset().left + vp.x,
+				top: this.$container.offset().top + vp.y,
 			});
 		}
 	}

@@ -10,8 +10,8 @@ jQuery.fn.drawr.register({
 		var self = this;
 
 		self.$customToolbox = self.plugin.create_toolbox.call(self,"custom",
-			{ left: $(self).parent().offset().left + $(self).parent().innerWidth()/2,
-			  top:  $(self).parent().offset().top  + $(self).parent().innerHeight()/2 },
+			{ left: self.$container.offset().left + self.$container.innerWidth()/2,
+			  top:  self.$container.offset().top  + self.$container.innerHeight()/2 },
 			"Custom brush", 160);
 
 		self.plugin.create_text.call(self, self.$customToolbox, "Create a new brush from an image.");

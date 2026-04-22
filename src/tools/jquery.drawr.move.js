@@ -4,10 +4,10 @@ jQuery.fn.drawr.register({
 	order: 13,
 	raw_input: true,
 	activate: function(brush,context){
-		$(this).parent().css({"cursor":"move"});
+		this.$container.css({"cursor":"move"});
 	},
 	deactivate: function(brush,context){
-		$(this).parent().css({"cursor":"default"});
+		this.$container.css({"cursor":"default"});
 	},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
@@ -32,7 +32,7 @@ jQuery.fn.drawr.register({
 			brush.dragStartY = eventY;
 			brush.scrollStartY = self.scrollY;
 		} else {
-			var parent = $(self).parent()[0];
+			var parent = self.$container[0];
 			var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
 			var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
 			var box = parent.getBoundingClientRect();
@@ -59,7 +59,7 @@ jQuery.fn.drawr.register({
 		}
 
 		if(brush.mode === "rotate"){
-			var parent = $(self).parent()[0];
+			var parent = self.$container[0];
 			var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
 			var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
 			var box = parent.getBoundingClientRect();
