@@ -31,6 +31,16 @@ jQuery.fn.drawr.register({
 			});
 		}
 
+		function blendOptionsHtml(current){
+			var modes = (plugin.BLEND_MODES || [{value:"normal",label:"Normal"},{value:"multiply",label:"Multiply"}]);
+			var html = "";
+			for(var i = 0; i < modes.length; i++){
+				var m = modes[i];
+				html += '<option value="' + m.value + '"' + (current === m.value ? ' selected' : '') + '>' + m.label + '</option>';
+			}
+			return html;
+		}
+
 		//render the row list. top-of-stack first (Photoshop convention).
 		function render(){
 			$rows.empty();
@@ -56,8 +66,7 @@ jQuery.fn.drawr.register({
 							'</div>' +
 							'<div style="display:flex;align-items:center;gap:4px;">' +
 								'<select class="layer-mode" style="flex:1;color:#333;font-size:11px;">' +
-									'<option value="normal"' + (layer.mode === 'normal' ? ' selected' : '') + '>Normal</option>' +
-									'<option value="multiply"' + (layer.mode === 'multiply' ? ' selected' : '') + '>Multiply</option>' +
+									blendOptionsHtml(layer.mode) +
 								'</select>' +
 								'<input class="layer-opacity" type="range" min="0" max="100" value="' + Math.round(layer.opacity * 100) + '" style="flex:1;min-width:0;height:14px;margin:0;">' +
 								'<span class="layer-opacity-label" style="min-width:26px;text-align:right;font-size:10px;font-variant-numeric:tabular-nums;">' + Math.round(layer.opacity * 100) + '</span>' +

@@ -8,6 +8,25 @@
 
 	var DRAWR_VERSION = "@@VERSION@@";
 
+	//inject global stylesheet once per page load. provides :active press-feedback for
+	//toolbox buttons and tool buttons (tactile feedback on both desktop and touch).
+	function _drawrInjectStyle(){
+		if(document.getElementById("drawr-global-style")) return;
+		var css = [
+			".drawr-toolwindow-btn{transition:transform 60ms ease-out,box-shadow 80ms ease-out,background 80ms ease-out;}",
+			".drawr-toolwindow-btn:active{transform:translateY(1px);background:linear-gradient(to bottom,rgba(0,0,0,0.25) 0%,rgba(255,255,255,0.05) 100%) !important;box-shadow:inset 0 1px 3px rgba(0,0,0,0.35) !important;}",
+			".drawr-tool-btn{transition:filter 80ms ease-out,box-shadow 80ms ease-out;}",
+			".drawr-tool-btn:active{filter:brightness(0.82);box-shadow:inset 0 1px 4px rgba(0,0,0,0.35);}",
+			".drawr-layer-row .layer-vis:active,.drawr-layer-row .layer-movedown:active,.drawr-layer-row .layer-delete:active{filter:brightness(1.4);}"
+		].join("\n");
+		var s = document.createElement("style");
+		s.id = "drawr-global-style";
+		s.type = "text/css";
+		s.appendChild(document.createTextNode(css));
+		(document.head || document.documentElement).appendChild(s);
+	}
+	_drawrInjectStyle();
+
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
 		//returns the euclidean distance between two {x,y} points.
@@ -136,6 +155,24 @@
 		//solid paper) — export compositing in JS ignores $bgCanvas so saved output is clean.
 		plugin.MAX_LAYERS = 3;
 
+		//Supported layer blend modes. The name is used both as the CSS mix-blend-mode
+		//value (for on-screen compositing) and the canvas globalCompositeOperation
+		//(for export). All listed values are spec-supported in both domains.
+		plugin.BLEND_MODES = [
+			{ value: "normal",   label: "Normal"   },
+			{ value: "multiply", label: "Multiply" },
+			{ value: "screen",   label: "Screen"   },
+			{ value: "overlay",  label: "Overlay"  },
+			{ value: "darken",   label: "Darken"   },
+			{ value: "lighten",  label: "Lighten"  }
+		];
+		plugin._blendCssValue = function(mode){
+			for(var i = 0; i < plugin.BLEND_MODES.length; i++){
+				if(plugin.BLEND_MODES[i].value === mode) return mode;
+			}
+			return "normal";
+		};
+
 		//returns the 2D context of the currently-active layer. safe to call repeatedly; the
 		//browser caches getContext on a given canvas, so a fresh call per spot is free.
 		plugin.active_context = function(){
@@ -204,7 +241,7 @@
 				"height": (self.height * (self.zoomFactor || 1)) + "px",
 				"transform-origin": "50% 50%",
 				"transform": plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0),
-				"mix-blend-mode": mode === "multiply" ? "multiply" : "normal",
+				"mix-blend-mode": plugin._blendCssValue(mode),
 				"opacity": 1
 			});
 			//insert above the last existing layer canvas (main or extra). z-index rises with index.
@@ -262,7 +299,7 @@
 				target.opacity = donor.opacity;
 				target.history_trimmed = !!donor.history_trimmed;
 				//apply the adopted CSS state to the main canvas.
-				target.$el.css("mix-blend-mode", donor.mode === "multiply" ? "multiply" : "normal");
+				target.$el.css("mix-blend-mode", plugin._blendCssValue(donor.mode));
 				target.$el.css("opacity", donor.opacity);
 				target.$el.css("display", donor.visible ? "" : "none");
 				//remove the donor.
@@ -313,7 +350,7 @@
 			//apply to every layer including the main canvas — multiply on the bottom-most
 			//layer is a no-op visually (nothing below to blend with), but after reorder any
 			//layer may end up on top.
-			self.layers[index].$el.css("mix-blend-mode", mode === "multiply" ? "multiply" : "normal");
+			self.layers[index].$el.css("mix-blend-mode", plugin._blendCssValue(mode));
 		};
 
 		plugin.set_layer_visibility = function(index, visible){
@@ -378,7 +415,7 @@
 				var layer = self.layers[i];
 				if(!layer.visible) continue;
 				ctx.globalAlpha = layer.opacity;
-				ctx.globalCompositeOperation = (i > 0 && layer.mode === "multiply") ? "multiply" : "source-over";
+				ctx.globalCompositeOperation = (i > 0 && layer.mode && layer.mode !== "normal") ? plugin._blendCssValue(layer.mode) : "source-over";
 				ctx.drawImage(layer.canvas, 0, 0);
 			}
 			ctx.globalAlpha = 1;
@@ -1876,8 +1913,10 @@
 				if(e.button === 1) e.preventDefault();
 			});
 			$(toolbox).on("pointerdown." + self._evns + " touchstart." + self._evns, function(e){
-				if($(e.target).is("button, input, select, textarea, label, a") || $(e.target).closest("button, input, select, textarea, label, a").length) {
-					e.preventDefault();//prevent native scroll, even if we don't wanna drag the toolbox.
+				if($(e.target).is("button, input, select, textarea, label, option, a") || $(e.target).closest("button, input, select, textarea, label, option, a").length) {
+					//do NOT preventDefault on touchstart over interactive children — on mobile
+					//that suppresses the synthesized click/tap, breaking buttons, sliders, selects
+					//and (critically) <label> elements that toggle nested checkboxes.
 					return;
 				}
 				var tbOffset = $(this).offset();

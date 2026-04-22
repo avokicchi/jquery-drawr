@@ -41,7 +41,7 @@ jQuery.fn.drawr.register({
 			}
 			self.plugin.is_dragging=false;
 		});
-		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,100,self.settings.inital_brush_size).on("input.drawr",function(){
+		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,200,self.settings.inital_brush_size).on("input.drawr",function(){
 			var v = parseInt(this.value);
 			self.brushSize = v;
 			if(typeof self.active_brush.size!=="undefined")  self.active_brush.size = v;
