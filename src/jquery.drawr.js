@@ -1878,8 +1878,38 @@
 				context.stroke();
 			}
 
+			//zoom percentage indicator — bottom-center of the viewport, fades like the scrollbars.
+			if(this.zoomIndicatorTimer > 0){
+				var _zAlpha = Math.min(0.85, (0.85/100)*this.zoomIndicatorTimer);
+				this.zoomIndicatorTimer -= 5;
+				var _zText = Math.round(this.zoomFactor * 100) + "%";
+				context.save();
+				context.globalAlpha = _zAlpha;
+				context.font = "bold 13px sans-serif";
+				context.textAlign = "center";
+				context.textBaseline = "middle";
+				var _zPadX = 10, _zPadY = 5;
+				var _zTextW = context.measureText(_zText).width;
+				var _zBoxW = _zTextW + _zPadX * 2;
+				var _zBoxH = 13 + _zPadY * 2;
+				var _zBoxX = container_width / 2 - _zBoxW / 2;
+				var _zBoxY = container_height - _zBoxH - 16; //16px margin from bottom
+				context.fillStyle = "rgba(0,0,0,0.6)";
+				//rounded rect — fallback to plain rect if roundRect unsupported
+				if(context.roundRect){
+					context.beginPath();
+					context.roundRect(_zBoxX, _zBoxY, _zBoxW, _zBoxH, 4);
+					context.fill();
+				} else {
+					context.fillRect(_zBoxX, _zBoxY, _zBoxW, _zBoxH);
+				}
+				context.fillStyle = "#fff";
+				context.fillText(_zText, container_width / 2, _zBoxY + _zBoxH / 2 + 1);
+				context.restore();
+			}
+
 			//we only keep the loop alive when there is work to do (effectCallback preview or scroll indicators fading in n out). Everything else is triggered via request_redraw.
-			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || (this.settings.debug_mode && this.isGesturing)){
+			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || this.zoomIndicatorTimer > 0 || (this.settings.debug_mode && this.isGesturing)){
 				this._animFrameQueued = true;
 				window.requestAnimationFrame(this.draw_animations_bound);
 			}
@@ -2079,6 +2109,10 @@
 			plugin.broadcast_zoom_css.call(self);
 			plugin.draw_checkerboard.call(self);
 			if(oldZoom > 0 && zoomFactor !== oldZoom){
+				//brief zoom-percentage readout at the bottom of the viewport, mirroring the
+				//fade-in/out behaviour of the scroll indicators (driven from draw_animations).
+				self.zoomIndicatorTimer = 500;
+				plugin.request_redraw.call(self);
 				if(focalX !== undefined){
 					plugin.apply_scroll.call(self, (focalX + self.scrollX) * (zoomFactor / oldZoom) - focalX, (focalY + self.scrollY) * (zoomFactor / oldZoom) - focalY, true);
 				} else {
@@ -2354,6 +2388,7 @@
 				delete currentCanvas.scrollWheel;
 				delete currentCanvas.current_toolset;
 				delete currentCanvas.scrollTimer;
+				delete currentCanvas.zoomIndicatorTimer;
 
 				//reset css and visuals and scrolls
 				$(currentCanvas).width(currentCanvas.width);
