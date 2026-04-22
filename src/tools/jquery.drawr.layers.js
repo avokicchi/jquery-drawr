@@ -18,8 +18,9 @@ jQuery.fn.drawr.register({
 			if(self.layers.length >= plugin.MAX_LAYERS) return;
 			var layer = plugin.add_layer.call(self, "normal");
 			if(layer){
-				//activate the new layer so the next stroke targets it.
-				plugin.set_active_layer.call(self, self.layers.length - 1);
+				//new layers land at index 0 (bottom of stack); activate it so the next
+				//stroke targets it.
+				plugin.set_active_layer.call(self, 0);
 				render();
 			}
 		});
@@ -51,6 +52,7 @@ jQuery.fn.drawr.register({
 					var isActive = idx === activeIdx;
 					var canDelete = self.layers.length > 1;
 					var canMoveDown = idx >= 1;
+					var canMoveUp = idx < self.layers.length - 1;
 					var $row = $(
 						'<div class="drawr-layer-row" data-idx="' + idx + '" style="' +
 							'display:flex;flex-direction:column;gap:2px;padding:4px 6px;margin-bottom:3px;border-radius:3px;cursor:pointer;' +
@@ -61,6 +63,7 @@ jQuery.fn.drawr.register({
 								'<span class="layer-vis mdi ' + (layer.visible ? 'mdi-eye' : 'mdi-eye-off') + '" style="cursor:pointer;font-size:16px;width:18px;text-align:center;"></span>' +
 								'<input class="layer-name" type="text" value="' + esc(layer.name || "New layer") + '" ' +
 									'style="flex:1;min-width:0;font-weight:bold;font-size:11px;background:transparent;border:1px solid transparent;color:inherit;padding:1px 3px;border-radius:2px;">' +
+								'<span class="layer-moveup mdi mdi-arrow-up" title="Move up" style="cursor:' + (canMoveUp ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canMoveUp ? 1 : 0.3) + ';"></span>' +
 								'<span class="layer-movedown mdi mdi-arrow-down" title="Move down" style="cursor:' + (canMoveDown ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canMoveDown ? 1 : 0.3) + ';"></span>' +
 								'<span class="layer-delete mdi mdi-close" title="Delete" style="cursor:' + (canDelete ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canDelete ? 1 : 0.3) + ';color:#f88;"></span>' +
 							'</div>' +
@@ -76,7 +79,7 @@ jQuery.fn.drawr.register({
 
 					//row click sets active (but ignore clicks on controls inside the row)
 					$row.on('pointerdown', function(e){
-						if($(e.target).is('.layer-vis, .layer-movedown, .layer-delete, .layer-name, select, input, option')) return;
+						if($(e.target).is('.layer-vis, .layer-moveup, .layer-movedown, .layer-delete, .layer-name, select, input, option')) return;
 						plugin.set_active_layer.call(self, idx);
 						render();
 						e.stopPropagation();
@@ -99,6 +102,15 @@ jQuery.fn.drawr.register({
 							if(!this.value) this.value = "New layer";
 						})
 						.on('keydown', function(e){ if(e.key === 'Enter') this.blur(); });
+
+					if(canMoveUp){
+						//moving idx up == moving (idx+1) down; swap is symmetric.
+						$row.find('.layer-moveup').on('click', function(e){
+							e.stopPropagation();
+							plugin.move_layer_down.call(self, idx + 1);
+							render();
+						});
+					}
 
 					if(canMoveDown){
 						$row.find('.layer-movedown').on('click', function(e){

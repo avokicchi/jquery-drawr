@@ -29,7 +29,7 @@
 			".drawr-toolwindow-btn:active{transform:translateY(1px);background:linear-gradient(to bottom,rgba(0,0,0,0.25) 0%,rgba(255,255,255,0.05) 100%) !important;box-shadow:inset 0 1px 3px rgba(0,0,0,0.35) !important;}",
 			".drawr-tool-btn{transition:filter 80ms ease-out,box-shadow 80ms ease-out;}",
 			".drawr-tool-btn:active{filter:brightness(0.82);box-shadow:inset 0 1px 4px rgba(0,0,0,0.35);}",
-			".drawr-layer-row .layer-vis:active,.drawr-layer-row .layer-movedown:active,.drawr-layer-row .layer-delete:active{filter:brightness(1.4);}"
+			".drawr-layer-row .layer-vis:active,.drawr-layer-row .layer-moveup:active,.drawr-layer-row .layer-movedown:active,.drawr-layer-row .layer-delete:active{filter:brightness(1.4);}"
 		].join("\n");
 		var s = document.createElement("style");
 		s.id = "drawr-global-style";
@@ -238,8 +238,10 @@
 
 		//Create a new layer canvas as a sibling of the main canvas inside the drawr-container.
 		//pixel dimensions match self.width x self.height; CSS display size tracks zoom.
-		//z-index is indexForInsert+2 (layer 0 is z=1, extras start at z=2). opacity/visibility/
-		//mix-blend-mode applied per mode.
+		//the new layer is inserted at array index 0 (bottom of the stack / bottom of the
+		//layers panel) — feels more natural than appearing above existing artwork and
+		//immediately obscuring it. z-index is re-applied by restack_layers. opacity/
+		//visibility/mix-blend-mode applied per mode.
 		plugin.add_layer = function(mode, name){
 			var self = this;
 			if(self.layers.length >= plugin.MAX_LAYERS) return null;
@@ -260,8 +262,9 @@
 				"mix-blend-mode": plugin._blendCssValue(mode),
 				"opacity": 1
 			});
-			//insert above the last existing layer canvas (main or extra). z-index rises with index.
-			$c.insertAfter(self.layers[self.layers.length - 1].$el);
+			//place below the current bottom layer in the DOM. z-index (set by restack_layers)
+			//is authoritative for stacking, so DOM order is cosmetic — we still mirror it.
+			$c.insertBefore(self.layers[0].$el);
 			var layer = {
 				id: self._nextLayerId++,
 				canvas: c,
@@ -272,7 +275,9 @@
 				opacity: 1,
 				history_trimmed: false
 			};
-			self.layers.push(layer);
+			self.layers.unshift(layer);
+			//existing active-layer pointer now refers to a layer one slot higher in the array.
+			if(typeof self.activeLayerIndex === "number") self.activeLayerIndex++;
 			plugin.restack_layers.call(self);
 			return layer;
 		};
@@ -3873,8 +3878,9 @@ jQuery.fn.drawr.register({
 			if(self.layers.length >= plugin.MAX_LAYERS) return;
 			var layer = plugin.add_layer.call(self, "normal");
 			if(layer){
-				//activate the new layer so the next stroke targets it.
-				plugin.set_active_layer.call(self, self.layers.length - 1);
+				//new layers land at index 0 (bottom of stack); activate it so the next
+				//stroke targets it.
+				plugin.set_active_layer.call(self, 0);
 				render();
 			}
 		});
@@ -3906,6 +3912,7 @@ jQuery.fn.drawr.register({
 					var isActive = idx === activeIdx;
 					var canDelete = self.layers.length > 1;
 					var canMoveDown = idx >= 1;
+					var canMoveUp = idx < self.layers.length - 1;
 					var $row = $(
 						'<div class="drawr-layer-row" data-idx="' + idx + '" style="' +
 							'display:flex;flex-direction:column;gap:2px;padding:4px 6px;margin-bottom:3px;border-radius:3px;cursor:pointer;' +
@@ -3916,6 +3923,7 @@ jQuery.fn.drawr.register({
 								'<span class="layer-vis mdi ' + (layer.visible ? 'mdi-eye' : 'mdi-eye-off') + '" style="cursor:pointer;font-size:16px;width:18px;text-align:center;"></span>' +
 								'<input class="layer-name" type="text" value="' + esc(layer.name || "New layer") + '" ' +
 									'style="flex:1;min-width:0;font-weight:bold;font-size:11px;background:transparent;border:1px solid transparent;color:inherit;padding:1px 3px;border-radius:2px;">' +
+								'<span class="layer-moveup mdi mdi-arrow-up" title="Move up" style="cursor:' + (canMoveUp ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canMoveUp ? 1 : 0.3) + ';"></span>' +
 								'<span class="layer-movedown mdi mdi-arrow-down" title="Move down" style="cursor:' + (canMoveDown ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canMoveDown ? 1 : 0.3) + ';"></span>' +
 								'<span class="layer-delete mdi mdi-close" title="Delete" style="cursor:' + (canDelete ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canDelete ? 1 : 0.3) + ';color:#f88;"></span>' +
 							'</div>' +
@@ -3931,7 +3939,7 @@ jQuery.fn.drawr.register({
 
 					//row click sets active (but ignore clicks on controls inside the row)
 					$row.on('pointerdown', function(e){
-						if($(e.target).is('.layer-vis, .layer-movedown, .layer-delete, .layer-name, select, input, option')) return;
+						if($(e.target).is('.layer-vis, .layer-moveup, .layer-movedown, .layer-delete, .layer-name, select, input, option')) return;
 						plugin.set_active_layer.call(self, idx);
 						render();
 						e.stopPropagation();
@@ -3954,6 +3962,15 @@ jQuery.fn.drawr.register({
 							if(!this.value) this.value = "New layer";
 						})
 						.on('keydown', function(e){ if(e.key === 'Enter') this.blur(); });
+
+					if(canMoveUp){
+						//moving idx up == moving (idx+1) down; swap is symmetric.
+						$row.find('.layer-moveup').on('click', function(e){
+							e.stopPropagation();
+							plugin.move_layer_down.call(self, idx + 1);
+							render();
+						});
+					}
 
 					if(canMoveDown){
 						$row.find('.layer-movedown').on('click', function(e){
