@@ -18,7 +18,7 @@
 
 (function( $ ) {
 
-	var DRAWR_VERSION = "1.0.3";
+	var DRAWR_VERSION = "1.0.4";
 
 	//inject global stylesheet once per page load. provides :active press-feedback for
 	//toolbox buttons and tool buttons (tactile feedback on both desktop and touch).
@@ -760,6 +760,8 @@
 						newScrollX -= dX - (dX * Math.cos(dAngle) - dY * Math.sin(dAngle));
 						newScrollY -= dY - (dX * Math.sin(dAngle) + dY * Math.cos(dAngle));
 						self.gesturePivot = { x: pvX, y: pvY };
+						//pinch zoom bypasses apply_zoom, so trigger the zoom-percentage readout here too.
+						if(newZoom !== self.zoomFactor) self.zoomIndicatorTimer = 500;
 						self.zoomFactor = newZoom;
 						$(self).width(self.width * newZoom);
 						$(self).height(self.height * newZoom);
@@ -1899,15 +1901,20 @@
 				context.globalAlpha = _zAlpha;
 				context.font = "bold 13px sans-serif";
 				context.textAlign = "center";
-				context.textBaseline = "middle";
+				//use alphabetic baseline + actual glyph metrics. textBaseline "middle" resolves
+				//to em-box middle on iOS Safari (shifts text down), but alphabetic + measured
+				//ascent/descent centers the visible glyph identically on every browser.
+				context.textBaseline = "alphabetic";
+				var _zMetrics = context.measureText(_zText);
+				var _zAscent  = _zMetrics.actualBoundingBoxAscent  || 10;
+				var _zDescent = _zMetrics.actualBoundingBoxDescent || 2;
+				var _zGlyphH  = _zAscent + _zDescent;
 				var _zPadX = 10, _zPadY = 5;
-				var _zTextW = context.measureText(_zText).width;
-				var _zBoxW = _zTextW + _zPadX * 2;
-				var _zBoxH = 13 + _zPadY * 2;
+				var _zBoxW = _zMetrics.width + _zPadX * 2;
+				var _zBoxH = _zGlyphH + _zPadY * 2;
 				var _zBoxX = container_width / 2 - _zBoxW / 2;
 				var _zBoxY = container_height - _zBoxH - 16; //16px margin from bottom
 				context.fillStyle = "rgba(0,0,0,0.6)";
-				//rounded rect — fallback to plain rect if roundRect unsupported
 				if(context.roundRect){
 					context.beginPath();
 					context.roundRect(_zBoxX, _zBoxY, _zBoxW, _zBoxH, 4);
@@ -1916,7 +1923,8 @@
 					context.fillRect(_zBoxX, _zBoxY, _zBoxW, _zBoxH);
 				}
 				context.fillStyle = "#fff";
-				context.fillText(_zText, container_width / 2, _zBoxY + _zBoxH / 2 + 1);
+				//baseline y = box top + top padding + ascent → glyph sits centered in the box.
+				context.fillText(_zText, container_width / 2, _zBoxY + _zPadY + _zAscent);
 				context.restore();
 			}
 
