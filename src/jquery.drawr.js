@@ -1497,14 +1497,17 @@
 		/* create a checkbox */
 		plugin.create_checkbox = function(toolbox, title, checked){
 			var key = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+			//unique id per checkbox so the <label for=…> association is unambiguous on iOS
+			//(tapping the label text reliably toggles the box; wrapping-label alone is flaky
+			//on some mobile browsers when paired with pointer-event listeners on ancestors).
+			var uid = 'drawr-cb-' + Math.random().toString(36).slice(2, 9);
 			$(toolbox).append(
-				'<div style="clear:both;text-align:left;padding:4px 8px;">' +
-				'<label style="cursor:pointer;user-select:none;">' +
-				'<input type="checkbox" class="checkbox-component checkbox-' + key + '"' + (checked ? ' checked' : '') + ' style="margin-right:5px;">' +
-				title +
-				'</label></div>'
+				'<div style="clear:both;text-align:left;padding:4px 8px;display:flex;align-items:center;gap:5px;">' +
+				'<input id="' + uid + '" type="checkbox" class="checkbox-component checkbox-' + key + '"' + (checked ? ' checked' : '') + ' style="margin:0;flex:0 0 auto;">' +
+				'<label for="' + uid + '" style="cursor:pointer;user-select:none;line-height:1;margin:0;">' + title + '</label>' +
+				'</div>'
 			);
-			$(toolbox).find('.checkbox-' + key).on('pointerdown touchstart', function(e){
+			$(toolbox).find('.checkbox-' + key).on('pointerdown', function(e){
 				e.stopPropagation();
 			});
 			return $(toolbox).find('.checkbox-' + key);
@@ -1901,7 +1904,10 @@
 			$(toolbox).css({
 				"position" : "absolute", "z-index" : 6, "cursor" : "move", "width" : width + "px", "height" : "auto", "color" : "#fff",
 				"padding" : "2px", "background" : "linear-gradient(to bottom, rgba(69,72,77,1) 0%,rgba(0,0,0,1) 100%)", "border-radius" : "2px",
-				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center"
+				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center",
+				//touch-action: manipulation keeps taps snappy (no 300ms wait, no double-tap-zoom)
+				//while still letting native scroll/pan pass through range sliders and select dropdowns.
+				"touch-action": "manipulation"
 			});
 			$(toolbox).insertAfter($(this).parent());
 			if(position){ $(toolbox).offset(position); }
@@ -1912,11 +1918,12 @@
 			$(toolbox).on("mousedown." + self._evns, function(e){
 				if(e.button === 1) e.preventDefault();
 			});
-			$(toolbox).on("pointerdown." + self._evns + " touchstart." + self._evns, function(e){
+			//drag using pointerdown only — it covers mouse/touch/pen on all modern browsers.
+			//binding touchstart alongside is the root cause of mobile tap failures: iOS Safari
+			//treats a same-element touchstart+pointerdown pair as ambiguous, frequently dropping
+			//the synthesized click on nested buttons/labels/sliders.
+			$(toolbox).on("pointerdown." + self._evns, function(e){
 				if($(e.target).is("button, input, select, textarea, label, option, a") || $(e.target).closest("button, input, select, textarea, label, option, a").length) {
-					//do NOT preventDefault on touchstart over interactive children — on mobile
-					//that suppresses the synthesized click/tap, breaking buttons, sliders, selects
-					//and (critically) <label> elements that toggle nested checkboxes.
 					return;
 				}
 				var tbOffset = $(this).offset();
