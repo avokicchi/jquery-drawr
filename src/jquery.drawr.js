@@ -202,19 +202,23 @@
 			var transform = plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0);
 			$(self).css("transform", transform);
 			if(self.layers){
-				for(var i = 1; i < self.layers.length; i++){
+				//iterate all layers — the main canvas may sit at any array position after
+				//move_layer_down, so we can't skip index 0. Re-applying the transform to the
+				//main canvas's own $el is a harmless no-op.
+				for(var i = 0; i < self.layers.length; i++){
 					self.layers[i].$el.css("transform", transform);
 				}
 			}
 			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
 		};
 
-		//mirror the main canvas's zoomed CSS display size onto every extra layer canvas.
+		//mirror the main canvas's zoomed CSS display size onto every layer canvas.
 		plugin.broadcast_zoom_css = function(){
 			var self = this;
 			if(!self.layers) return;
 			var zoom = self.zoomFactor || 1;
-			for(var i = 1; i < self.layers.length; i++){
+			//same reason as broadcast_transform — the main canvas may be at any index.
+			for(var i = 0; i < self.layers.length; i++){
 				self.layers[i].$el.width(self.width * zoom);
 				self.layers[i].$el.height(self.height * zoom);
 			}
