@@ -9,21 +9,42 @@ jQuery.fn.drawr.register({
 
 		self.$layersToolbox = plugin.create_toolbox.call(self, "layers", null, "Layers", 220);
 
-		//container the rows render into; rebuilt on every change.
+		//toolbar — actions that operate on the active layer. built once; render() re-applies
+		//enabled/disabled state on every layer mutation.
+		var toolbarDefs = [
+			{ key:"add",       icon:"mdi-plus",                title:"Add layer"   },
+			{ key:"delete",    icon:"mdi-close",               title:"Delete layer" },
+			{ key:"clear",     icon:"mdi-delete",              title:"Clear layer" },
+			{ key:"moveup",    icon:"mdi-arrow-up",            title:"Move layer up" },
+			{ key:"movedown",  icon:"mdi-arrow-down",          title:"Move layer down" },
+			{ key:"mergedown", icon:"mdi-arrow-collapse-down", title:"Merge down" }
+		];
+		var toolbarHtml = '<div class="drawr-layers-toolbar" style="display:flex;gap:2px;padding:4px 6px;border-bottom:1px solid rgba(255,255,255,0.1);align-items:center;">';
+		for(var i = 0; i < toolbarDefs.length; i++){
+			var d = toolbarDefs[i];
+			toolbarHtml += '<span class="drawr-layers-tb-' + d.key + ' mdi ' + d.icon + '" title="' + d.title + '" style="font-size:18px;width:24px;height:24px;line-height:24px;text-align:center;cursor:pointer;border-radius:3px;"></span>';
+		}
+		toolbarHtml += '</div>';
+		self.$layersToolbox.append(toolbarHtml);
 		self.$layersToolbox.append('<div class="drawr-layers-rows" style="padding:4px 6px;"></div>');
-		var $rows = self.$layersToolbox.find('.drawr-layers-rows');
 
-		var $addBtn = plugin.create_button.call(self, self.$layersToolbox, "Add layer");
-		$addBtn.on('click', function(){
-			if(self.layers.length >= plugin.MAX_LAYERS) return;
-			var layer = plugin.add_layer.call(self, "normal");
-			if(layer){
-				//new layers land at index 0 (bottom of stack); activate it so the next
-				//stroke targets it.
-				plugin.set_active_layer.call(self, 0);
-				render();
-			}
-		});
+		var $toolbar = self.$layersToolbox.find('.drawr-layers-toolbar');
+		var $rows = self.$layersToolbox.find('.drawr-layers-rows');
+		var $tbAdd       = $toolbar.find('.drawr-layers-tb-add');
+		var $tbDelete    = $toolbar.find('.drawr-layers-tb-delete');
+		var $tbClear     = $toolbar.find('.drawr-layers-tb-clear');
+		var $tbMoveUp    = $toolbar.find('.drawr-layers-tb-moveup');
+		var $tbMoveDown  = $toolbar.find('.drawr-layers-tb-movedown');
+		var $tbMergeDown = $toolbar.find('.drawr-layers-tb-mergedown');
+
+		//apply enabled/disabled styling; returns the can-flag for handler short-circuits.
+		function setEnabled($btn, enabled){
+			$btn.css({
+				"opacity": enabled ? 1 : 0.3,
+				"cursor":  enabled ? "pointer" : "not-allowed"
+			});
+			$btn.data("enabled", !!enabled);
+		}
 
 		//escape for safe interpolation of user-entered names into the html template.
 		function esc(s){
@@ -42,17 +63,72 @@ jQuery.fn.drawr.register({
 			return html;
 		}
 
+		//toolbar handlers — read activeLayerIndex at click time so they always operate on
+		//whatever is currently selected.
+		$tbAdd.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var layer = plugin.add_layer.call(self, "normal");
+			if(layer){
+				plugin.set_active_layer.call(self, 0);
+				render();
+			}
+		});
+		$tbDelete.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var idx = self.activeLayerIndex;
+			var layer = self.layers[idx];
+			if(!layer) return;
+			if(!window.confirm("Delete \"" + (layer.name || "New layer") + "\"?")) return;
+			plugin.delete_layer.call(self, idx);
+			render();
+		});
+		$tbClear.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var idx = self.activeLayerIndex;
+			var layer = self.layers[idx];
+			if(!layer) return;
+			if(!window.confirm("Clear \"" + (layer.name || "New layer") + "\"?")) return;
+			plugin.clear_layer.call(self, idx);
+		});
+		$tbMoveUp.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.move_layer_down.call(self, self.activeLayerIndex + 1);
+			render();
+		});
+		$tbMoveDown.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.move_layer_down.call(self, self.activeLayerIndex);
+			render();
+		});
+		$tbMergeDown.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.merge_layer_down.call(self, self.activeLayerIndex);
+			render();
+		});
+
 		//render the row list. top-of-stack first (Photoshop convention).
 		function render(){
 			$rows.empty();
 			var activeIdx = self.activeLayerIndex;
+
+			//toolbar enable/disable based on the active layer.
+			setEnabled($tbAdd,       self.layers.length < plugin.MAX_LAYERS);
+			setEnabled($tbDelete,    self.layers.length > 1);
+			setEnabled($tbClear,     true);
+			setEnabled($tbMoveUp,    activeIdx < self.layers.length - 1);
+			setEnabled($tbMoveDown,  activeIdx > 0);
+			setEnabled($tbMergeDown, activeIdx > 0);
+
 			for(var visualIndex = self.layers.length - 1; visualIndex >= 0; visualIndex--){
 				(function(idx){
 					var layer = self.layers[idx];
 					var isActive = idx === activeIdx;
-					var canDelete = self.layers.length > 1;
-					var canMoveDown = idx >= 1;
-					var canMoveUp = idx < self.layers.length - 1;
 					var $row = $(
 						'<div class="drawr-layer-row" data-idx="' + idx + '" style="' +
 							'display:flex;flex-direction:column;gap:2px;padding:4px 6px;margin-bottom:3px;border-radius:3px;cursor:pointer;' +
@@ -60,12 +136,9 @@ jQuery.fn.drawr.register({
 							'border:1px solid ' + (isActive ? 'orange' : 'rgba(255,255,255,0.12)') + ';' +
 						'">' +
 							'<div style="display:flex;align-items:center;gap:4px;">' +
-								'<span class="layer-vis mdi ' + (layer.visible ? 'mdi-eye' : 'mdi-eye-off') + '" style="cursor:pointer;font-size:16px;width:18px;text-align:center;"></span>' +
+								'<span class="layer-vis mdi ' + (layer.visible ? 'mdi-eye' : 'mdi-eye-off') + '" title="Toggle visibility" style="cursor:pointer;font-size:16px;width:18px;text-align:center;"></span>' +
 								'<input class="layer-name" type="text" value="' + esc(layer.name || "New layer") + '" ' +
 									'style="flex:1;min-width:0;font-weight:bold;font-size:11px;background:transparent;border:1px solid transparent;color:inherit;padding:1px 3px;border-radius:2px;">' +
-								'<span class="layer-moveup mdi mdi-arrow-up" title="Move up" style="cursor:' + (canMoveUp ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canMoveUp ? 1 : 0.3) + ';"></span>' +
-								'<span class="layer-movedown mdi mdi-arrow-down" title="Move down" style="cursor:' + (canMoveDown ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canMoveDown ? 1 : 0.3) + ';"></span>' +
-								'<span class="layer-delete mdi mdi-close" title="Delete" style="cursor:' + (canDelete ? 'pointer' : 'not-allowed') + ';font-size:16px;width:18px;text-align:center;opacity:' + (canDelete ? 1 : 0.3) + ';color:#f88;"></span>' +
 							'</div>' +
 							'<div style="display:flex;align-items:center;gap:4px;">' +
 								'<select class="layer-mode" style="flex:1;color:#333;font-size:11px;">' +
@@ -79,7 +152,7 @@ jQuery.fn.drawr.register({
 
 					//row click sets active (but ignore clicks on controls inside the row)
 					$row.on('pointerdown', function(e){
-						if($(e.target).is('.layer-vis, .layer-moveup, .layer-movedown, .layer-delete, .layer-name, select, input, option')) return;
+						if($(e.target).is('.layer-vis, .layer-name, select, input, option')) return;
 						plugin.set_active_layer.call(self, idx);
 						render();
 						e.stopPropagation();
@@ -103,32 +176,6 @@ jQuery.fn.drawr.register({
 						})
 						.on('keydown', function(e){ if(e.key === 'Enter') this.blur(); });
 
-					if(canMoveUp){
-						//moving idx up == moving (idx+1) down; swap is symmetric.
-						$row.find('.layer-moveup').on('click', function(e){
-							e.stopPropagation();
-							plugin.move_layer_down.call(self, idx + 1);
-							render();
-						});
-					}
-
-					if(canMoveDown){
-						$row.find('.layer-movedown').on('click', function(e){
-							e.stopPropagation();
-							plugin.move_layer_down.call(self, idx);
-							render();
-						});
-					}
-
-					if(canDelete){
-						$row.find('.layer-delete').on('click', function(e){
-							e.stopPropagation();
-							if(!window.confirm("Delete \"" + (layer.name || "New layer") + "\"?")) return;
-							plugin.delete_layer.call(self, idx);
-							render();
-						});
-					}
-
 					$row.find('.layer-mode').on('change', function(e){
 						e.stopPropagation();
 						plugin.set_layer_mode.call(self, idx, this.value);
@@ -143,12 +190,6 @@ jQuery.fn.drawr.register({
 
 					$rows.append($row);
 				})(visualIndex);
-			}
-			//enable/disable + button.
-			if(self.layers.length >= plugin.MAX_LAYERS){
-				$addBtn.prop('disabled', true).css('opacity', 0.5);
-			} else {
-				$addBtn.prop('disabled', false).css('opacity', 1);
 			}
 		}
 

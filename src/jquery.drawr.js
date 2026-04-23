@@ -400,6 +400,74 @@
 			self.layers[index].name = name;
 		};
 
+		//wipe a single layer's pixels while keeping its metadata (name/mode/opacity/visibility).
+		//only the bottom layer under no-transparency mode fills white — matches the invariant
+		//that clear_canvas() maintains for single-layer drawings; clearing a non-base layer to
+		//white would obscure everything below it.
+		plugin.clear_layer = function(index){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			var layer = self.layers[index];
+			var ctx = layer.canvas.getContext("2d", { alpha: true });
+			ctx.save();
+			ctx.globalCompositeOperation = "source-over";
+			ctx.globalAlpha = 1;
+			if(index === 0 && self.settings && self.settings.enable_transparency === false){
+				ctx.fillStyle = "white";
+				ctx.fillRect(0, 0, self.width, self.height);
+			} else {
+				ctx.clearRect(0, 0, self.width, self.height);
+			}
+			ctx.restore();
+		};
+
+		//blend layers[index] (upper) into layers[index-1] (lower) using the upper layer's
+		//blend mode + opacity, then remove the upper layer. mirrors what composite_for_export
+		//does on screen, but only between two neighbours.
+		plugin.merge_layer_down = function(index){
+			var self = this;
+			if(index < 1 || index >= self.layers.length) return;
+			var src = self.layers[index];
+			var dst = self.layers[index - 1];
+
+			//1. blend src into dst using src's mode+opacity.
+			var dctx = dst.canvas.getContext("2d", { alpha: true });
+			dctx.save();
+			dctx.globalAlpha = (typeof src.opacity === "number") ? src.opacity : 1;
+			dctx.globalCompositeOperation = plugin._blendCssValue(src.mode || "normal");
+			dctx.drawImage(src.canvas, 0, 0);
+			dctx.restore();
+
+			//2. remove src. mirrors delete_layer's main-canvas special case: if src is the
+			//main canvas DOM element (which can't be removed from the page), copy dst's
+			//newly-merged pixels into main and remove dst instead, adopting dst's identity
+			//so undo ids continue to resolve.
+			if(src.canvas === self){
+				var mctx = src.canvas.getContext("2d", { alpha: true });
+				mctx.globalCompositeOperation = "source-over";
+				mctx.globalAlpha = 1;
+				mctx.clearRect(0, 0, self.width, self.height);
+				mctx.drawImage(dst.canvas, 0, 0);
+				src.id = dst.id;
+				src.name = dst.name;
+				src.mode = dst.mode;
+				src.visible = dst.visible;
+				src.opacity = dst.opacity;
+				src.history_trimmed = !!dst.history_trimmed;
+				src.$el.css("mix-blend-mode", plugin._blendCssValue(dst.mode));
+				src.$el.css("opacity", dst.opacity);
+				src.$el.css("display", dst.visible ? "" : "none");
+				dst.$el.remove();
+				self.layers.splice(index - 1, 1);
+				self.activeLayerIndex = self.layers.indexOf(src);
+			} else {
+				src.$el.remove();
+				self.layers.splice(index, 1);
+				self.activeLayerIndex = index - 1;
+			}
+			plugin.restack_layers.call(self);
+		};
+
 		//collapse back to a single base layer: strips every extra sibling canvas and resets
 		//the base layer's metadata (name/mode/opacity/visibility) to defaults. the base layer
 		//is always self.layers[0] — delete_layer preserves this invariant by copying donor
@@ -2044,6 +2112,11 @@
 			//treats a same-element touchstart+pointerdown pair as ambiguous, frequently dropping
 			//the synthesized click on nested buttons/labels/sliders.
 			$(toolbox).on("pointerdown." + self._evns, function(e){
+				//raise this toolbox above any overlapping siblings. happens for every pointerdown
+				//on the dialog, including on its buttons/sliders, so clicking anywhere on a partially
+				//occluded window brings it to the front. (^_^)
+				plugin._toolboxTopZ = (plugin._toolboxTopZ || 6) + 1;
+				this.style.zIndex = plugin._toolboxTopZ;
 				if($(e.target).is("button, input, select, textarea, label, option, a") || $(e.target).closest("button, input, select, textarea, label, option, a").length) {
 					return;
 				}
