@@ -4,7 +4,7 @@ It requires material design icons for the icons of the tool picker, and jquery. 
 
 Screenshot:
 
-![screenshot of canvas](https://cachecat.io/jquery-drawr/images/sample.jpg "Screenshot of drawr")
+![screenshot of canvas](https://cachecat.io/jquery-drawr/images/sample2.jpg "Screenshot of drawr")
 
 Usage:
 
