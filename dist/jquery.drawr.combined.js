@@ -4049,6 +4049,48 @@ jQuery.fn.drawr.register({
 			});
 		}
 
+		//iOS Scribble activates when the Apple Pencil approaches any visible <input type=text>,
+		//which hijacks drawing strokes that happen to pass near the layer-name field. Workaround:
+		//keep the <input> display:none except while actively editing, and show a plain <span> in
+		//its place. A span is not a Scribble target, so pencil proximity is harmless; tap to edit
+		//still works because the span's click swaps in the real input and focuses it. (^_^)b
+		function makeScribbleSafe($input, onCommit){
+			var placeholder = $input.val() || "";
+			var $span = $('<span class="layer-name-display"></span>').css({
+				"flex": "1",
+				"min-width": "0",
+				"font-weight": "bold",
+				"font-size": "11px",
+				"color": "inherit",
+				"padding": "1px 3px",
+				"border": "1px solid transparent",
+				"border-radius": "2px",
+				"cursor": "text",
+				"text-align": "left",
+				"overflow": "hidden",
+				"text-overflow": "ellipsis",
+				"white-space": "nowrap"
+			}).text(placeholder);
+			$input.before($span).hide();
+			$span.on('pointerdown mousedown touchstart', function(e){ e.stopPropagation(); });
+			$span.on('click', function(e){
+				e.stopPropagation();
+				$span.hide();
+				$input.show();
+				//defer focus one tick so Safari/WebKit accepts the focus from a synthetic path.
+				setTimeout(function(){
+					$input.trigger('focus');
+					try { $input[0].select(); } catch(_){}
+				}, 0);
+			});
+			$input.on('blur.scribble', function(){
+				if(typeof onCommit === 'function') onCommit.call($input[0], $input.val());
+				$span.text($input.val() || placeholder);
+				$input.hide();
+				$span.show();
+			});
+		}
+
 		function blendOptionsHtml(current){
 			var modes = (plugin.BLEND_MODES || [{value:"normal",label:"Normal"},{value:"multiply",label:"Multiply"}]);
 			var html = "";
@@ -4148,7 +4190,7 @@ jQuery.fn.drawr.register({
 
 					//row click sets active (but ignore clicks on controls inside the row)
 					$row.on('pointerdown', function(e){
-						if($(e.target).is('.layer-vis, .layer-name, select, input, option')) return;
+						if($(e.target).is('.layer-vis, .layer-name, .layer-name-display, select, input, option')) return;
 						plugin.set_active_layer.call(self, idx);
 						render();
 						e.stopPropagation();
@@ -4162,7 +4204,7 @@ jQuery.fn.drawr.register({
 
 					//name input — keyboard-focused editing. swallow pointer/key events so the
 					//row-click handler and the global toolbox-drag don't interfere.
-					$row.find('.layer-name')
+					var $name = $row.find('.layer-name')
 						.on('pointerdown mousedown touchstart keydown', function(e){ e.stopPropagation(); })
 						.on('focus', function(){ $(this).css('border-color', 'rgba(255,255,255,0.4)'); })
 						.on('blur', function(){
@@ -4171,6 +4213,7 @@ jQuery.fn.drawr.register({
 							if(!this.value) this.value = "New layer";
 						})
 						.on('keydown', function(e){ if(e.key === 'Enter') this.blur(); });
+					makeScribbleSafe($name);
 
 					$row.find('.layer-mode').on('change', function(e){
 						e.stopPropagation();
