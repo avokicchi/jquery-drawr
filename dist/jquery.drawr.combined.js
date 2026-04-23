@@ -2106,9 +2106,16 @@
 				"position" : "absolute", "z-index" : 6, "cursor" : "move", "width" : width + "px", "height" : "auto", "color" : "#fff",
 				"padding" : "2px", "background" : "linear-gradient(to bottom, rgba(69,72,77,1) 0%,rgba(0,0,0,1) 100%)", "border-radius" : "2px",
 				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center",
-				//touch-action: manipulation keeps taps snappy (no 300ms wait, no double-tap-zoom)
-				//while still letting native scroll/pan pass through range sliders and select dropdowns.
-				"touch-action": "manipulation"
+				//touch-action: none tells the browser this element never triggers native scroll/zoom,
+				//which is the only reliable way to stop a finger/pencil drag across the toolbox from
+				//scrolling the iOS page. preventDefault() on pointerdown can't do it. the browser
+				//decides pan vs pointer before pointer events fire, based purely on touch-action.
+				//binding touchstart+preventDefault used to work but broke taps on nested controls
+				//(iOS drops the synthesized click when touchstart and pointerdown are both bound on
+				//the same element). none fixes scroll without needing touchstart at all. buttons,
+				//labels, selects, and range sliders all still work because they use pointer/click
+				//events. (^_^)
+				"touch-action": "none"
 			});
 			$(toolbox).insertAfter(this.$container);
 			if(position){ $(toolbox).offset(position); }
