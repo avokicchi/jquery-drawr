@@ -2208,6 +2208,7 @@
 
 		//toolset is only a parameter for more helpful errors.
 		plugin.get_tool_by_name = function(toolset, toolname){
+			if(toolname=="brush") toolname = "paintbrush";//backwards compatible...
 			var found = $.fn.drawr.availableTools.find(function(t){ return t.name == toolname; });
 			if(!found) throw new Error("Tool " + toolname + " not found, as referenced in " + toolset);
 			return found;
@@ -2232,8 +2233,12 @@
 				});
 			} else {
 				for(var tool_name of self.toolsets[toolset]){
-					var tool = plugin.get_tool_by_name(toolset, tool_name);
-					plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					try {
+						var tool = plugin.get_tool_by_name(toolset, tool_name);
+						plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					} catch(e){
+						//tool not found, but keep going.
+					}
 				}
 			}
 		};
