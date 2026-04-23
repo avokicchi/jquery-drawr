@@ -12,7 +12,7 @@ jQuery.fn.drawr.register({
 		var ctx = function(){ return self.plugin.active_context.call(self); };
 
 		//color dialog
-		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",180);
+		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",240);
 
 		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Color");
 
@@ -32,7 +32,7 @@ jQuery.fn.drawr.register({
 
 		self.$settingsToolbox.find('input.color-picker2').drawrpalette("set",self.plugin.rgb_to_hex(self.brushBackColor.r,self.brushBackColor.g,self.brushBackColor.b));
 
-		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha)).on("input.drawr",function(){
+		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha), true).on("input.drawr",function(){
 			var v = parseFloat(this.value/100);
 			self.brushAlpha = v;
 			if(typeof self.active_brush.alpha!=="undefined") self.active_brush.alpha = v;
@@ -41,7 +41,7 @@ jQuery.fn.drawr.register({
 			}
 			self.plugin.is_dragging=false;
 		});
-		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,200,self.settings.inital_brush_size).on("input.drawr",function(){
+		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,200,self.settings.inital_brush_size, true).on("input.drawr",function(){
 			var v = parseInt(this.value);
 			self.brushSize = v;
 			if(typeof self.active_brush.size!=="undefined")  self.active_brush.size = v;
@@ -199,18 +199,18 @@ jQuery.fn.drawr.register({
 
 		//all numeric dynamics use a 0..100 slider; values are mapped to the canonical range in the handler.
 		//spacing uses 2..200 mapped to 0.02..2 so the min is usable.
-		self.$spacingSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "spacing",    2, 200, 25);
-		self.$flowSlider       = self.plugin.create_slider.call(self, self.$advancedSection, "flow",       0, 100, 100);
+		self.$spacingSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "spacing",    2, 200, 25, true);
+		self.$flowSlider       = self.plugin.create_slider.call(self, self.$advancedSection, "flow",       0, 100, 100, true);
 		self.$sizeJitSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizejitter", 0, 100, 0);
 		self.$opJitSlider      = self.plugin.create_slider.call(self, self.$advancedSection, "opjitter",   0, 100, 0);
 		self.$angleJitSlider   = self.plugin.create_slider.call(self, self.$advancedSection, "anglejit",   0, 100, 0);
 		self.$scatterSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "scatter",    0, 100, 0);
-		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0);
+		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0, true);
 		self.$fadeInSlider     = self.plugin.create_slider.call(self, self.$advancedSection, "fadein",     0, 200, 0);
 		//size_max: absolute max size in pixels at full pen pressure. Only meaningful when
 		//pressure_affects_size is on. Same range as the main size slider. If set below the current
 		//`size`, the engine clamps up so you never invert the sweep.
-		self.$sizeMaxSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizemax",    1, 200, 20);
+		self.$sizeMaxSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizemax",    1, 200, 20, true);
 
 		//bind each slider to its canonical field on active_brush, with its own mapping.
 		//update() sets _suppressSettingsWrite=true while repopulating, so we don't write-back defaults on every tool switch.

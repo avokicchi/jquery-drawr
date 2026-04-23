@@ -1571,23 +1571,53 @@
 			return $(toolbox).find('label:last');
 		};
 
-		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact. */
-		plugin.create_slider = function(toolbox,title,min,max,value){
+		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact.
+		   If precision is truthy, adds tiny -/+ buttons on either side that nudge the value by 1. */
+		plugin.create_slider = function(toolbox,title,min,max,value,precision){
 			var self=this;
 			var cls = "slider-" + title.toLowerCase();
+			var nudgeBtnStyle = 'flex:0 0 auto;width:16px;height:16px;padding:0;' +
+				'display:inline-flex;align-items:center;justify-content:center;' +
+				'cursor:pointer;user-select:none;' +
+				'border:1px solid rgba(0,0,0,0.25);border-radius:2px;' +
+				'background:linear-gradient(to bottom,rgba(255,255,255,0.18) 0%,rgba(0,0,0,0.08) 100%);' +
+				'color:inherit;';
+			var decHtml = precision ? '<button type="button" class="slider-dec ' + cls + '-dec" tabindex="-1" style="' + nudgeBtnStyle + 'margin-right:-2px;"><i class="mdi mdi-minus" style="font-size:12px;line-height:1;"></i></button>' : '';
+			var incHtml = precision ? '<button type="button" class="slider-inc ' + cls + '-inc" tabindex="-1" style="' + nudgeBtnStyle + 'margin-left:-2px;"><i class="mdi mdi-plus" style="font-size:12px;line-height:1;"></i></button>' : '';
 			$(toolbox).append(
-				'<div style="display:flex;align-items:center;padding:2px 6px;gap:6px;font-size:11px;">' +
+				'<div style="display:flex;align-items:center;padding:2px 6px;gap:4px;font-size:11px;">' +
 					'<label style="flex:0 0 auto;min-width:46px;font-weight:bold;user-select:none;">' + title + '</label>' +
+					decHtml +
 					'<input class="slider-component ' + cls + '" value="' + value + '" type="range" min="' + min + '" max="' + max + '" step="1" style="flex:1 1 auto;min-width:0;background:transparent;height:18px;margin:0;" />' +
+					incHtml +
 					'<span style="flex:0 0 auto;min-width:26px;text-align:right;font-variant-numeric:tabular-nums;">' + value + '</span>' +
 				'</div>'
 			);
-			$(toolbox).find("." + cls).on("pointerdown touchstart",function(e){
+			var $input = $(toolbox).find("." + cls).not("button");
+			$input.on("pointerdown touchstart",function(e){
 				e.stopPropagation();
 			}).on("input." + self._evns,function(e){
-				 $(this).next().text($(this).val());
+				 $(this).nextAll("span").first().text($(this).val());
 			});
-			return $(toolbox).find(".slider-" + title.toLowerCase());
+			if(precision){
+				var nudge = function(delta){
+					var cur = parseFloat($input.val());
+					var mn = parseFloat($input.attr("min"));
+					var mx = parseFloat($input.attr("max"));
+					var next = Math.max(mn, Math.min(mx, cur + delta));
+					if(next === cur) return;
+					$input.val(next).trigger("input").trigger("change");
+				};
+				$(toolbox).find("." + cls + "-dec").on("pointerdown touchstart click", function(e){
+					e.stopPropagation();
+					if(e.type === "click") nudge(-1);
+				});
+				$(toolbox).find("." + cls + "-inc").on("pointerdown touchstart click", function(e){
+					e.stopPropagation();
+					if(e.type === "click") nudge(1);
+				});
+			}
+			return $input;
 		}
 
 		/* create a button */
@@ -3400,7 +3430,7 @@ jQuery.fn.drawr.register({
 		self.$customToolbox = self.plugin.create_toolbox.call(self,"custom",
 			{ left: self.$container.offset().left + self.$container.innerWidth()/2,
 			  top:  self.$container.offset().top  + self.$container.innerHeight()/2 },
-			"Custom brush", 160);
+			"Custom brush", 240);
 
 		self.plugin.create_text.call(self, self.$customToolbox, "Create a new brush from an image.");
 
@@ -3432,17 +3462,17 @@ jQuery.fn.drawr.register({
 			{ value: "random_jitter",  label: "Random" },
 			{ value: "follow_jitter",  label: "Follow±" }
 		], "follow_stroke");
-		self._customSpacing    = self.plugin.create_slider.call(self, $adv, "spacing",    2, 200, 25);
-		self._customFlow       = self.plugin.create_slider.call(self, $adv, "flow",       0, 100, 100);
+		self._customSpacing    = self.plugin.create_slider.call(self, $adv, "spacing",    2, 200, 25, true);
+		self._customFlow       = self.plugin.create_slider.call(self, $adv, "flow",       0, 100, 100, true);
 		self._customSizeJit    = self.plugin.create_slider.call(self, $adv, "sizejitter", 0, 100, 0);
 		self._customOpJit      = self.plugin.create_slider.call(self, $adv, "opjitter",   0, 100, 0);
 		self._customAngleJit   = self.plugin.create_slider.call(self, $adv, "anglejit",   0, 100, 0);
 		self._customScatter    = self.plugin.create_slider.call(self, $adv, "scatter",    0, 100, 0);
-		self._customFixedAngle = self.plugin.create_slider.call(self, $adv, "angle",      0, 359, 0);
-		self._customSize       = self.plugin.create_slider.call(self, $adv, "basesize",   1, 100, 15);
-		self._customAlpha      = self.plugin.create_slider.call(self, $adv, "basealpha",  0, 100, 100);
+		self._customFixedAngle = self.plugin.create_slider.call(self, $adv, "angle",      0, 359, 0, true);
+		self._customSize       = self.plugin.create_slider.call(self, $adv, "basesize",   1, 100, 15, true);
+		self._customAlpha      = self.plugin.create_slider.call(self, $adv, "basealpha",  0, 100, 100, true);
 		self._customFadeIn     = self.plugin.create_slider.call(self, $adv, "fadein",     0, 200, 0);
-		self._customSizeMax    = self.plugin.create_slider.call(self, $adv, "sizemax",    1, 200, 20);
+		self._customSizeMax    = self.plugin.create_slider.call(self, $adv, "sizemax",    1, 200, 20, true);
 		self._customSmoothing   = self.plugin.create_checkbox.call(self, $adv, "Smoothing",  false);
 		self._customPressureA   = self.plugin.create_checkbox.call(self, $adv, "PressureAlpha", true);
 		self._customPressureS   = self.plugin.create_checkbox.call(self, $adv, "PressureSize",  false);
@@ -4590,7 +4620,7 @@ jQuery.fn.drawr.register({
 		var ctx = function(){ return self.plugin.active_context.call(self); };
 
 		//color dialog
-		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",180);
+		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",240);
 
 		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Color");
 
@@ -4610,7 +4640,7 @@ jQuery.fn.drawr.register({
 
 		self.$settingsToolbox.find('input.color-picker2').drawrpalette("set",self.plugin.rgb_to_hex(self.brushBackColor.r,self.brushBackColor.g,self.brushBackColor.b));
 
-		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha)).on("input.drawr",function(){
+		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha), true).on("input.drawr",function(){
 			var v = parseFloat(this.value/100);
 			self.brushAlpha = v;
 			if(typeof self.active_brush.alpha!=="undefined") self.active_brush.alpha = v;
@@ -4619,7 +4649,7 @@ jQuery.fn.drawr.register({
 			}
 			self.plugin.is_dragging=false;
 		});
-		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,200,self.settings.inital_brush_size).on("input.drawr",function(){
+		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,200,self.settings.inital_brush_size, true).on("input.drawr",function(){
 			var v = parseInt(this.value);
 			self.brushSize = v;
 			if(typeof self.active_brush.size!=="undefined")  self.active_brush.size = v;
@@ -4777,18 +4807,18 @@ jQuery.fn.drawr.register({
 
 		//all numeric dynamics use a 0..100 slider; values are mapped to the canonical range in the handler.
 		//spacing uses 2..200 mapped to 0.02..2 so the min is usable.
-		self.$spacingSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "spacing",    2, 200, 25);
-		self.$flowSlider       = self.plugin.create_slider.call(self, self.$advancedSection, "flow",       0, 100, 100);
+		self.$spacingSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "spacing",    2, 200, 25, true);
+		self.$flowSlider       = self.plugin.create_slider.call(self, self.$advancedSection, "flow",       0, 100, 100, true);
 		self.$sizeJitSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizejitter", 0, 100, 0);
 		self.$opJitSlider      = self.plugin.create_slider.call(self, self.$advancedSection, "opjitter",   0, 100, 0);
 		self.$angleJitSlider   = self.plugin.create_slider.call(self, self.$advancedSection, "anglejit",   0, 100, 0);
 		self.$scatterSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "scatter",    0, 100, 0);
-		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0);
+		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0, true);
 		self.$fadeInSlider     = self.plugin.create_slider.call(self, self.$advancedSection, "fadein",     0, 200, 0);
 		//size_max: absolute max size in pixels at full pen pressure. Only meaningful when
 		//pressure_affects_size is on. Same range as the main size slider. If set below the current
 		//`size`, the engine clamps up so you never invert the sweep.
-		self.$sizeMaxSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizemax",    1, 200, 20);
+		self.$sizeMaxSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizemax",    1, 200, 20, true);
 
 		//bind each slider to its canonical field on active_brush, with its own mapping.
 		//update() sets _suppressSettingsWrite=true while repopulating, so we don't write-back defaults on every tool switch.

@@ -1559,23 +1559,53 @@
 			return $(toolbox).find('label:last');
 		};
 
-		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact. */
-		plugin.create_slider = function(toolbox,title,min,max,value){
+		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact.
+		   If precision is truthy, adds tiny -/+ buttons on either side that nudge the value by 1. */
+		plugin.create_slider = function(toolbox,title,min,max,value,precision){
 			var self=this;
 			var cls = "slider-" + title.toLowerCase();
+			var nudgeBtnStyle = 'flex:0 0 auto;width:16px;height:16px;padding:0;' +
+				'display:inline-flex;align-items:center;justify-content:center;' +
+				'cursor:pointer;user-select:none;' +
+				'border:1px solid rgba(0,0,0,0.25);border-radius:2px;' +
+				'background:linear-gradient(to bottom,rgba(255,255,255,0.18) 0%,rgba(0,0,0,0.08) 100%);' +
+				'color:inherit;';
+			var decHtml = precision ? '<button type="button" class="slider-dec ' + cls + '-dec" tabindex="-1" style="' + nudgeBtnStyle + 'margin-right:-2px;"><i class="mdi mdi-minus" style="font-size:12px;line-height:1;"></i></button>' : '';
+			var incHtml = precision ? '<button type="button" class="slider-inc ' + cls + '-inc" tabindex="-1" style="' + nudgeBtnStyle + 'margin-left:-2px;"><i class="mdi mdi-plus" style="font-size:12px;line-height:1;"></i></button>' : '';
 			$(toolbox).append(
-				'<div style="display:flex;align-items:center;padding:2px 6px;gap:6px;font-size:11px;">' +
+				'<div style="display:flex;align-items:center;padding:2px 6px;gap:4px;font-size:11px;">' +
 					'<label style="flex:0 0 auto;min-width:46px;font-weight:bold;user-select:none;">' + title + '</label>' +
+					decHtml +
 					'<input class="slider-component ' + cls + '" value="' + value + '" type="range" min="' + min + '" max="' + max + '" step="1" style="flex:1 1 auto;min-width:0;background:transparent;height:18px;margin:0;" />' +
+					incHtml +
 					'<span style="flex:0 0 auto;min-width:26px;text-align:right;font-variant-numeric:tabular-nums;">' + value + '</span>' +
 				'</div>'
 			);
-			$(toolbox).find("." + cls).on("pointerdown touchstart",function(e){
+			var $input = $(toolbox).find("." + cls).not("button");
+			$input.on("pointerdown touchstart",function(e){
 				e.stopPropagation();
 			}).on("input." + self._evns,function(e){
-				 $(this).next().text($(this).val());
+				 $(this).nextAll("span").first().text($(this).val());
 			});
-			return $(toolbox).find(".slider-" + title.toLowerCase());
+			if(precision){
+				var nudge = function(delta){
+					var cur = parseFloat($input.val());
+					var mn = parseFloat($input.attr("min"));
+					var mx = parseFloat($input.attr("max"));
+					var next = Math.max(mn, Math.min(mx, cur + delta));
+					if(next === cur) return;
+					$input.val(next).trigger("input").trigger("change");
+				};
+				$(toolbox).find("." + cls + "-dec").on("pointerdown touchstart click", function(e){
+					e.stopPropagation();
+					if(e.type === "click") nudge(-1);
+				});
+				$(toolbox).find("." + cls + "-inc").on("pointerdown touchstart click", function(e){
+					e.stopPropagation();
+					if(e.type === "click") nudge(1);
+				});
+			}
+			return $input;
 		}
 
 		/* create a button */
