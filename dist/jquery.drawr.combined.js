@@ -18,7 +18,7 @@
 
 (function( $ ) {
 
-	var DRAWR_VERSION = "1.0.4";
+	var DRAWR_VERSION = "1.0.5";
 
 	//inject global stylesheet once per page load. provides :active press-feedback for
 	//toolbox buttons and tool buttons (tactile feedback on both desktop and touch).
@@ -3475,12 +3475,15 @@
 			});
 
 			//auto_apply commits on pointerup-within-region only, not pointerdown, to avoid double-firing.
+			//Only an sv-square release auto-closes; hue/alpha-only drags commit but keep the dropdown
+			//open so the user can continue picking against the newly chosen hue or alpha.
 			bind(picker, picker.$dropdown, 'pointerup.drawrpalette', function() {
+				var wasSv = picker.slidingHsl;
 				var wasDragging = picker.slidingHsl || picker.slidingHue || picker.slidingAlpha;
 				picker.slidingHsl = picker.slidingHue = picker.slidingAlpha = false;
 				if (picker.settings.auto_apply && wasDragging) {
 					commit(picker);
-					close_dropdown(picker, true);
+					if (wasSv) close_dropdown(picker, true);
 				}
 			});
 		}
