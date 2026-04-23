@@ -8,6 +8,25 @@
 
 	var DRAWR_VERSION = "@@VERSION@@";
 
+	//inject global stylesheet once per page load. provides :active press-feedback for
+	//toolbox buttons and tool buttons (tactile feedback on both desktop and touch).
+	function _drawrInjectStyle(){
+		if(document.getElementById("drawr-global-style")) return;
+		var css = [
+			".drawr-toolwindow-btn{transition:transform 60ms ease-out,box-shadow 80ms ease-out,background 80ms ease-out;}",
+			".drawr-toolwindow-btn:active{transform:translateY(1px);background:linear-gradient(to bottom,rgba(0,0,0,0.25) 0%,rgba(255,255,255,0.05) 100%) !important;box-shadow:inset 0 1px 3px rgba(0,0,0,0.35) !important;}",
+			".drawr-tool-btn{transition:filter 80ms ease-out,box-shadow 80ms ease-out;}",
+			".drawr-tool-btn:active{filter:brightness(0.82);box-shadow:inset 0 1px 4px rgba(0,0,0,0.35);}",
+			".drawr-layer-row .layer-vis:active,.drawr-layer-row .layer-moveup:active,.drawr-layer-row .layer-movedown:active,.drawr-layer-row .layer-delete:active{filter:brightness(1.4);}"
+		].join("\n");
+		var s = document.createElement("style");
+		s.id = "drawr-global-style";
+		s.type = "text/css";
+		s.appendChild(document.createTextNode(css));
+		(document.head || document.documentElement).appendChild(s);
+	}
+	_drawrInjectStyle();
+
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
 		//returns the euclidean distance between two {x,y} points.
@@ -107,23 +126,387 @@
 		};
 		plugin.is_dragging = false;
 
-		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
-		//pressure is reshaped as `pow(pressure, gamma)` where gamma is a global user-adjustable curve
-		//(see plugin.read_pressure_curve). gamma<1 boosts low pressure so gentle stylus strokes (Apple
-		//Pencil resting pressure sits around 0.2-0.3) reach a useful fraction of the base; gamma=1 is
-		//linear; gamma>1 requires a firmer press.
+		//Compute the final alpha and size for a brush spot, scaling by pen pressure if supported.
+		//Pressure is reshaped with a user-adjustable curve (gamma): <1 helps light presses show up
+		//(Apple Pencil rests around 0.2-0.3), 1 is linear, >1 needs a firmer press. See
+		//plugin.read_pressure_curve.
+		//Alpha just multiplies with the shaped pressure (it already caps at 1). Size interpolates
+		//between `size` (light press) and `size_max` (full press): size + (size_max - size) * shaped.
+		//If size_max < size we clamp to size, so pressing harder never shrinks the brush.
 		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure, pen_pressure){
-			var shaped = Math.pow(pressure, plugin.read_pressure_curve());
-			return {
-				alpha: (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha,
-				size:  parseFloat((brush.pressure_affects_size && pen_pressure) ? Math.max(1, brushSize * shaped) : brushSize)
-			};
+			var gamma  = plugin.read_pressure_curve();
+			var shaped = Math.pow(pressure, gamma);
+			var alpha  = (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha;
+			var size;
+			if(brush.pressure_affects_size){
+				var maxSize = (typeof brush.size_max === "number") ? brush.size_max : brushSize;
+				if(maxSize < brushSize) maxSize = brushSize;
+				//No pen pressure → base size, no growth. On stylus, pressure lerps from size→size_max.
+				var sizePressure = pen_pressure ? pressure : 0;
+				var sizeShaped   = Math.pow(sizePressure, gamma);
+				size = Math.max(0.5, brushSize + (maxSize - brushSize) * sizeShaped);
+			}else{
+				size = brushSize;
+			}
+			return { alpha: alpha, size: parseFloat(size) };
 		};
 
 		//returns the CSS transform string shared by the canvas and background canvas.
 		plugin.canvas_transform = function(x, y, angle){
 			return "translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)";
 		};
+
+		//---- Layers -----------------------------------------------------------------------
+		//Layer 0 is the main <canvas>; extra layers are sibling <canvas> elements inside
+		//drawr-container. The browser blends them together on the GPU via CSS mix-blend-mode,
+		//so a stroke still draws into a single canvas and performance matches single-layer mode.
+		//
+		//Multiply blending reaches through transparent pixels down to $bgCanvas (checkerboard
+		//or paper), which is what we want on screen. Export skips $bgCanvas, so saved output
+		//only carries the artwork.
+		plugin.MAX_LAYERS = 4;
+
+		//Supported layer blend modes. The name is used both as the CSS mix-blend-mode
+		//value (for on-screen compositing) and the canvas globalCompositeOperation
+		//(for export). All listed values are spec-supported in both domains.
+		plugin.BLEND_MODES = [
+			{ value: "normal",   label: "Normal"   },
+			{ value: "multiply", label: "Multiply" },
+			{ value: "screen",   label: "Screen"   },
+			{ value: "overlay",  label: "Overlay"  },
+			{ value: "darken",   label: "Darken"   },
+			{ value: "lighten",  label: "Lighten"  }
+		];
+		plugin._blendCssValue = function(mode){
+			for(var i = 0; i < plugin.BLEND_MODES.length; i++){
+				if(plugin.BLEND_MODES[i].value === mode) return mode;
+			}
+			return "normal";
+		};
+
+		//returns the 2D context of the currently-active layer. safe to call repeatedly; the
+		//browser caches getContext on a given canvas, so a fresh call per spot is free.
+		plugin.active_context = function(){
+			var layer = this.layers[this.activeLayerIndex];
+			return layer.canvas.getContext("2d", { alpha: true });
+		};
+
+		//resolves a stable layer id to its current array index. undo records use ids so that
+		//reorder/delete don't invalidate history. returns -1 if the layer no longer exists.
+		plugin.resolve_layer_by_id = function(id){
+			if(!this.layers) return -1;
+			for(var i = 0; i < this.layers.length; i++){
+				if(this.layers[i].id === id) return i;
+			}
+			return -1;
+		};
+
+		//returns id of the currently-active layer.
+		plugin.active_layer_id = function(){
+			return this.layers[this.activeLayerIndex].id;
+		};
+
+		//apply this instance's transform + zoom-scaled CSS size to every layer canvas and $bgCanvas.
+		//called from apply_scroll/apply_rotation/apply_zoom so multi-layer stays in perfect alignment.
+		plugin.broadcast_transform = function(){
+			var self = this;
+			var transform = plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0);
+			$(self).css("transform", transform);
+			if(self.layers){
+				//iterate all layers; the main canvas may sit at any array position after
+				//move_layer_down, so we can't skip index 0. Re-applying the transform to the
+				//main canvas's own $el is a harmless no-op.
+				for(var i = 0; i < self.layers.length; i++){
+					self.layers[i].$el.css("transform", transform);
+				}
+			}
+			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
+		};
+
+		//mirror the main canvas's zoomed CSS display size onto every layer canvas.
+		plugin.broadcast_zoom_css = function(){
+			var self = this;
+			if(!self.layers) return;
+			var zoom = self.zoomFactor || 1;
+			//same reason as broadcast_transform: the main canvas may be at any index.
+			for(var i = 0; i < self.layers.length; i++){
+				self.layers[i].$el.width(self.width * zoom);
+				self.layers[i].$el.height(self.height * zoom);
+			}
+		};
+
+		//Add a new layer as a sibling canvas inside drawr-container. Pixel size matches the
+		//main canvas; display size follows zoom. New layers go to the bottom of the stack so
+		//they don't immediately hide existing artwork. Stacking is finalised by restack_layers.
+		plugin.add_layer = function(mode, name){
+			var self = this;
+			if(self.layers.length >= plugin.MAX_LAYERS) return null;
+			mode = mode || "normal";
+			var c = document.createElement("canvas");
+			c.width = self.width;
+			c.height = self.height;
+			var $c = $(c);
+			$c.addClass("drawr-layer");
+			$c.css({
+				"position": "absolute",
+				"top": 0, "left": 0,
+				"pointer-events": "none",
+				"width": (self.width * (self.zoomFactor || 1)) + "px",
+				"height": (self.height * (self.zoomFactor || 1)) + "px",
+				"transform-origin": "50% 50%",
+				"transform": plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0),
+				"mix-blend-mode": plugin._blendCssValue(mode),
+				"opacity": 1
+			});
+			//place below the current bottom layer in the DOM. z-index (set by restack_layers)
+			//is authoritative for stacking, so DOM order is cosmetic, but we still mirror it.
+			$c.insertBefore(self.layers[0].$el);
+			var layer = {
+				id: self._nextLayerId++,
+				canvas: c,
+				$el: $c,
+				name: name || "New layer",
+				mode: mode,
+				visible: true,
+				opacity: 1,
+				history_trimmed: false
+			};
+			self.layers.unshift(layer);
+			//existing active-layer pointer now refers to a layer one slot higher in the array.
+			if(typeof self.activeLayerIndex === "number") self.activeLayerIndex++;
+			plugin.restack_layers.call(self);
+			return layer;
+		};
+
+		//re-apply z-indices to match current array order. called after add/delete/reorder.
+		plugin.restack_layers = function(){
+			var self = this;
+			for(var i = 0; i < self.layers.length; i++){
+				self.layers[i].$el.css("z-index", 1 + i);
+			}
+		};
+
+		//Delete a layer (always leaves at least one). The main <canvas> element can't be
+		//removed from the page, so if the user deletes the layer that owns it we instead
+		//copy a neighbouring layer's pixels and metadata onto the main canvas and remove
+		//the neighbour. From the user's side the result looks the same: the clicked layer
+		//is gone, and its neighbour now sits on the main canvas.
+		plugin.delete_layer = function(index){
+			var self = this;
+			if(self.layers.length <= 1) return;
+			if(index < 0 || index >= self.layers.length) return;
+			var target = self.layers[index];
+			if(target.canvas === self){
+				//pick a donor: prefer the layer directly above; fall back to the one below.
+				var donorIdx = (index + 1 < self.layers.length) ? index + 1 : index - 1;
+				var donor = self.layers[donorIdx];
+				var mctx = target.canvas.getContext("2d", { alpha: true });
+				mctx.globalCompositeOperation = "source-over";
+				mctx.globalAlpha = 1;
+				mctx.clearRect(0, 0, self.width, self.height);
+				mctx.drawImage(donor.canvas, 0, 0);
+				//main canvas adopts donor's identity so undo entries keyed by the donor's id
+				//continue to work (they now restore to the main canvas). the original target
+				//layer's id is abandoned; its undo entries get skipped by resolve_layer_by_id.
+				target.id = donor.id;
+				target.name = donor.name;
+				target.mode = donor.mode;
+				target.visible = donor.visible;
+				target.opacity = donor.opacity;
+				target.history_trimmed = !!donor.history_trimmed;
+				//apply the adopted CSS state to the main canvas.
+				target.$el.css("mix-blend-mode", plugin._blendCssValue(donor.mode));
+				target.$el.css("opacity", donor.opacity);
+				target.$el.css("display", donor.visible ? "" : "none");
+				//remove the donor.
+				donor.$el.remove();
+				self.layers.splice(donorIdx, 1);
+				//active pointer: if donor was active, main canvas now holds its data, so point at main.
+				if(self.activeLayerIndex === donorIdx) self.activeLayerIndex = self.layers.indexOf(target);
+				else if(self.activeLayerIndex > donorIdx) self.activeLayerIndex--;
+			} else {
+				//simple case: detach the DOM element and splice out.
+				target.$el.remove();
+				self.layers.splice(index, 1);
+				if(self.activeLayerIndex > index) self.activeLayerIndex--;
+				else if(self.activeLayerIndex === index){
+					if(self.activeLayerIndex >= self.layers.length) self.activeLayerIndex = self.layers.length - 1;
+				}
+			}
+			if(self.activeLayerIndex < 0) self.activeLayerIndex = 0;
+			plugin.restack_layers.call(self);
+		};
+
+		//swap layer at index with the one below it (index-1). covers "move up" by symmetry.
+		//the main canvas element can sit at any array position; z-index handles stacking
+		//regardless of which canvas is position:relative vs absolute.
+		plugin.move_layer_down = function(index){
+			var self = this;
+			if(index < 1 || index >= self.layers.length) return;
+			var tmp = self.layers[index];
+			self.layers[index] = self.layers[index - 1];
+			self.layers[index - 1] = tmp;
+			//keep DOM order in sync with array order (cosmetic; z-index is authoritative).
+			tmp.$el.insertBefore(self.layers[index].$el);
+			if(self.activeLayerIndex === index) self.activeLayerIndex = index - 1;
+			else if(self.activeLayerIndex === index - 1) self.activeLayerIndex = index;
+			plugin.restack_layers.call(self);
+		};
+
+		plugin.set_active_layer = function(index){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.activeLayerIndex = index;
+		};
+
+		plugin.set_layer_mode = function(index, mode){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].mode = mode;
+			//apply to every layer including the main canvas. multiply on the bottom-most
+			//layer is a no-op visually (nothing below to blend with), but after reorder any
+			//layer may end up on top.
+			self.layers[index].$el.css("mix-blend-mode", plugin._blendCssValue(mode));
+		};
+
+		plugin.set_layer_visibility = function(index, visible){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].visible = !!visible;
+			self.layers[index].$el.css("display", visible ? "" : "none");
+		};
+
+		plugin.set_layer_opacity = function(index, opacity){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			var op = Math.max(0, Math.min(1, opacity));
+			self.layers[index].opacity = op;
+			self.layers[index].$el.css("opacity", op);
+		};
+
+		plugin.set_layer_name = function(index, name){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].name = name;
+		};
+
+		//wipe a single layer's pixels while keeping its metadata (name/mode/opacity/visibility).
+		//only the bottom layer under no-transparency mode fills white, matching the invariant
+		//that clear_canvas() maintains for single-layer drawings; clearing a non-base layer to
+		//white would obscure everything below it.
+		plugin.clear_layer = function(index){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			var layer = self.layers[index];
+			var ctx = layer.canvas.getContext("2d", { alpha: true });
+			ctx.save();
+			ctx.globalCompositeOperation = "source-over";
+			ctx.globalAlpha = 1;
+			if(index === 0 && self.settings && self.settings.enable_transparency === false){
+				ctx.fillStyle = "white";
+				ctx.fillRect(0, 0, self.width, self.height);
+			} else {
+				ctx.clearRect(0, 0, self.width, self.height);
+			}
+			ctx.restore();
+		};
+
+		//blend layers[index] (upper) into layers[index-1] (lower) using the upper layer's
+		//blend mode + opacity, then remove the upper layer. mirrors what composite_for_export
+		//does on screen, but only between two neighbours.
+		plugin.merge_layer_down = function(index){
+			var self = this;
+			if(index < 1 || index >= self.layers.length) return;
+			var src = self.layers[index];
+			var dst = self.layers[index - 1];
+
+			//1. blend src into dst using src's mode+opacity.
+			var dctx = dst.canvas.getContext("2d", { alpha: true });
+			dctx.save();
+			dctx.globalAlpha = (typeof src.opacity === "number") ? src.opacity : 1;
+			dctx.globalCompositeOperation = plugin._blendCssValue(src.mode || "normal");
+			dctx.drawImage(src.canvas, 0, 0);
+			dctx.restore();
+
+			//2. remove src. mirrors delete_layer's main-canvas special case: if src is the
+			//main canvas DOM element (which can't be removed from the page), copy dst's
+			//newly-merged pixels into main and remove dst instead, adopting dst's identity
+			//so undo ids continue to resolve.
+			if(src.canvas === self){
+				var mctx = src.canvas.getContext("2d", { alpha: true });
+				mctx.globalCompositeOperation = "source-over";
+				mctx.globalAlpha = 1;
+				mctx.clearRect(0, 0, self.width, self.height);
+				mctx.drawImage(dst.canvas, 0, 0);
+				src.id = dst.id;
+				src.name = dst.name;
+				src.mode = dst.mode;
+				src.visible = dst.visible;
+				src.opacity = dst.opacity;
+				src.history_trimmed = !!dst.history_trimmed;
+				src.$el.css("mix-blend-mode", plugin._blendCssValue(dst.mode));
+				src.$el.css("opacity", dst.opacity);
+				src.$el.css("display", dst.visible ? "" : "none");
+				dst.$el.remove();
+				self.layers.splice(index - 1, 1);
+				self.activeLayerIndex = self.layers.indexOf(src);
+			} else {
+				src.$el.remove();
+				self.layers.splice(index, 1);
+				self.activeLayerIndex = index - 1;
+			}
+			plugin.restack_layers.call(self);
+		};
+
+		//collapse back to a single base layer: strips every extra sibling canvas and resets
+		//the base layer's metadata (name/mode/opacity/visibility) to defaults. the base layer
+		//is always self.layers[0]; delete_layer preserves this invariant by copying donor
+		//pixels into the main canvas when the main canvas itself is the deletion target.
+		//caller is responsible for clearing pixels first (or not) as appropriate.
+		plugin.collapse_to_base_layer = function(){
+			var self = this;
+			if(!self.layers || self.layers.length === 0) return;
+			for(var i = self.layers.length - 1; i >= 1; i--){
+				self.layers[i].$el.remove();
+				self.layers.splice(i, 1);
+			}
+			var base = self.layers[0];
+			base.name = "New layer";
+			base.mode = "normal";
+			base.visible = true;
+			base.opacity = 1;
+			base.history_trimmed = false;
+			base.$el.css({ "mix-blend-mode": "normal", "opacity": 1, "display": "" });
+			self.activeLayerIndex = 0;
+			plugin.restack_layers.call(self);
+			if(typeof self._layersPanelRender === "function") self._layersPanelRender();
+		};
+
+		//composite all visible layers into a fresh canvas for export. mirrors what the GPU
+		//does on screen via mix-blend-mode, but without $bgCanvas, so saved output carries
+		//only the artwork.
+		plugin.composite_for_export = function(){
+			var self = this;
+			var out = document.createElement("canvas");
+			out.width = self.width;
+			out.height = self.height;
+			var ctx = out.getContext("2d", { alpha: self.settings.enable_transparency });
+			if(self.settings.enable_transparency == false){
+				ctx.fillStyle = "white";
+				ctx.fillRect(0, 0, self.width, self.height);
+			}
+			for(var i = 0; i < self.layers.length; i++){
+				var layer = self.layers[i];
+				if(!layer.visible) continue;
+				ctx.globalAlpha = layer.opacity;
+				ctx.globalCompositeOperation = (i > 0 && layer.mode && layer.mode !== "normal") ? plugin._blendCssValue(layer.mode) : "source-over";
+				ctx.drawImage(layer.canvas, 0, 0);
+			}
+			ctx.globalAlpha = 1;
+			ctx.globalCompositeOperation = "source-over";
+			return out;
+		};
+		//---- /Layers ----------------------------------------------------------------------
 
 		//reads border-top and border-left pixel widths from an element's computed style.
 		plugin.get_border = function(el){
@@ -134,17 +517,17 @@
 			};
 		};
 
-		//Evaluates a centripetal Catmull-Rom spline (alpha=0.5) at parameter u (0..1) for the
-		//segment p1 -> p2, using p0 and p3 as the outer control points. The centripetal
-		//parameterisation guarantees no cusps or loops regardless of knot spacing or sharp
-		//direction changes — unlike the uniform variant which overshoots into loops at turns.
-		//Uses the Barry–Goldman recursive form (three linear interpolations per level, three levels),
-		//which is numerically friendlier for drawing apps than expanding the basis polynomials.
+		//Evaluate a centripetal Catmull-Rom spline at u (0..1) along the segment p1 -> p2,
+		//with p0 and p3 as outer control points. "Centripetal" just means the math spaces
+		//knots in a way that keeps the curve smooth through sharp turns; the uniform variant
+		//loops around on hairpins. Implemented with the Barry–Goldman form (three nested
+		//linear interpolations), which is more numerically stable than expanding the basis
+		//polynomials.
 		//Refs:
-		//Catmull-Rom spline — https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
-		//Barry–Goldman algorithm — https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
+		//Catmull-Rom spline: https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
+		//Barry–Goldman algorithm: https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
 		//generalised to non-uniform knot spacing; see also Yuksel et al., "On the Parameterization of
-		//Catmull-Rom Curves", 2011 — http://www.cemyuksel.com/research/catmullrom_param/).
+		//Catmull-Rom Curves", 2011, at http://www.cemyuksel.com/research/catmullrom_param/).
 		plugin.catmull_rom_point = function(p0, p1, p2, p3, u) {
 			var d01 = Math.sqrt(plugin.distance_between(p0, p1));
 			var d12 = Math.sqrt(plugin.distance_between(p1, p2));
@@ -175,12 +558,12 @@
 			};
 		};
 
-		//central per-spot pipeline. applies brush dynamics (size/opacity/angle jitter, flow,
-		//scatter, rotation mode, fade-in) on top of the calculated base size/alpha, then calls
-		//brush.drawSpot with the resolved values. all three interpolation loops (drawMove linear,
-		//Catmull-Rom, drawStop flush) funnel through here so dynamics apply uniformly.
-		//strokeAngleRad: direction of travel at this spot in radians (atan2(dx, dy) convention
-		//matching plugin.angle_between); undefined means no direction available (first/stationary spot).
+		//Central per-spot pipeline. Applies brush dynamics (jitter on size/opacity/angle,
+		//flow, scatter, rotation mode, fade-in) on top of the base size/alpha, then calls
+		//brush.drawSpot. All three interpolation paths (drawMove linear, Catmull-Rom, drawStop
+		//flush) go through here so dynamics apply the same way everywhere.
+		//strokeAngleRad: direction of travel in radians (same convention as plugin.angle_between).
+		//Pass undefined when there's no direction yet, e.g. the very first spot of a stroke.
 		plugin.emit_spot = function(context, brush, baseX, baseY, strokeAngleRad, size, alpha, e) {
 			var self = this;
 
@@ -271,16 +654,18 @@
 		//Binds touch event listeners to the canvas's parent container
 		plugin.bind_draw_events = function(){
 			var self=this;
-			var context = self.getContext("2d", { alpha: self.settings.enable_transparency });
+			//active-layer context resolver. re-fetched per call so layer switches take effect
+			//immediately. getContext is cached by the browser, so repeat calls are free.
+			var ctx = function(){ return plugin.active_context.call(self); };
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
-			$(self).parent().on("touchstart." + self._evns, function(e){ e.preventDefault(); });//cancel scroll.
+			self.$container.on("touchstart." + self._evns, function(e){ e.preventDefault(); });//cancel scroll.
 
 			//true if inside canvas, false if outside canvas.
 			//used to check if an initial click or touch start event is valid inside the container
 			//and needs to be tracked through move/end events.
 			self.boundCheck = function(event){
 				//new rotation-aware hit test
-				var parent = $(self).parent()[0];
+				var parent = self.$container[0];
 				var border = plugin.get_border(parent);
 				var box = parent.getBoundingClientRect();
 				var eventX = event.pageX;
@@ -303,7 +688,7 @@
 			//returns true if the event's pointer is within the container element.
 			//used for right-drag pan initiation and hover highlight, where an approximate test is sufficient.
 			self.containerBoundCheck = function(event){
-				var parent = $(self).parent()[0];
+				var parent = self.$container[0];
 				var box = parent.getBoundingClientRect();
 				var eventX = event.originalEvent.clientX;
 				var eventY = event.originalEvent.clientY;
@@ -338,9 +723,11 @@
 					if(pts.length >= 2){
 						//erase any dot drawn by the first touch before the gesture was detected
 						if(self._gestureAbortSnapshot){
-							context.putImageData(self._gestureAbortSnapshot, 0, 0);
+							ctx().putImageData(self._gestureAbortSnapshot, 0, 0);
 							self._gestureAbortSnapshot = null;
 						}
+						//a second finger aborts any pending or active long-press pick.
+						plugin.cancel_color_picker.call(self);
 						var t1 = pts[0], t2 = pts[1];
 						self.gestureStart = {
 							dist:	 plugin.distance_between(t1, t2),
@@ -360,12 +747,20 @@
 
 				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true && self.containerBoundCheck.call(self,e)==true){//yay! We're drawing!
 					if(plugin.is_dragging==false){
-						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
-						//save snapshot so the second touch can erase this stroke start if a gesture is detected
-						if(e.originalEvent.pointerType === "touch") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
+						mouse_data = plugin.get_mouse_data.call(self,e,self.$container[0],self);
+						//save snapshot of the active layer so the second touch can erase this stroke
+						//start if a gesture is detected. only the active layer can have changed.
+						var _startCtx = ctx();
+						//snapshot for touch (so a 2-finger gesture can roll back the first dot) and
+						//for any pointer type when the long-press colour picker is enabled (the
+						//rollback path is identical). skip when the eyedropper is active, since
+						//picking-while-picking is pointless and the eyedropper doesn't place a dot.
+						var _wantSnapshot = e.originalEvent.pointerType === "touch" ||
+							(self.settings.long_press_pick_enabled && self.active_brush.name !== "eyedropper");
+						if(_wantSnapshot) self._gestureAbortSnapshot = _startCtx.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
 						self._activeButton = e.button;//store button, since pointer events only have useful button info in pointerdown, and we catch pointermove later.
-						context.lineCap = "round";context.lineJoin = 'round';
+						_startCtx.lineCap = "round";_startCtx.lineJoin = 'round';
 
 						//reset fade-in counter at start of stroke
 						self._fadeInSpotCount = 0;
@@ -381,12 +776,49 @@
 							self._fadeInSpotCount++;
 							startAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
 						}
-						//first spot has no stroke direction yet so we pass angle=0 so tools consuming
-						//the 8th arg get a deterministic value. fade-in already applied inline above,
-						//so this call bypasses emit_spot to avoid double-incrementing the counter.
-						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
+						//Resolve the first spot's angle. There's no stroke direction yet, so
+						//follow_stroke/follow_jitter fall back to 0; fixed uses fixed_angle;
+						//random_jitter randomises. Mirrors emit_spot so the first stamp matches
+						//the rest. Fade-in was applied above, so we bypass emit_spot here to
+						//avoid counting the first spot twice.
+						var _startMode = self.active_brush.rotation_mode || "none";
+						var _startAngle = 0;
+						if(_startMode === "fixed"){
+							_startAngle = self.active_brush.fixed_angle || 0;
+						} else if(_startMode === "random_jitter"){
+							_startAngle = Math.random() * Math.PI * 2;
+						} else if(_startMode === "follow_jitter"){
+							_startAngle = (Math.random() * 2 - 1) * (self.active_brush.angle_jitter || 0) * Math.PI;
+						}
+						//Draw the first spot at the brush's base size, ignoring pressure. Why:
+						//the Pointer Events spec returns pressure=0.5 on pointerdown before the
+						//stylus has given a real reading (Apple Pencil and Surface Pen both do
+						//this). With pressure_affects_size and a wide size_max, that placeholder
+						//0.5 would paint a huge first dot. Photoshop and Krita also de-emphasise
+						//landing pressure. Alpha still gets pressure-scaled so fade-in still works.
+						var _startSize = self.active_brush.pressure_affects_size ? self.brushSize : calculatedSize;
+						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
 						$(self).trigger("drawr:drawstart", [{x: mouse_data.x, y: mouse_data.y, tool: self.active_brush.name, size: calculatedSize, alpha: startAlpha, pressure: mouse_data.pressure}]);
+
+						//arm the long-press colour picker timer. get cancelled on movement
+						//past tolerance (drawMove) or on release (drawStop). on fire, rolls back
+						//the initial dot above via the snapshot we just took and enters pick mode.
+						if(self.settings.long_press_pick_enabled && self.active_brush.name !== "eyedropper"){
+							if(self._longPressTimer) clearTimeout(self._longPressTimer);
+							var _rect = self.$container[0].getBoundingClientRect();
+							self._longPressStart = {
+								pageX: e.pageX, pageY: e.pageY,
+								canvasX: mouse_data.x, canvasY: mouse_data.y,
+								viewX: e.pageX - _rect.left - window.scrollX,
+								viewY: e.pageY - _rect.top  - window.scrollY
+							};
+							self._longPressTimer = setTimeout(function(){
+								self._longPressTimer = null;
+								plugin.activate_color_picker.call(self);
+							}, self.settings.long_press_pick_duration);
+						}
+
 						plugin.request_redraw.call(self);
 					}
 				}
@@ -402,6 +834,37 @@
 					self.activePointers[e.originalEvent.pointerId] = {x: e.pageX, y: e.pageY};
 				}
 
+				//long-press colour picker: while active, hunt a colour under the pointer
+				//(no drawing). live-updates brushColor so the palette swatch tracks your finger.
+				if(self._pickerActive){
+					var _pmd = plugin.get_mouse_data.call(self, e, self.$container[0], self);
+					var _pRect = self.$container[0].getBoundingClientRect();
+					self._pickerPos     = { x: _pmd.x, y: _pmd.y };
+					self._pickerViewPos = { x: e.pageX - _pRect.left - window.scrollX, y: e.pageY - _pRect.top - window.scrollY };
+					plugin.sample_picker_color.call(self, _pmd.x, _pmd.y);
+					//live-mirror into brushColor + palette so the user sees feedback while hunting.
+					if(self._pickerColor){
+						self.brushColor = { r: self._pickerColor.r, g: self._pickerColor.g, b: self._pickerColor.b };
+						if(self.$settingsToolbox){
+							var _hex = plugin.rgb_to_hex(self._pickerColor.r, self._pickerColor.g, self._pickerColor.b);
+							self.$settingsToolbox.find('.color-picker.active-drawrpalette').drawrpalette("set", _hex);
+						}
+					}
+					plugin.request_redraw.call(self);
+					return;
+				}
+
+				//long-press armed: cancel if the user drifts past tolerance. the normal stroke
+				//then proceeds uninterrupted from this same pointermove event.
+				if(self._longPressTimer){
+					var _lpdx = e.pageX - self._longPressStart.pageX;
+					var _lpdy = e.pageY - self._longPressStart.pageY;
+					if(Math.sqrt(_lpdx*_lpdx + _lpdy*_lpdy) > self.settings.long_press_pick_move_tolerance){
+						clearTimeout(self._longPressTimer);
+						self._longPressTimer = null;
+					}
+				}
+
 				//apply pinch zoom and rotation while gesturing
 				if(self.isGesturing){
 					var pts = Object.values(self.activePointers);
@@ -415,7 +878,7 @@
 						var newMidY  = (t1.y + t2.y) / 2;
 						/*keep the canvas point under the initial pinch centre pinned to the
 						current finger midpoint, combine zoom-centering and panning in one step */
-						var rect  = $(self).parent()[0].getBoundingClientRect();
+						var rect  = self.$container[0].getBoundingClientRect();
 						var cLeft = rect.left + window.scrollX;
 						var cTop  = rect.top  + window.scrollY;
 						var newScrollX = (gs.midX - cLeft + gs.scrollX) * (newZoom / gs.zoom) - (newMidX - cLeft);
@@ -433,9 +896,12 @@
 						newScrollX -= dX - (dX * Math.cos(dAngle) - dY * Math.sin(dAngle));
 						newScrollY -= dY - (dX * Math.sin(dAngle) + dY * Math.cos(dAngle));
 						self.gesturePivot = { x: pvX, y: pvY };
+						//pinch zoom bypasses apply_zoom, so trigger the zoom-percentage readout here too.
+						if(newZoom !== self.zoomFactor) self.zoomIndicatorTimer = 500;
 						self.zoomFactor = newZoom;
 						$(self).width(self.width * newZoom);
 						$(self).height(self.height * newZoom);
+						plugin.broadcast_zoom_css.call(self);
 						plugin.draw_checkerboard.call(self);
 						plugin.apply_scroll.call(self, newScrollX, newScrollY, true);
 						plugin.apply_rotation.call(self, gs.rotation + dAngle, false);
@@ -454,66 +920,78 @@
 				var bound_check = self.boundCheck.call(self,e) && self.containerBoundCheck.call(self,e);
 
 				if(bound_check){
-					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue inset";
+					self.$container.find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue inset";
 				} else {
-					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="";
+					self.$container.find(".sfx-canvas")[0].style.boxShadow="";
 				}
 
-				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
+				var mouse_data = plugin.get_mouse_data.call(self,e,self.$container[0],self);
 
 				if($(self).data("is_drawing")==true && plugin.check_ignore(e)==false){
 
 					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure, self.pen_pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
-					//spacing as a fraction of size (brush dynamics). fallback to 0.25 matches the old hardcoded /4.
-					var spacingFrac = (typeof self.active_brush.spacing === "number") ? self.active_brush.spacing : 0.25;
-					var stepSize = calculatedSize * spacingFrac;
-					if(stepSize<1) stepSize = 1;
 
-					if(self.active_brush.smoothing) {
-						//smooth path: buffer raw knots and draw a Catmull-Rom segment lagging one event behind,
-						//using the new knot as the lookahead (P3) that shapes the tangent of the previous segment.
-						//Only accept a new knot if it is far enough from the last one. Sub-pixel (or near-pixel)
-						//knot spacing gives the spline no room to round corners, so high-precision stylus input
-						//would pass through every jitter point rather than smoothing over them.
-						//Cutoff is a fraction of brush size (not stepSize) — knot decimation is about jitter
-						//tolerance for the spline, which is unrelated to how densely the spline is sampled.
-						var knotCutoff = calculatedSize * 0.375;
-						if(knotCutoff < 1) knotCutoff = 1;
-						var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
-						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < knotCutoff) return;
-						self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
-						var knots = self._smoothKnots;
-						var n = knots.length - 1; //last index
-						if(n >= 2) {
-							//draw segment knots[n-2]->knots[n-1]; knots[n] is the lookahead control point
-							var p0 = knots[Math.max(0, n-3)];
-							var p1 = knots[n-2];
-							var p2 = knots[n-1];
-							var p3 = knots[n];
-							//rescale accumDist when stepSize changes (e.g. stylus pressure shift) so the
-							//fractional progress towards the next spot is preserved, preventing the while
-							//loop in draw_catmull_segment from firing multiple times at the same point.
-							if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
-								self._smoothAccumDist = self._smoothAccumDist * (stepSize / self._smoothLastStepSize);
-							}
-							self._smoothLastStepSize = stepSize;
-							self._smoothAccumDist = plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
+					//navigation tools (move, eyedropper) operate on raw pointer events, so bypass the
+					//spacing/smoothing/jitter pipeline so every pointermove forwards straight to drawSpot.
+					//otherwise leftover brushSize/spacing from the previously-active paint tool would
+					//throttle the event rate and make panning/rotating choppy.
+					if(self.active_brush.raw_input){
+						if(typeof self.active_brush.drawSpot !== "undefined"){
+							self.active_brush.drawSpot.call(self, self.active_brush, ctx(), mouse_data.x, mouse_data.y, calculatedSize, calculatedAlpha, e, 0);
 						}
 					} else {
-						//original linear interpolation along the line between the last drawn spot and the current position
-						var positions = $(self).data("positions");
-						var currentSpot = {x:mouse_data.x,y:mouse_data.y};
-						var lastSpot=positions[positions.length-1];
-						var dist = plugin.distance_between(lastSpot, currentSpot);
-						var angle = plugin.angle_between(lastSpot, currentSpot);
-						for (var i = stepSize; i < dist; i+=stepSize) {
-							x = lastSpot.x + (Math.sin(angle) * i);
-							y = lastSpot.y + (Math.cos(angle) * i);
-							plugin.emit_spot.call(self, context, self.active_brush, x, y, angle, calculatedSize, calculatedAlpha, e);
-							positions.push({x:x,y:y});
+						//spacing as a fraction of size (brush dynamics). fallback to 0.25 matches the old hardcoded /4.
+						var spacingFrac = (typeof self.active_brush.spacing === "number") ? self.active_brush.spacing : 0.25;
+						var stepSize = calculatedSize * spacingFrac;
+						if(stepSize<1) stepSize = 1;
+
+						if(self.active_brush.smoothing) {
+							//Smooth path: buffer raw knots and draw a Catmull-Rom segment one event
+							//behind, using the newest knot as the lookahead (P3) that shapes the
+							//previous segment's tangent. A knot is only accepted if it's far enough
+							//from the last one; near-pixel spacing leaves the spline no room to round
+							//corners, and a high-precision stylus would just trace every jitter point.
+							//The cutoff is a fraction of brush size (jitter tolerance, independent of
+							//how densely we sample along the spline).
+							var knotCutoff = calculatedSize * 0.375;
+							if(knotCutoff < 1) knotCutoff = 1;
+							var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
+							if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < knotCutoff) return;
+							self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
+							var knots = self._smoothKnots;
+							var n = knots.length - 1; //last index
+							if(n >= 2) {
+								//draw segment knots[n-2]->knots[n-1]; knots[n] is the lookahead control point
+								var p0 = knots[Math.max(0, n-3)];
+								var p1 = knots[n-2];
+								var p2 = knots[n-1];
+								var p3 = knots[n];
+								//rescale accumDist when stepSize changes (e.g. stylus pressure shift) so the
+								//fractional progress towards the next spot is preserved, preventing the while
+								//loop in draw_catmull_segment from firing multiple times at the same point.
+								if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
+									self._smoothAccumDist = self._smoothAccumDist * (stepSize / self._smoothLastStepSize);
+								}
+								self._smoothLastStepSize = stepSize;
+								self._smoothAccumDist = plugin.draw_catmull_segment.call(self, ctx(), self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
+							}
+						} else {
+							//original linear interpolation along the line between the last drawn spot and the current position
+							var positions = $(self).data("positions");
+							var currentSpot = {x:mouse_data.x,y:mouse_data.y};
+							var lastSpot=positions[positions.length-1];
+							var dist = plugin.distance_between(lastSpot, currentSpot);
+							var angle = plugin.angle_between(lastSpot, currentSpot);
+							var _moveCtx = ctx();
+							for (var i = stepSize; i < dist; i+=stepSize) {
+								x = lastSpot.x + (Math.sin(angle) * i);
+								y = lastSpot.y + (Math.cos(angle) * i);
+								plugin.emit_spot.call(self, _moveCtx, self.active_brush, x, y, angle, calculatedSize, calculatedAlpha, e);
+								positions.push({x:x,y:y});
+							}
+							$(self).data("positions",positions);
 						}
-						$(self).data("positions",positions);
 					}
 				}
 				var tbPageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
@@ -535,24 +1013,24 @@
 					var delta = Math.max(-0.1, Math.min(0.1, e.originalEvent.deltaY * -0.005));
 
 					var newZoomies = self.zoomFactor + delta;
-					var containerOffset = $(self).parent().offset();
+					var containerOffset = self.$container.offset();
 					var focalX = e.pageX - containerOffset.left;
 					var focalY = e.pageY - containerOffset.top;
 					plugin.apply_zoom.call(self, newZoomies, focalX, focalY);
 				};
-				$(self).parent().on("wheel." + self._evns, function(e){
+				self.$container.on("wheel." + self._evns, function(e){
 					e.preventDefault();
 					self.scrollWheel(e);
 				});
 			}
-			$(self).parent().on("contextmenu." + self._evns, function(e){ e.preventDefault(); });
+			self.$container.on("contextmenu." + self._evns, function(e){ e.preventDefault(); });
 			//middle mouse button is claimed for canvas panning, so block the browser's autoscroll-on-middle-click
 			//over the whole container. Autoscroll fires on `mousedown` (not pointerdown), hence the separate bind.
-			$(self).parent().on("mousedown." + self._evns, function(e){
+			self.$container.on("mousedown." + self._evns, function(e){
 				if(e.button === 1) e.preventDefault();
 			});
 			//prevent browser native touch gestures (scroll, pinch-zoom) so pointer events fire uninterrupted
-			$(self).parent().css("touch-action", "none");
+			self.$container.css("touch-action", "none");
 
 			$(window).bind("pointermove." + self._evns, self.drawMove);
 
@@ -564,6 +1042,18 @@
 				//remove pointer from tracking map on lift or cancel
 				if(e.originalEvent && e.originalEvent.pointerType === "touch"){
 					delete self.activePointers[e.originalEvent.pointerId];
+				}
+
+				//long-press timer still armed (user released before it fired): disarm and
+				//fall through to the normal stroke end for whatever tool is active.
+				if(self._longPressTimer){ clearTimeout(self._longPressTimer); self._longPressTimer = null; }
+
+				//long-press colour picker active: commit the sampled colour and short-circuit.
+				//the tool never saw a drawing stroke (drawStart rolled back on activation),
+				//so sending it a drawStop here would be meaningless.
+				if(self._pickerActive){
+					plugin.commit_color_picker.call(self);
+					return;
 				}
 
 				//end gesture mode when fewer than two touch pointers remain
@@ -603,13 +1093,13 @@
 						if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
 							flushAccum = flushAccum * (stepSize / self._smoothLastStepSize);
 						}
-						plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, flushAccum);
+						plugin.draw_catmull_segment.call(self, ctx(), self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, flushAccum);
 						self._smoothKnots = null;
 						self._smoothAccumDist = 0;
 						self._smoothLastStepSize = null;
 					}
 
-					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,ctx(),mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					//if there is an action to undo
 					if(typeof result!=="undefined"){
 						plugin.record_undo_entry.call(self);
@@ -623,7 +1113,7 @@
 					if($(this).data("dragging") == true){
 						var owner = this.ownerCanvas;
 						if(owner && owner._toolboxPositions){
-							var containerOffset = $(owner).parent().offset();
+							var containerOffset = owner.$container.offset();
 							var o = $(this).offset();
 							owner._toolboxPositions[$(this).data("toolbox-id")] = {
 								left: o.left - containerOffset.left,
@@ -640,18 +1130,35 @@
 
 		//function that can be called to clear the canvas from elsewhere in the plugin 
 		//as long as you call it with a "this" of the canvas
-		plugin.clear_canvas = function(record_undo){
+		//scope: "active" (default) clears only the active layer; "all" clears every layer.
+		//the public "clear" action passes "all" to wipe the whole artwork; internal callers
+		//(undo/redo restoring a single layer, post-load reset) use "active".
+		plugin.clear_canvas = function(record_undo, scope){
 			if(record_undo) {
 				this.plugin.record_undo_entry.call(this);
 			}
-			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
-			if(this.settings.enable_transparency==false){
-				context.fillStyle="white";
-				context.globalCompositeOperation="source-over";
-				context.globalAlpha=1;
-				context.fillRect(0,0,this.width,this.height);
+			scope = scope || "active";
+			var self = this;
+			var clearOne = function(canvas, fillWhite){
+				var c = canvas.getContext("2d", { alpha: true });
+				if(fillWhite){
+					c.fillStyle = "white";
+					c.globalCompositeOperation = "source-over";
+					c.globalAlpha = 1;
+					c.fillRect(0, 0, self.width, self.height);
+				} else {
+					c.clearRect(0, 0, self.width, self.height);
+				}
+			};
+			if(scope === "all" && self.layers){
+				//layer 0 honours enable_transparency; extras always clear transparent so blending
+				//composes correctly with layer 0.
+				clearOne(self.layers[0].canvas, self.settings.enable_transparency == false);
+				for(var i = 1; i < self.layers.length; i++) clearOne(self.layers[i].canvas, false);
 			} else {
-				context.clearRect(0,0,this.width,this.height);
+				var idx = self.layers ? self.activeLayerIndex : 0;
+				var target = self.layers ? self.layers[idx].canvas : self;
+				clearOne(target, idx === 0 && self.settings.enable_transparency == false);
 			}
 		};
 
@@ -661,8 +1168,23 @@
 			if(typeof this.$undoButton!=="undefined"){
 				this.$undoButton.css("opacity",1);
 			}
-			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
-			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
+			//snapshot the active layer's state AFTER the action. undo will walk the stack for
+			//the previous entry matching this layerId and restore that; if none, it clears.
+			var layer = this.layers[this.activeLayerIndex];
+			this.undoStack.push({data: layer.canvas.toDataURL("image/png"), layerId: layer.id});
+			//enforce the cap by dropping the oldest non-sticky entry. sticky entries are
+			//baselines (loaded image) and shouldn't count toward the cap. when we drop a
+			//real entry, mark its layer as history-trimmed, so undo's fallback-to-clear must
+			//refuse once we've lost the layer's oldest state.
+			if(this.undoStack.length > (this.settings.undo_max_levels + 1)){
+				for(var i = 0; i < this.undoStack.length; i++){
+					if(this.undoStack[i].sticky) continue;
+					var dropped = this.undoStack.splice(i, 1)[0];
+					var didx = plugin.resolve_layer_by_id.call(this, dropped.layerId);
+					if(didx >= 0) this.layers[didx].history_trimmed = true;
+					break;
+				}
+			}
 			//new drawing action invalidates redo history
 			this.redoStack = [];
 			if(typeof this.$redoButton!=="undefined"){
@@ -681,12 +1203,11 @@
 			plugin.activate_brush.call(this, $(button).data("data"));
 		};
 
-		//activates a brush ( a tool plugin ).
 		//---- Persistence & cross-instance sync -------------------------------------------------
-		//Two localStorage keys: drawr.toolOverrides ({ [name]: { field: value } }) for built-in tools,
-		//and drawr.customBrushes ([ { id, ... } ]) for user-created brushes (step 8 populates these).
-		//Writes propagate to (a) all same-page drawr canvases via $.fn.drawr._instances, and (b) other
-		//tabs via the storage event. The writing tab does not receive its own storage event.
+		//Two localStorage keys hold tool state: drawr.toolOverrides ({ [name]: { field: value } })
+		//for built-in tools, and drawr.customBrushes ([ { id, ... } ]) for user-created brushes.
+		//Writes propagate to every drawr canvas on the page via $.fn.drawr._instances, and to
+		//other tabs via the storage event (which the writing tab does not receive itself).
 
 		plugin.read_overrides = function(){
 			try {
@@ -733,7 +1254,7 @@
 			plugin._pressureCurveCache = gamma;
 			try { window.localStorage.setItem("drawr.pressureCurve", String(gamma)); } catch(e){}
 		};
-		//Refresh settings UI on every instance (no tool filter — this is a global setting).
+		//Refresh settings UI on every instance (no tool filter; this is a global setting).
 		plugin.broadcast_pressure_curve_change = function(){
 			var instances = $.fn.drawr._instances || [];
 			for(var i = 0; i < instances.length; i++){
@@ -746,7 +1267,7 @@
 			}
 		};
 
-		//apply overrides from localStorage onto already-registered tools. idempotent — safe to re-run.
+		//apply overrides from localStorage onto already-registered tools. idempotent, safe to re-run.
 		//sets a guard so we don't iterate every call; set `force=true` to re-apply after a storage event.
 		plugin.apply_overrides = function(force){
 			if($.fn.drawr._overridesApplied && !force) return;
@@ -977,8 +1498,8 @@
 			}
 
 			//patch fields on brushes that exist in both but may have changed (e.g. edited in another tab).
-			//We only copy the canonical dynamics fields — not id/icon/image_data_url, which shouldn't
-			//change for an existing brush — so reuse the single source of truth for that list.
+			//We only copy the canonical dynamics fields (not id/icon/image_data_url, which shouldn't
+			//change for an existing brush), so reuse the single source of truth for that list.
 			var dynFields = $.fn.drawr._dynamicsFields || [];
 			for(var eid2 in existingById){
 				if(recordById[eid2]){
@@ -1025,7 +1546,7 @@
 		};
 
 		plugin.activate_brush = function(brush){
-			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
+			var context = plugin.active_context.call(this);
 			if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
 				this.active_brush.deactivate.call(this,this.active_brush,context);
 			}
@@ -1050,7 +1571,8 @@
 
 			var button_width = 100/self.settings.toolbox_cols;
 			var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
-			el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : button_width + "%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
+			//faint outline (not border) so we can visually separate buttons without adding to the layout box.
+			el.css({ "outline" : "1px solid rgba(0,0,0,0.15)", "outline-offset" : "0px", "text-align":"center","padding": "0px 0px 0px 0px","width" : button_width + "%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
 			if(typeof css!=="undefined") el.css(css);
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
@@ -1058,7 +1580,7 @@
 			el.on("pointerdown." + self._evns, function(e){
 				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
 				if(typeof data.action!=="undefined") {
-					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
+					var ctx = plugin.active_context.call(self);
 					data.action.call(self,data,ctx);
 				}
 				if($(this).data("type")=="toggle") {//toggle data attribute and select effect
@@ -1074,10 +1596,12 @@
 			//stopPropagation so clicking × doesn't also select the brush underneath.
 			if(data.removable){
 				el.css("position", "relative");
-				var $x = $("<span class='drawr-tool-x' title='Remove brush'>×</span>");
+				//use an MDI glyph rather than the × unicode character. the latter falls back
+				//to tofu on systems whose default font lacks the geometric-shape range.
+				var $x = $("<span class='drawr-tool-x mdi mdi-close' title='Remove brush'></span>");
 				$x.css({
 					position: "absolute", top: "0px", right: "2px",
-					width: "12px", height: "12px", lineHeight: "10px", fontSize: "14px",
+					width: "12px", height: "12px", lineHeight: "12px", fontSize: "12px",
 					color: "#900", background: "rgba(255,255,255,0.7)", borderRadius: "50%",
 					textAlign: "center", cursor: "pointer", userSelect: "none", zIndex: 1
 				});
@@ -1135,14 +1659,17 @@
 		/* create a checkbox */
 		plugin.create_checkbox = function(toolbox, title, checked){
 			var key = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+			//unique id per checkbox so the <label for=…> association is unambiguous on iOS
+			//(tapping the label text reliably toggles the box; wrapping-label alone is flaky
+			//on some mobile browsers when paired with pointer-event listeners on ancestors).
+			var uid = 'drawr-cb-' + Math.random().toString(36).slice(2, 9);
 			$(toolbox).append(
-				'<div style="clear:both;text-align:left;padding:4px 8px;">' +
-				'<label style="cursor:pointer;user-select:none;">' +
-				'<input type="checkbox" class="checkbox-component checkbox-' + key + '"' + (checked ? ' checked' : '') + ' style="margin-right:5px;">' +
-				title +
-				'</label></div>'
+				'<div style="clear:both;text-align:left;padding:4px 8px;display:flex;align-items:center;gap:5px;">' +
+				'<input id="' + uid + '" type="checkbox" class="checkbox-component checkbox-' + key + '"' + (checked ? ' checked' : '') + ' style="margin:0;flex:0 0 auto;">' +
+				'<label for="' + uid + '" style="cursor:pointer;user-select:none;line-height:1;margin:0;">' + title + '</label>' +
+				'</div>'
 			);
-			$(toolbox).find('.checkbox-' + key).on('pointerdown touchstart', function(e){
+			$(toolbox).find('.checkbox-' + key).on('pointerdown', function(e){
 				e.stopPropagation();
 			});
 			return $(toolbox).find('.checkbox-' + key);
@@ -1158,23 +1685,53 @@
 			return $(toolbox).find('label:last');
 		};
 
-		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact. */
-		plugin.create_slider = function(toolbox,title,min,max,value){
+		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact.
+		   If precision is truthy, adds tiny -/+ buttons on either side that nudge the value by 1. */
+		plugin.create_slider = function(toolbox,title,min,max,value,precision){
 			var self=this;
 			var cls = "slider-" + title.toLowerCase();
+			var nudgeBtnStyle = 'flex:0 0 auto;width:16px;height:16px;padding:0;' +
+				'display:inline-flex;align-items:center;justify-content:center;' +
+				'cursor:pointer;user-select:none;' +
+				'border:1px solid rgba(0,0,0,0.25);border-radius:2px;' +
+				'background:linear-gradient(to bottom,rgba(255,255,255,0.18) 0%,rgba(0,0,0,0.08) 100%);' +
+				'color:inherit;';
+			var decHtml = precision ? '<button type="button" class="slider-dec ' + cls + '-dec" tabindex="-1" style="' + nudgeBtnStyle + 'margin-right:-2px;"><i class="mdi mdi-minus" style="font-size:12px;line-height:1;"></i></button>' : '';
+			var incHtml = precision ? '<button type="button" class="slider-inc ' + cls + '-inc" tabindex="-1" style="' + nudgeBtnStyle + 'margin-left:-2px;"><i class="mdi mdi-plus" style="font-size:12px;line-height:1;"></i></button>' : '';
 			$(toolbox).append(
-				'<div style="display:flex;align-items:center;padding:2px 6px;gap:6px;font-size:11px;">' +
+				'<div style="display:flex;align-items:center;padding:2px 6px;gap:4px;font-size:11px;">' +
 					'<label style="flex:0 0 auto;min-width:46px;font-weight:bold;user-select:none;">' + title + '</label>' +
+					decHtml +
 					'<input class="slider-component ' + cls + '" value="' + value + '" type="range" min="' + min + '" max="' + max + '" step="1" style="flex:1 1 auto;min-width:0;background:transparent;height:18px;margin:0;" />' +
+					incHtml +
 					'<span style="flex:0 0 auto;min-width:26px;text-align:right;font-variant-numeric:tabular-nums;">' + value + '</span>' +
 				'</div>'
 			);
-			$(toolbox).find("." + cls).on("pointerdown touchstart",function(e){
+			var $input = $(toolbox).find("." + cls).not("button");
+			$input.on("pointerdown touchstart",function(e){
 				e.stopPropagation();
 			}).on("input." + self._evns,function(e){
-				 $(this).next().text($(this).val());
+				 $(this).nextAll("span").first().text($(this).val());
 			});
-			return $(toolbox).find(".slider-" + title.toLowerCase());
+			if(precision){
+				var nudge = function(delta){
+					var cur = parseFloat($input.val());
+					var mn = parseFloat($input.attr("min"));
+					var mx = parseFloat($input.attr("max"));
+					var next = Math.max(mn, Math.min(mx, cur + delta));
+					if(next === cur) return;
+					$input.val(next).trigger("input").trigger("change");
+				};
+				$(toolbox).find("." + cls + "-dec").on("pointerdown touchstart click", function(e){
+					e.stopPropagation();
+					if(e.type === "click") nudge(-1);
+				});
+				$(toolbox).find("." + cls + "-inc").on("pointerdown touchstart click", function(e){
+					e.stopPropagation();
+					if(e.type === "click") nudge(1);
+				});
+			}
+			return $input;
 		}
 
 		/* create a button */
@@ -1262,7 +1819,7 @@
 		plugin.create_collapsible = function(toolbox, title, collapsedDefault){
 			var uid = 'col-' + Math.random().toString(36).slice(2, 8);
 			var collapsed = !!collapsedDefault;
-			//use MDI chevron glyphs instead of raw unicode triangles — iOS Firefox renders those as
+			//use MDI chevron glyphs instead of raw unicode triangles. iOS Firefox renders those as
 			//tofu/garbled symbols because its default fallback font lacks the geometric-shape range.
 			var chevClass = function(c){ return c ? 'mdi-chevron-right' : 'mdi-chevron-down'; };
 			var $wrap = $(
@@ -1291,9 +1848,13 @@
 		plugin.initialize_canvas = function(width,height,reset){
 
 			this.origStyles = plugin.get_styles(this);
-			this.origParentStyles = plugin.get_styles($(this).parent()[0]);
+			this.origParentStyles = plugin.get_styles(this.$container[0]);
 			$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none", "position": "relative", "z-index": 1 });
-			$(this).parent().css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none" });
+			//`isolation: isolate` confines mix-blend-mode (used by multiply layers) to the
+			//drawr-container, so blending never reaches the surrounding page. $bgCanvas is
+			//still inside the isolated context (by design); multiply reaches through
+			//transparent regions of layer 0 to the paper background.
+			this.$container.css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none", "isolation": "isolate" });
 
 			const style = document.createElement('style');
 			style.textContent = `
@@ -1306,27 +1867,59 @@
 			if(!this.$bgCanvas){
 				this.$bgCanvas = $("<canvas class='drawr-bg-canvas'></canvas>");
 				this.$bgCanvas.css({"position":"absolute","z-index":0,"top":0,"left":0,"pointer-events":"none"});
-				this.$bgCanvas.insertBefore(this);
+				this.$container.prepend(this.$bgCanvas);
+			}
+
+			//drawr-layer-stack: inner wrapper that holds the main canvas + extra layer canvases.
+			//its `isolation: isolate` creates a fresh stacking context so layer mix-blend-mode
+			//only reaches sibling layers. the checkerboard ($bgCanvas) and UI overlay
+			//($memoryCanvas) sit outside and never participate in blending.
+			if(!this.$layerStack){
+				this.$layerStack = $("<div class='drawr-layer-stack'></div>").css({
+					"position": "absolute",
+					"top": 0, "left": 0,
+					"width":  "100%",
+					"height": "100%",
+					"z-index": 1,
+					"isolation": "isolate"
+				});
+				this.$container.append(this.$layerStack);
+				//reparent the main canvas into the stack. extra layer canvases already live
+				//here because add_layer inserts them after the last existing layer's $el.
+				this.$layerStack.append(this);
 			}
 
 			if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
 				this.width=width;
 				this.height=height;
+				//resize extra layer canvases to match. drops their pixel data; acceptable during
+				//explicit resize/load flows.
+				if(this.layers){
+					for(var li = 1; li < this.layers.length; li++){
+						this.layers[li].canvas.width = width;
+						this.layers[li].canvas.height = height;
+					}
+				}
 			}
-			
+
 			if(reset==true){
 				this.zoomFactor = 1;
 				this.rotationAngle = 0;
-				if(typeof this.$zoomToolbox!=="undefined") this.$zoomToolbox.find("input").val(100).trigger("input");
 				plugin.apply_scroll.call(this,0,0,false);
 				$(this).width(width);
 				$(this).height(height);
+				if(this.layers){
+					for(var lj = 1; lj < this.layers.length; lj++){
+						this.layers[lj].$el.width(width);
+						this.layers[lj].$el.height(height);
+					}
+				}
 			}
 
 			plugin.draw_checkerboard.call(this);
 
 			this.pen_pressure = false;//switches mode once it detects.
-			
+
 			var context = this.getContext("2d", { alpha: true });
 			if(this.settings.clear_on_init==true){
 				context.globalAlpha = 1;
@@ -1336,14 +1929,22 @@
 				} else {
 					context.clearRect(0,0,width,height);
 				}
-			} 
+				//clear extra layers to transparent (regardless of paper setting; extras must be
+				//transparent for multiply/normal blending to compose correctly with layer 0).
+				if(this.layers){
+					for(var lk = 1; lk < this.layers.length; lk++){
+						var lctx = this.layers[lk].canvas.getContext("2d", { alpha: true });
+						lctx.clearRect(0, 0, width, height);
+					}
+				}
+			}
 
 			//memory canvas
 			var context = this.$memoryCanvas[0].getContext("2d");
 			context.fillStyle="blue";
 			context.fillRect(0,0,width,height);
-			var parent_width = $(this).parent().innerWidth();
-			var parent_height = $(this).parent().innerHeight();
+			var parent_width = this.$container.innerWidth();
+			var parent_height = this.$container.innerHeight();
 
 			this.$memoryCanvas.css({
 				"z-index": 5,
@@ -1378,6 +1979,25 @@
 				context.translate(-_cx, -_cy);
 				this.effectCallback.call(this,context,this.active_brush,this.scrollX,this.scrollY,this.zoomFactor);
 				context.restore();
+			}
+
+			//long-press colour-picker indicator. drawn outside the rotation transform
+			//so the ring stays upright regardless of canvas rotation.
+			if(this._pickerActive || (typeof this._pickerOpacity === "number" && this._pickerOpacity > 0)){
+				var _pkTarget = (typeof this._pickerTargetOpacity === "number") ? this._pickerTargetOpacity : 0;
+				var _pkCur    = (typeof this._pickerOpacity === "number") ? this._pickerOpacity : 0;
+				this._pickerOpacity = _pkCur + (_pkTarget - _pkCur) * 0.15;
+				if(Math.abs(_pkTarget - this._pickerOpacity) < 0.01) this._pickerOpacity = _pkTarget;
+
+				plugin.draw_picker_indicator.call(this, context);
+
+				//fully faded out: tear down.
+				if(!this._pickerActive && this._pickerOpacity <= 0){
+					this._pickerOpacity = 0;
+					this._pickerViewPos = null;
+					this._pickerPos = null;
+					this._pickerColor = null;
+				}
 			}
 
 			var container_width = this.containerWidth;
@@ -1488,8 +2108,44 @@
 				context.stroke();
 			}
 
+			//zoom percentage indicator, bottom-center of the viewport, fades like the scrollbars.
+			if(this.zoomIndicatorTimer > 0){
+				var _zAlpha = Math.min(0.85, (0.85/100)*this.zoomIndicatorTimer);
+				this.zoomIndicatorTimer -= 5;
+				var _zText = Math.round(this.zoomFactor * 100) + "%";
+				context.save();
+				context.globalAlpha = _zAlpha;
+				context.font = "bold 13px sans-serif";
+				context.textAlign = "center";
+				//use alphabetic baseline + actual glyph metrics. textBaseline "middle" resolves
+				//to em-box middle on iOS Safari (shifts text down), but alphabetic + measured
+				//ascent/descent centers the visible glyph identically on every browser.
+				context.textBaseline = "alphabetic";
+				var _zMetrics = context.measureText(_zText);
+				var _zAscent  = _zMetrics.actualBoundingBoxAscent  || 10;
+				var _zDescent = _zMetrics.actualBoundingBoxDescent || 2;
+				var _zGlyphH  = _zAscent + _zDescent;
+				var _zPadX = 10, _zPadY = 5;
+				var _zBoxW = _zMetrics.width + _zPadX * 2;
+				var _zBoxH = _zGlyphH + _zPadY * 2;
+				var _zBoxX = container_width / 2 - _zBoxW / 2;
+				var _zBoxY = container_height - _zBoxH - 16; //16px margin from bottom
+				context.fillStyle = "rgba(0,0,0,0.6)";
+				if(context.roundRect){
+					context.beginPath();
+					context.roundRect(_zBoxX, _zBoxY, _zBoxW, _zBoxH, 4);
+					context.fill();
+				} else {
+					context.fillRect(_zBoxX, _zBoxY, _zBoxW, _zBoxH);
+				}
+				context.fillStyle = "#fff";
+				//baseline y = box top + top padding + ascent → glyph sits centered in the box.
+				context.fillText(_zText, container_width / 2, _zBoxY + _zPadY + _zAscent);
+				context.restore();
+			}
+
 			//we only keep the loop alive when there is work to do (effectCallback preview or scroll indicators fading in n out). Everything else is triggered via request_redraw.
-			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || (this.settings.debug_mode && this.isGesturing)){
+			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || this.zoomIndicatorTimer > 0 || (this.settings.debug_mode && this.isGesturing) || this._pickerActive || (typeof this._pickerOpacity === "number" && this._pickerOpacity > 0)){
 				this._animFrameQueued = true;
 				window.requestAnimationFrame(this.draw_animations_bound);
 			}
@@ -1504,6 +2160,188 @@
 			}
 		};
 
+		//---- long-press colour picker ----------------------------------------------------
+		//
+		//hold still on the canvas for settings.long_press_pick_duration ms and a colour
+		//ring blooms under the pointer. drag to hunt a colour, release to pick. any
+		//initial dot the active tool placed at drawStart is rolled back using the
+		//existing _gestureAbortSnapshot so picking is never destructive.
+
+		//fires when the long-press timer elapses.
+		plugin.activate_color_picker = function(){
+			var self = this;
+			//setTimeout races pointerup; the user may already have released.
+			if($(self).data("is_drawing") !== true) return;
+
+			//roll back the initial dot placed by the active tool's drawStart.
+			var _ctx = plugin.active_context.call(self);
+			if(self._gestureAbortSnapshot){
+				_ctx.putImageData(self._gestureAbortSnapshot, 0, 0);
+				self._gestureAbortSnapshot = null;
+			}
+
+			//stop drawing without delivering drawStop to the tool: the stroke was
+			//retroactively cancelled, so the tool should not see an end for it.
+			$(self).data("is_drawing", false);
+
+			//multi-layer: composite once into a sample canvas (drawing is locked while
+			//picking, so the snapshot can't go stale). single-layer: sample the active
+			//context directly.
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = plugin.composite_for_export.call(self);
+				self._pickerSampleCtx = self._pickerSampleCanvas.getContext("2d", { alpha: self.settings.enable_transparency });
+			} else {
+				self._pickerSampleCanvas = self;
+				self._pickerSampleCtx = _ctx;
+			}
+
+			self._pickerActive = true;
+			if(typeof self._pickerOpacity !== "number") self._pickerOpacity = 0;
+			self._pickerTargetOpacity = 1;
+
+			//seed position + colour from where the press started.
+			var lp = self._longPressStart;
+			self._pickerPos     = { x: lp.canvasX, y: lp.canvasY };
+			self._pickerViewPos = { x: lp.viewX,   y: lp.viewY };
+			plugin.sample_picker_color.call(self, lp.canvasX, lp.canvasY);
+
+			//small haptic on devices that offer it. no-op on desktop. (^_^)
+			if(typeof navigator !== "undefined" && typeof navigator.vibrate === "function"){
+				try { navigator.vibrate(10); } catch(e) {}
+			}
+
+			plugin.request_redraw.call(self);
+		};
+
+		//samples a pixel from the active sample source into self._pickerColor.
+		//transparent / semi-transparent pixels get composited over the visible paper
+		//background so the picker returns what the user sees, not raw rgba (a fully
+		//transparent pixel reads as (0,0,0,0) and would otherwise pick as black).
+		//approximation: solid paper mode uses the configured paper_color; checkerboard
+		//mode uses white. close enough without sampling the checker pattern itself.
+		plugin.sample_picker_color = function(canvasX, canvasY){
+			var self = this;
+			if(!self._pickerSampleCtx) return;
+			var rx = Math.max(0, Math.min(self.width  - 1, Math.round(canvasX)));
+			var ry = Math.max(0, Math.min(self.height - 1, Math.round(canvasY)));
+			var d = self._pickerSampleCtx.getImageData(rx, ry, 1, 1).data;
+			var a = d[3];
+			if(a < 255){
+				var bg = (self.paperColorMode === "solid")
+					? (plugin.hex_to_rgb(self.paperColor) || { r: 255, g: 255, b: 255 })
+					: { r: 255, g: 255, b: 255 };
+				//standard source-over: out = src*sa + bg*(1-sa). canvas ImageData is
+				//non-premultiplied, so d[0..2] are the original rgb components.
+				var sa = a / 255;
+				var ia = 1 - sa;
+				self._pickerColor = {
+					r: Math.round(d[0] * sa + bg.r * ia),
+					g: Math.round(d[1] * sa + bg.g * ia),
+					b: Math.round(d[2] * sa + bg.b * ia)
+				};
+			} else {
+				self._pickerColor = { r: d[0], g: d[1], b: d[2] };
+			}
+		};
+
+		//release-while-picking: commit the final colour and start the fade-out.
+		plugin.commit_color_picker = function(){
+			var self = this;
+			if(!self._pickerActive) return;
+			var c = self._pickerColor || { r: 0, g: 0, b: 0 };
+			self.brushColor = { r: c.r, g: c.g, b: c.b };
+			var hex = plugin.rgb_to_hex(c.r, c.g, c.b);
+			//mirror into palette UI (matches eyedropper.js flow).
+			if(self.$settingsToolbox) self.$settingsToolbox.find('.color-picker.active-drawrpalette').drawrpalette("set", hex);
+
+			self._pickerActive = false;
+			self._pickerTargetOpacity = 0;
+			//release multi-layer composite so GC can reclaim it. the active-context
+			//reference is harmless to leave; draw_animations teardown clears it anyway.
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = null;
+				self._pickerSampleCtx = null;
+			}
+			plugin.request_redraw.call(self);
+		};
+
+		//two-finger gesture started mid-pick: cancel without committing.
+		plugin.cancel_color_picker = function(){
+			var self = this;
+			if(self._longPressTimer){ clearTimeout(self._longPressTimer); self._longPressTimer = null; }
+			if(!self._pickerActive) return;
+			self._pickerActive = false;
+			self._pickerTargetOpacity = 0;
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = null;
+				self._pickerSampleCtx = null;
+			}
+			plugin.request_redraw.call(self);
+		};
+
+		//renders the picker ring on the memory canvas in container-local coordinates
+		//(called outside the rotation transform so the ring sits upright on screen
+		//regardless of canvas rotation).
+		plugin.draw_picker_indicator = function(context){
+			var self = this;
+			if(self._pickerOpacity <= 0 || !self._pickerViewPos) return;
+			var vx = self._pickerViewPos.x;
+			var vy = self._pickerViewPos.y;
+			var c  = self._pickerColor || { r: 128, g: 128, b: 128 };
+
+			//offset the ring up-and-left so the finger/stylus doesn't occlude the sample point.
+			var offX = -42, offY = -42;
+			var ringR  = 28;
+			var innerR = 22;
+			var cx = vx + offX, cy = vy + offY;
+
+			context.save();
+			context.globalAlpha = self._pickerOpacity;
+
+			//connector line from sample point to ring centre.
+			context.lineWidth = 2;
+			context.strokeStyle = "rgba(0,0,0,0.5)";
+			context.beginPath();
+			context.moveTo(vx, vy);
+			context.lineTo(cx, cy);
+			context.stroke();
+
+			//little crosshair marker at the actual sample point.
+			context.beginPath();
+			context.arc(vx, vy, 4, 0, Math.PI * 2);
+			context.fillStyle = "rgba(255,255,255,0.9)";
+			context.fill();
+			context.lineWidth = 1;
+			context.strokeStyle = "rgba(0,0,0,0.8)";
+			context.stroke();
+
+			//soft drop shadow under the ring.
+			context.beginPath();
+			context.arc(cx, cy + 2, ringR + 2, 0, Math.PI * 2);
+			context.fillStyle = "rgba(0,0,0,0.25)";
+			context.fill();
+
+			//inner filled disc showing the sampled colour.
+			context.beginPath();
+			context.arc(cx, cy, innerR, 0, Math.PI * 2);
+			context.fillStyle = "rgb(" + c.r + "," + c.g + "," + c.b + ")";
+			context.fill();
+
+			//double-stroke ring (white inner + dark outer) for contrast on any background.
+			context.lineWidth = 3;
+			context.strokeStyle = "rgba(255,255,255,0.95)";
+			context.beginPath();
+			context.arc(cx, cy, ringR - 1, 0, Math.PI * 2);
+			context.stroke();
+			context.lineWidth = 2;
+			context.strokeStyle = "rgba(0,0,0,0.75)";
+			context.beginPath();
+			context.arc(cx, cy, ringR + 1, 0, Math.PI * 2);
+			context.stroke();
+
+			context.restore();
+		};
+
 		/* Create floating dialog and appends it hidden after the canvas */
 		plugin.create_toolbox = function(id,position,title,width){
 			var self = this;
@@ -1514,9 +2352,18 @@
 			$(toolbox).css({
 				"position" : "absolute", "z-index" : 6, "cursor" : "move", "width" : width + "px", "height" : "auto", "color" : "#fff",
 				"padding" : "2px", "background" : "linear-gradient(to bottom, rgba(69,72,77,1) 0%,rgba(0,0,0,1) 100%)", "border-radius" : "2px",
-				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center"
+				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center",
+				//touch-action: none tells the browser this element never triggers native scroll
+				//or zoom. On iOS it's the only reliable way to stop a finger/pencil drag across
+				//the toolbox from scrolling the page; preventDefault() in pointerdown is too
+				//late, since the browser decides pan-vs-pointer from touch-action before pointer
+				//events fire. An older fix bound touchstart+preventDefault, but that broke taps
+				//on nested controls (iOS drops the synthesized click when touchstart and
+				//pointerdown are both bound on one element). Buttons, labels, selects, and
+				//sliders still work because they're driven by pointer/click events. (^_^)
+				"touch-action": "none"
 			});
-			$(toolbox).insertAfter($(this).parent());
+			$(toolbox).insertAfter(this.$container);
 			if(position){ $(toolbox).offset(position); }
 			$(toolbox).data("toolbox-id", id);
 			$(toolbox).hide();
@@ -1525,9 +2372,17 @@
 			$(toolbox).on("mousedown." + self._evns, function(e){
 				if(e.button === 1) e.preventDefault();
 			});
-			$(toolbox).on("pointerdown." + self._evns + " touchstart." + self._evns, function(e){
-				if($(e.target).is("button, input, select, textarea, label, a") || $(e.target).closest("button, input, select, textarea, label, a").length) {
-					e.preventDefault();//prevent native scroll, even if we don't wanna drag the toolbox.
+			//drag using pointerdown only; it covers mouse/touch/pen on all modern browsers.
+			//binding touchstart alongside is the root cause of mobile tap failures: iOS Safari
+			//treats a same-element touchstart+pointerdown pair as ambiguous, frequently dropping
+			//the synthesized click on nested buttons/labels/sliders.
+			$(toolbox).on("pointerdown." + self._evns, function(e){
+				//raise this toolbox above any overlapping siblings. happens for every pointerdown
+				//on the dialog, including on its buttons/sliders, so clicking anywhere on a partially
+				//occluded window brings it to the front. (^_^)
+				plugin._toolboxTopZ = (plugin._toolboxTopZ || 6) + 1;
+				this.style.zIndex = plugin._toolboxTopZ;
+				if($(e.target).is("button, input, select, textarea, label, option, a") || $(e.target).closest("button, input, select, textarea, label, option, a").length) {
 					return;
 				}
 				var tbOffset = $(this).offset();
@@ -1546,7 +2401,7 @@
 
 		plugin.get_best_toolbox_position = function(id, width, height, $exclude) {
 
-			var container = $(this).parent();
+			var container = this.$container;
 			var cw = container.innerWidth();
 			var ch = container.innerHeight();
 			var P = 6;
@@ -1605,7 +2460,7 @@
 			var w = $toolbox.outerWidth();
 			var h = $toolbox.outerHeight() || 100;
 			var pos = plugin.get_best_toolbox_position.call(self, id, w, h, $toolbox);
-			var containerOffset = $(self).parent().offset();
+			var containerOffset = self.$container.offset();
 			$toolbox.offset({
 				left: containerOffset.left + pos.left,
 				top:  containerOffset.top  + pos.top
@@ -1650,12 +2505,9 @@
 		//we should probably do that with more operations later on. rotation could affect scroll, so
 		plugin.apply_scroll = function(x,y,setTimer){
 			var self = this;
-			var angle = self.rotationAngle || 0;
-			var transform = plugin.canvas_transform(x, y, angle);
-			$(self).css("transform", transform);
-			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
 			self.scrollX = x;
 			self.scrollY = y;
+			plugin.broadcast_transform.call(self);
 			if(setTimer==true){
 				self.scrollTimer= 500;
 			}
@@ -1666,9 +2518,7 @@
 		plugin.apply_rotation = function(angle,setTimer){
 			var self = this;
 			self.rotationAngle = angle;
-			var transform = plugin.canvas_transform(self.scrollX, self.scrollY, angle);
-			$(self).css("transform", transform);
-			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
+			plugin.broadcast_transform.call(self);
 			if(setTimer==true){
 				self.scrollTimer= 500;
 			}
@@ -1685,8 +2535,13 @@
 			self.zoomFactor = zoomFactor;
 			$(self).width(self.width*zoomFactor);
 			$(self).height(self.height*zoomFactor);
+			plugin.broadcast_zoom_css.call(self);
 			plugin.draw_checkerboard.call(self);
 			if(oldZoom > 0 && zoomFactor !== oldZoom){
+				//brief zoom-percentage readout at the bottom of the viewport, mirroring the
+				//fade-in/out behaviour of the scroll indicators (driven from draw_animations).
+				self.zoomIndicatorTimer = 500;
+				plugin.request_redraw.call(self);
 				if(focalX !== undefined){
 					plugin.apply_scroll.call(self, (focalX + self.scrollX) * (zoomFactor / oldZoom) - focalX, (focalY + self.scrollY) * (zoomFactor / oldZoom) - focalY, true);
 				} else {
@@ -1709,6 +2564,7 @@
 
 		//toolset is only a parameter for more helpful errors.
 		plugin.get_tool_by_name = function(toolset, toolname){
+			if(toolname=="brush") toolname = "paintbrush";//backwards compatible...
 			var found = $.fn.drawr.availableTools.find(function(t){ return t.name == toolname; });
 			if(!found) throw new Error("Tool " + toolname + " not found, as referenced in " + toolset);
 			return found;
@@ -1733,8 +2589,12 @@
 				});
 			} else {
 				for(var tool_name of self.toolsets[toolset]){
-					var tool = plugin.get_tool_by_name(toolset, tool_name);
-					plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					try {
+						var tool = plugin.get_tool_by_name(toolset, tool_name);
+						plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					} catch(e){
+						//tool not found, but keep going.
+					}
 				}
 			}
 		};
@@ -1744,6 +2604,11 @@
 			var currentCanvas = this.first()[0];
 			if(typeof param !== "undefined" && typeof param !== "string") throw new Error("drawr export: mime type must be a string");
 			var mime = typeof param=="undefined" ? "image/png" : param;
+			//with multiple layers, composite in JS so saved output matches the GPU-blended display.
+			//a single-layer instance falls straight through to toDataURL on the main canvas.
+			if(currentCanvas.layers && currentCanvas.layers.length > 1){
+				return plugin.composite_for_export.call(currentCanvas).toDataURL(mime);
+			}
 			return currentCanvas.toDataURL(mime);
 		}
 
@@ -1780,7 +2645,10 @@
 
 				if(typeof param !== "undefined" && typeof param !== "boolean") throw new Error("drawr clear: clear_undo must be a boolean");
 				var clear_undo = typeof param!=="undefined" ? param : false;
-				currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
+				//public clear wipes every layer, then collapses back to a single base layer
+				//so callers get a clean single-layer state (matches fresh-canvas semantics).
+				currentCanvas.plugin.clear_canvas.call(currentCanvas,false,"all");
+				currentCanvas.plugin.collapse_to_base_layer.call(currentCanvas);
 
 				if(clear_undo) {//re-add current version of the canvas.
 					if(typeof currentCanvas.$undoButton!=="undefined") currentCanvas.$undoButton.css("opacity",0.5);
@@ -1789,7 +2657,9 @@
 					currentCanvas.redoStack = [];
 				}
 
-				currentCanvas.undoStack.push({data: currentCanvas.toDataURL("image/png"),current:true});
+				//record the active layer's cleared state so the first undo does something sensible.
+				var _active = currentCanvas.layers[currentCanvas.activeLayerIndex];
+				currentCanvas.undoStack.push({data: _active.canvas.toDataURL("image/png"), layerId: _active.id});
 
 			} else if ( action === "stop" ) {
 				if(!$(currentCanvas).hasClass("active-drawr")) {
@@ -1850,8 +2720,8 @@
 
 				if(typeof param !== "object" || param === null || Array.isArray(param)) throw new Error("drawr movetoolbox: param must be an object");
 				if(typeof param.x !== "number" || typeof param.y !== "number") throw new Error("drawr movetoolbox: param.x and param.y must be numbers");
-				currentCanvas.$brushToolbox.css("left",($(currentCanvas).parent().offset().left + param.x) + "px");
-				currentCanvas.$brushToolbox.css("top",($(currentCanvas).parent().offset().top + param.y) + "px");
+				currentCanvas.$brushToolbox.css("left",(currentCanvas.$container.offset().left + param.x) + "px");
+				currentCanvas.$brushToolbox.css("top",(currentCanvas.$container.offset().top + param.y) + "px");
 				
 			//call with $(selector).drawr("load",something) to load an image.
 			//todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
@@ -1864,10 +2734,23 @@
 				img.crossOrigin = "Anonymous";
 
 				img.onload = function(){
-					var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_transparency });
 					plugin.initialize_canvas.call(currentCanvas,img.width,img.height,true);
-					currentCanvas.undoStack = [{data: currentCanvas.toDataURL("image/png"),current:true}];
+					//load replaces the active layer. the canvas resize/reset above has already
+					//cleared every layer to white/transparent, so drawImage straight onto the
+					//active layer context is all that's left.
+					var context = plugin.active_context.call(currentCanvas);
 					context.drawImage(img,0,0);
+					//drop prior history (dimensions changed, older snapshots no longer align),
+					//and mark the loaded state sticky so undo treats it as a baseline: it serves
+					//as a restore target for later strokes, but undo refuses to pop it.
+					currentCanvas.undoStack = [];
+					currentCanvas.redoStack = [];
+					var _lb = currentCanvas.layers[currentCanvas.activeLayerIndex];
+					currentCanvas.undoStack.push({
+						data: _lb.canvas.toDataURL("image/png"),
+						layerId: _lb.id,
+						sticky: true
+					});
 				};
 				img.src=param;
 			//call with $(selector).drawr("destroy") 
@@ -1877,14 +2760,14 @@
 					console.error("The element you are running this command on is not a drawr canvas.");
 					return false;//can't destroy if not initialized.
 				}
-				var parent = $(currentCanvas).parent();
+				var $container = currentCanvas.$container;
 				var evns = currentCanvas._evns;
-				parent.off("touchstart." + evns);
-				parent.off("wheel." + evns);
-				parent.off("contextmenu." + evns);
-				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown." + evns);
-				parent.find(".drawr-toolbox .slider-component").off("input." + evns);
-				parent.find(".drawr-toolbox").off("pointerdown." + evns + " touchstart." + evns);
+				$container.off("touchstart." + evns);
+				$container.off("wheel." + evns);
+				$container.off("contextmenu." + evns);
+				$container.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown." + evns);
+				$container.find(".drawr-toolbox .slider-component").off("input." + evns);
+				$container.find(".drawr-toolbox").off("pointerdown." + evns + " touchstart." + evns);
 				$(window).unbind("pointerup." + evns + " pointercancel." + evns, currentCanvas.drawStop);
 				$(window).unbind("pointermove." + evns, currentCanvas.drawMove);
 				$(window).unbind("pointerdown." + evns, currentCanvas.drawStart);
@@ -1899,6 +2782,23 @@
 
 				currentCanvas.$memoryCanvas.remove();
 				if(currentCanvas.$bgCanvas){ currentCanvas.$bgCanvas.remove(); delete currentCanvas.$bgCanvas; }
+				//remove extra layer canvases (layer 0 is the main canvas, left in place).
+				if(currentCanvas.layers){
+					for(var _li = 1; _li < currentCanvas.layers.length; _li++){
+						currentCanvas.layers[_li].$el.remove();
+					}
+					delete currentCanvas.layers;
+					delete currentCanvas.activeLayerIndex;
+					delete currentCanvas._nextLayerId;
+				}
+				//unwrap drawr-layer-stack: move the main canvas back to drawr-container so
+				//the DOM returns to its pre-init shape. must happen before style/class resets
+				//below, which expect $(currentCanvas).parent() === drawr-container.
+				if(currentCanvas.$layerStack){
+					currentCanvas.$container.append(currentCanvas);
+					currentCanvas.$layerStack.remove();
+					delete currentCanvas.$layerStack;
+				}
 				currentCanvas.$brushToolbox.remove();
 
 				delete currentCanvas.$memoryCanvas;
@@ -1930,6 +2830,7 @@
 				delete currentCanvas.scrollWheel;
 				delete currentCanvas.current_toolset;
 				delete currentCanvas.scrollTimer;
+				delete currentCanvas.zoomIndicatorTimer;
 
 				//reset css and visuals and scrolls
 				$(currentCanvas).width(currentCanvas.width);
@@ -1938,34 +2839,46 @@
 
 				//reset styles to what they were.
 				$(currentCanvas).attr('style', '');
-				$(currentCanvas).parent().attr('style', '');
+				currentCanvas.$container.attr('style', '');
 				$(currentCanvas).css(currentCanvas.origStyles);
-				$(currentCanvas).parent().css(currentCanvas.origParentStyles);
+				currentCanvas.$container.css(currentCanvas.origParentStyles);
 
 				delete currentCanvas.origStyles;
 				delete currentCanvas.origParentStyles;
 
 				$(currentCanvas).removeClass("active-drawr");
-				$(currentCanvas).parent().removeClass("drawr-container");
+				currentCanvas.$container.removeClass("drawr-container");
+				delete currentCanvas.$container;
 			//not an action, but an init call
 			} else if ( typeof action == "object" || typeof action =="undefined" ){
 				if($(currentCanvas).hasClass("active-drawr")) return false;//prevent double init
 				currentCanvas.className = currentCanvas.className + " active-drawr";
-				$(currentCanvas).parent().addClass("drawr-container");
+				//cached reference to drawr-container. stashed first so every later code path
+				//(tools, event handlers, positioning math) can use it instead of
+				//$(this).parent(), which becomes the inner drawr-layer-stack div once
+				//initialize_canvas reparents the main canvas for blend-mode isolation.
+				currentCanvas.$container = $(currentCanvas).parent();
+				currentCanvas.$container.addClass("drawr-container");
 
 				//determine settings
 				var defaultSettings = {
 					"enable_transparency" : true,
 					"enable_scrollwheel_zooming" : true,
-					"canvas_width" : $(currentCanvas).parent().innerWidth(),
-					"canvas_height" : $(currentCanvas).parent().innerHeight(),
+					"canvas_width" : currentCanvas.$container.innerWidth(),
+					"canvas_height" : currentCanvas.$container.innerHeight(),
 					"undo_max_levels" : 5,
 					"color_mode" : "picker",
 					"clear_on_init" : true,
 					"toolbox_cols" : 3,
 					"debug_mode" : false,
 					"paper_color_mode" : "checkerboard",
-					"paper_color" : "#ffffff"
+					"paper_color" : "#ffffff",
+					"hide_advanced_brush_settings" : false,
+					//sketchbook-style: hold still on the canvas for a beat and a colour
+					//ring blooms under the pointer. drag to hunt a colour, release to pick.
+					"long_press_pick_enabled" : true,
+					"long_press_pick_duration" : 700,   //ms
+					"long_press_pick_move_tolerance" : 8 //page px before the hold is abandoned
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
@@ -1977,13 +2890,12 @@
 				currentCanvas.memoryContext.imageSmoothingEnabled= false;
 
 				//cache container dimensions; kept up to date via resize handler
-				var _parent = $(currentCanvas).parent();
-				currentCanvas.containerWidth = _parent.width();
-				currentCanvas.containerHeight = _parent.height();
+				currentCanvas.containerWidth = currentCanvas.$container.width();
+				currentCanvas.containerHeight = currentCanvas.$container.height();
 				currentCanvas._evns = "drawr_" + Math.random().toString(36).slice(2, 9);//event namespace so destroying one drawr instance doesn't affect others.
 				currentCanvas.onWindowResize = function() {
-					currentCanvas.containerWidth = _parent.width();
-					currentCanvas.containerHeight = _parent.height();
+					currentCanvas.containerWidth = currentCanvas.$container.width();
+					currentCanvas.containerHeight = currentCanvas.$container.height();
 				};
 				$(window).on("resize." + currentCanvas._evns, currentCanvas.onWindowResize);
 
@@ -1995,9 +2907,27 @@
 				currentCanvas.paperColorMode = currentCanvas.settings.paper_color_mode;
 				currentCanvas.paperColor = currentCanvas.settings.paper_color;
 
+				//seed layer registry. layer 0 is the main canvas element itself. add_layer/
+				//delete_layer/move_layer_down manage extras. undo records reference layer.id
+				//so reorder/delete don't invalidate history.
+				currentCanvas.layers = [{
+					id: 0,
+					canvas: currentCanvas,
+					$el: $(currentCanvas),
+					name: "New layer",
+					mode: "normal",
+					visible: true,
+					opacity: 1,
+					history_trimmed: false
+				}];
+				currentCanvas.activeLayerIndex = 0;
+				currentCanvas._nextLayerId = 1;
+
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
-				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
+				//undo/redo use "walk for prev same-layer" semantics with fallback-to-clear.
+				//no initial seed needed; the first stroke's undo will fallback-clear.
+				currentCanvas.undoStack = [];
 				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				context.imageSmoothingEnabled= false;
@@ -2029,14 +2959,14 @@
 		"rotation_mode","fixed_angle","angle_jitter",
 		"size_jitter","opacity_jitter","scatter",
 		"smoothing","brush_fade_in",
-		"pressure_affects_alpha","pressure_affects_size"
+		"pressure_affects_alpha","pressure_affects_size","size_max"
 	];
 
 	/* Register a new tool */
 	$.fn.drawr.register = function (tool){
 		if(typeof $.fn.drawr.availableTools=="undefined") $.fn.drawr.availableTools=[];
 		//snapshot dynamics defaults so Reset-Defaults has a pristine target. Shallow copy of
-		//only the fields the tool actually declares — missing fields stay missing after reset.
+		//only the fields the tool actually declares; missing fields stay missing after reset.
 		if(typeof tool._defaults === "undefined"){
 			var defaults = {};
 			for(var i = 0; i < $.fn.drawr._dynamicsFields.length; i++){

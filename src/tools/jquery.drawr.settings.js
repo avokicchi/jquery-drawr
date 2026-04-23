@@ -6,17 +6,20 @@ jQuery.fn.drawr.register({
 	buttonCreated: function(brush,button){
 
 		var self = this;
-		var context = self.getContext('2d');
+		//the color-picker change handlers re-invoke the active brush's activate() with a
+		//context reference. resolve it lazily so a layer-switch between toolbox creation and
+		//a color choice routes to the right canvas.
+		var ctx = function(){ return self.plugin.active_context.call(self); };
 
 		//color dialog
-		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",180);
+		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",240);
 
 		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Color");
 
 		self.$settingsToolbox.append("<div style='margin-bottom:40px;'><input type='text' class='color-picker' style='z-index:1;position:absolute;margin:-10px 0px 0px -30px;'/></div>");
 		self.$settingsToolbox.find('.color-picker').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
 			self.brushColor = self.plugin.hex_to_rgb(hexcolor);
-			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
+			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,ctx());
 		});
 
 		self.$settingsToolbox.find('input.color-picker').drawrpalette("set",self.plugin.rgb_to_hex(self.brushColor.r,self.brushColor.g,self.brushColor.b));
@@ -24,12 +27,12 @@ jQuery.fn.drawr.register({
 		self.$settingsToolbox.append("<input type='text' class='color-picker2' style='z-index:0;position:absolute;margin:-40px 0px 0px -10px;'/>");
 		self.$settingsToolbox.find('.color-picker2').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
 			self.brushBackColor = self.plugin.hex_to_rgb(hexcolor);
-			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
+			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,ctx());
 		});
 
 		self.$settingsToolbox.find('input.color-picker2').drawrpalette("set",self.plugin.rgb_to_hex(self.brushBackColor.r,self.brushBackColor.g,self.brushBackColor.b));
 
-		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha)).on("input.drawr",function(){
+		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha), true).on("input.drawr",function(){
 			var v = parseFloat(this.value/100);
 			self.brushAlpha = v;
 			if(typeof self.active_brush.alpha!=="undefined") self.active_brush.alpha = v;
@@ -38,7 +41,7 @@ jQuery.fn.drawr.register({
 			}
 			self.plugin.is_dragging=false;
 		});
-		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,100,self.settings.inital_brush_size).on("input.drawr",function(){
+		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,200,self.settings.inital_brush_size, true).on("input.drawr",function(){
 			var v = parseInt(this.value);
 			self.brushSize = v;
 			if(typeof self.active_brush.size!=="undefined")  self.active_brush.size = v;
@@ -185,7 +188,7 @@ jQuery.fn.drawr.register({
 			{ value: "fixed",          label: "Fixed" },
 			{ value: "follow_stroke",  label: "Follow" },
 			{ value: "random_jitter",  label: "Random" },
-			{ value: "follow_jitter",  label: "Follow±" }
+			{ value: "follow_jitter",  label: "Follow" }
 		], "none");
 		self.$rotationModeDropdown.on("change.drawr", function(){
 			if(!self.active_brush) return;
@@ -196,14 +199,18 @@ jQuery.fn.drawr.register({
 
 		//all numeric dynamics use a 0..100 slider; values are mapped to the canonical range in the handler.
 		//spacing uses 2..200 mapped to 0.02..2 so the min is usable.
-		self.$spacingSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "spacing",    2, 200, 25);
-		self.$flowSlider       = self.plugin.create_slider.call(self, self.$advancedSection, "flow",       0, 100, 100);
+		self.$spacingSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "spacing",    2, 200, 25, true);
+		self.$flowSlider       = self.plugin.create_slider.call(self, self.$advancedSection, "flow",       0, 100, 100, true);
 		self.$sizeJitSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizejitter", 0, 100, 0);
 		self.$opJitSlider      = self.plugin.create_slider.call(self, self.$advancedSection, "opjitter",   0, 100, 0);
 		self.$angleJitSlider   = self.plugin.create_slider.call(self, self.$advancedSection, "anglejit",   0, 100, 0);
 		self.$scatterSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "scatter",    0, 100, 0);
-		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0);
+		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0, true);
 		self.$fadeInSlider     = self.plugin.create_slider.call(self, self.$advancedSection, "fadein",     0, 200, 0);
+		//size_max: absolute max size in pixels at full pen pressure. Only meaningful when
+		//pressure_affects_size is on. Same range as the main size slider. If set below the current
+		//`size`, the engine clamps up so you never invert the sweep.
+		self.$sizeMaxSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizemax",    1, 200, 20, true);
 
 		//bind each slider to its canonical field on active_brush, with its own mapping.
 		//update() sets _suppressSettingsWrite=true while repopulating, so we don't write-back defaults on every tool switch.
@@ -224,6 +231,7 @@ jQuery.fn.drawr.register({
 		bindSlider(self.$scatterSlider,    "scatter",        function(v){ return v / 100; });
 		bindSlider(self.$fixedAngleSlider, "fixed_angle",    function(v){ return v * Math.PI / 180; });
 		bindSlider(self.$fadeInSlider,     "brush_fade_in",  function(v){ return Math.round(v); });
+		bindSlider(self.$sizeMaxSlider,    "size_max",       function(v){ return v; });
 
 		self.$cbSmoothing = self.plugin.create_checkbox.call(self, self.$advancedSection, "Smoothing", false);
 		self.$cbSmoothing.on("change.drawr", function(){
@@ -233,7 +241,7 @@ jQuery.fn.drawr.register({
 			self.plugin.is_dragging = false;
 		});
 
-		//Reset Defaults — restores the tool to the values snapshotted at register() time.
+		//Reset Defaults; restores the tool to the values snapshotted at register() time.
 		//Hidden for custom (removable) brushes since their "defaults" live in the saved record.
 		self.$resetButton = self.plugin.create_button.call(self, self.$advancedSection, "Reset defaults");
 		self.$resetButton.on("click.drawr", function(){
@@ -298,7 +306,7 @@ jQuery.fn.drawr.register({
 			var curGamma = self.plugin.read_pressure_curve();
 			var t = Math.max(0, Math.min(100, Math.round(50 - 50 * Math.log(curGamma) / Math.log(3))));
 			self.$pressureCurveSlider.val(t);
-			//preview is a raw canvas, not tied to slider input event — redraw directly.
+			//preview is a raw canvas, not tied to slider input event. redraw directly.
 			var c = self.$pressureCurvePreview && self.$pressureCurvePreview[0];
 			if(c && c.getContext){
 				var ctx = c.getContext("2d");
@@ -319,14 +327,16 @@ jQuery.fn.drawr.register({
 		}
 
 		//---- Advanced section ----------------------------------------
-		//Hide entirely for tools without drawSpot (shape/action tools) — dynamics don't apply to them.
+		//Hide entirely for tools without drawSpot (shape/action tools). dynamics don't apply to them.
 		if(self.$advancedSection){
 			var hasSpot = typeof self.active_brush.drawSpot !== "undefined";
-			self.$advancedSection.closest(".drawr-collapsible").css("display", hasSpot ? "" : "none");
+			//hide_advanced_brush_settings hides the whole section from the UI, but engine dynamics keep working.
+			var hideAdvanced = !hasSpot || !!self.settings.hide_advanced_brush_settings;
+			self.$advancedSection.closest(".drawr-collapsible").css("display", hideAdvanced ? "none" : "");
 			if(hasSpot){
 				//read each field from active_brush with a sensible fallback; slider setters use .val() + trigger("input")
 				//to update the numeric display but we avoid re-persisting on every activate by setting val() directly
-				//when the value matches what we'd write back. Cheap approach: use .val() then trigger("input") — which
+				//when the value matches what we'd write back. Cheap approach: use .val() then trigger("input") which
 				//calls our handler and writes to active_brush[field] with the same value (idempotent).
 				var b = self.active_brush;
 				if(self.$rotationModeDropdown){
@@ -340,6 +350,7 @@ jQuery.fn.drawr.register({
 				if(self.$scatterSlider)    self.$scatterSlider.val(Math.round((b.scatter || 0) * 100)).trigger("input");
 				if(self.$fixedAngleSlider) self.$fixedAngleSlider.val(Math.round(((b.fixed_angle || 0) * 180 / Math.PI) % 360)).trigger("input");
 				if(self.$fadeInSlider)     self.$fadeInSlider.val(b.brush_fade_in || 0).trigger("input");
+				if(self.$sizeMaxSlider)    self.$sizeMaxSlider.val(Math.round((typeof b.size_max === "number") ? b.size_max : (b.size || 20))).trigger("input");
 				if(self.$cbSmoothing)      self.$cbSmoothing.prop("checked", !!b.smoothing);
 				//Reset hidden for custom brushes (their "defaults" are the record fields)
 				if(self.$resetButton)      self.$resetButton.css("display", b.removable ? "none" : "");
@@ -387,6 +398,7 @@ jQuery.fn.drawr.register({
 		delete self.$scatterSlider;
 		delete self.$fixedAngleSlider;
 		delete self.$fadeInSlider;
+		delete self.$sizeMaxSlider;
 		delete self.$cbSmoothing;
 		delete self.$resetButton;
 		delete self.$pressureCurveSlider;

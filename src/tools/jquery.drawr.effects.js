@@ -52,8 +52,8 @@ jQuery.fn.drawr.register({
 	_effect: "blur",
 
 	//Note: the tool object is shared across all drawr instances on a page, so DOM refs MUST live on
-	//`self` (the canvas), not on `brush`. `brush._effect` itself is intentionally still global —
-	//tool config (like pencil's spacing) is shared by design — but we keep a list of every per-canvas
+	//`self` (the canvas), not on `brush`. `brush._effect` itself is intentionally still global
+	//tool config (like pencil's spacing) is shared by design but we keep a list of every per-canvas
 	//dropdown on the tool so a change in one canvas syncs the others.
 	buttonCreated: function(brush, button) {
 		var self = this;

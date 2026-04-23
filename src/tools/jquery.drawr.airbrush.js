@@ -1,18 +1,15 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-spray mdi-24px",
 	name: "airbrush",
-	size: 20,
-	alpha: 0.5,
+	size: 100,
+	alpha: 1,
 	order: 3,
 	brush_fade_in: 10,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
 	smoothing: false,
-	flow: 0.5,
-	spacing: 0.05,
-	scatter: 0,
-	opacity_jitter: 0,
-	size_jitter: 0,
+	flow: 1,
+	spacing: 0.25,
 	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;

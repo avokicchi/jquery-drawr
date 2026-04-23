@@ -10,9 +10,9 @@ jQuery.fn.drawr.register({
 		var self = this;
 
 		self.$customToolbox = self.plugin.create_toolbox.call(self,"custom",
-			{ left: $(self).parent().offset().left + $(self).parent().innerWidth()/2,
-			  top:  $(self).parent().offset().top  + $(self).parent().innerHeight()/2 },
-			"Custom brush", 160);
+			{ left: self.$container.offset().left + self.$container.innerWidth()/2,
+			  top:  self.$container.offset().top  + self.$container.innerHeight()/2 },
+			"Custom brush", 240);
 
 		self.plugin.create_text.call(self, self.$customToolbox, "Create a new brush from an image.");
 
@@ -44,16 +44,17 @@ jQuery.fn.drawr.register({
 			{ value: "random_jitter",  label: "Random" },
 			{ value: "follow_jitter",  label: "Follow±" }
 		], "follow_stroke");
-		self._customSpacing    = self.plugin.create_slider.call(self, $adv, "spacing",    2, 200, 25);
-		self._customFlow       = self.plugin.create_slider.call(self, $adv, "flow",       0, 100, 100);
+		self._customSpacing    = self.plugin.create_slider.call(self, $adv, "spacing",    2, 200, 25, true);
+		self._customFlow       = self.plugin.create_slider.call(self, $adv, "flow",       0, 100, 100, true);
 		self._customSizeJit    = self.plugin.create_slider.call(self, $adv, "sizejitter", 0, 100, 0);
 		self._customOpJit      = self.plugin.create_slider.call(self, $adv, "opjitter",   0, 100, 0);
 		self._customAngleJit   = self.plugin.create_slider.call(self, $adv, "anglejit",   0, 100, 0);
 		self._customScatter    = self.plugin.create_slider.call(self, $adv, "scatter",    0, 100, 0);
-		self._customFixedAngle = self.plugin.create_slider.call(self, $adv, "angle",      0, 359, 0);
-		self._customSize       = self.plugin.create_slider.call(self, $adv, "basesize",   1, 100, 15);
-		self._customAlpha      = self.plugin.create_slider.call(self, $adv, "basealpha",  0, 100, 100);
+		self._customFixedAngle = self.plugin.create_slider.call(self, $adv, "angle",      0, 359, 0, true);
+		self._customSize       = self.plugin.create_slider.call(self, $adv, "basesize",   1, 100, 15, true);
+		self._customAlpha      = self.plugin.create_slider.call(self, $adv, "basealpha",  0, 100, 100, true);
 		self._customFadeIn     = self.plugin.create_slider.call(self, $adv, "fadein",     0, 200, 0);
+		self._customSizeMax    = self.plugin.create_slider.call(self, $adv, "sizemax",    1, 200, 20, true);
 		self._customSmoothing   = self.plugin.create_checkbox.call(self, $adv, "Smoothing",  false);
 		self._customPressureA   = self.plugin.create_checkbox.call(self, $adv, "PressureAlpha", true);
 		self._customPressureS   = self.plugin.create_checkbox.call(self, $adv, "PressureSize",  false);
@@ -92,7 +93,8 @@ jQuery.fn.drawr.register({
 				smoothing:      self._customSmoothing.prop("checked"),
 				brush_fade_in:  parseInt(self._customFadeIn.val()),
 				pressure_affects_alpha: self._customPressureA.prop("checked"),
-				pressure_affects_size:  self._customPressureS.prop("checked")
+				pressure_affects_size:  self._customPressureS.prop("checked"),
+				size_max: parseFloat(self._customSizeMax.val())
 			};
 
 			//persist first, then register + paint buttons on every active instance via reconcile.

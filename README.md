@@ -27,9 +27,12 @@ $("#canvas").drawr("start");
 - Excellent mobile support
 - Basic pen pressure support for Samsung / Apple devices / Wacom
 - Text insertion
-- Undo
+- Undo / redo
+- Layers (with per-layer opacity and blend mode)
+- User-definable custom image brushes
 - Ignores unintended touches
 - Rotation, pinch to zoom and dragging on mobile, right click to draw and mousewheel zooming on desktop
+- Tap and hold to pick color
 
 **Methods**
 
@@ -39,9 +42,10 @@ $("#canvas").drawr("start");
 - export(mime_type): returns a data url in the given format of the current drawing. (Doesn't force a download!)
 - button(buttonconfig): creates a button. $("#drawr-container .demo-canvas").drawr("button", {"icon":"mdi mdi-folder-open mdi-24px" }).on("mousedown"...etc)
 - destroy: cleans everything up
-- clear(clear_undo): clears the canvas and optionally resets the undo/redo buffers.
+- clear(clear_undo): clears the canvas and optionally resets the undo/redo buffers. Also collapses any extra layers, leaving a single base layer.
 - createtoolset(name,tools): see minimal.html. Creates a set of tools.
 - loadtoolset(name): see minimal.html. Loads a set of tools.
+- activate_tool(name): selects the tool with the given `name` (as declared in its `register()` call).
 - movetoolbox({x:a,y:b}) moves the main tool palette offset from the topleft of the canvas.
 - zoom(factor) sets the zoom factor.
 - center: centers the view in the parent container.
@@ -54,16 +58,17 @@ $("#canvas").drawr("start");
 - undo_max_levels(5)
 - clear_on_init(true): whether to erase the canvas when it is loaded.
 - enable_scrollwheel_zooming(true)
-- toolbox_cols(2): configure the toolbox size
+- toolbox_cols(3): configure the toolbox size
 - paper_color(#ffffff): configure the paper color used when paper_color_mode is solid
 - paper_color_mode(checkerboard/solid): configure the paper color display mode used if transparency is on.
+- hide_advanced_brush_settings(false): hides the Advanced section (per-spot brush dynamics) from the Settings dialog. The engine still applies whatever defaults/overrides are in place but users just can't edit them from the UI.
 
 **Events**
 
 The plugin triggers jQuery events on the canvas element whenever the user starts or ends a valid stroke. Palm/wrist touches, pinch/rotate gestures, and middle-mouse pans are filtered out and do not fire events.
 
-- `drawr:drawstart` — fires once when a stroke begins
-- `drawr:drawstop` — fires once when the stroke ends
+- `drawr:drawstart` fires once when a stroke begins
+- `drawr:drawstop` fires once when the stroke ends
 
 Each event carries a data object: `{x, y, tool, size, alpha, pressure}`: canvas-local coordinates, the active tool's `name`, the resolved size/alpha for the stroke, and the input pressure (0..1; 0.5 for non-pressure-sensitive devices).
 
@@ -90,7 +95,7 @@ Tools live in `src/tools/` and self-register at load time by calling `jQuery.fn.
 
 ```javascript
 jQuery.fn.drawr.register({
-    //metadata — shown in the toolbox
+    //metadata shown in the toolbox
     name: "my_tool",
     icon: "mdi mdi-brush mdi-24px",
     order: 10,
@@ -102,8 +107,15 @@ jQuery.fn.drawr.register({
     //pressure response
     pressure_affects_alpha: true,
     pressure_affects_size: true,
+    size_max: 3,            //with pressure_affects_size on, `size` is the base (low-pressure, and
+                            //what draws on devices without pen pressure) and the stroke lerps up to
+                            //`size_max` (px) at full press. So size=1, size_max=3 stays hairline on
+                            //desktop mouse and sweeps 1..3 px on a stylus. ideal for inking. Set
+                            //size_max to the same value as size to disable growth. Alpha uses the
+                            //simpler multiplicative form. its natural ceiling at 1 makes that
+                            //correct.
 
-    //dynamics (all optional — omit to skip that effect)
+    //dynamics (all optional; omit to skip that effect)
     flow: 0.9,              //deterministic per-spot alpha multiplier (0..1)
     spacing: 0.15,          //step distance as a fraction of size; replaces the old hardcoded size/4
     smoothing: true,        //enables Catmull-Rom interpolation of the stroke path
@@ -126,7 +138,7 @@ jQuery.fn.drawr.register({
         context.globalAlpha = alpha;
     },
 
-    //8-argument signature. `angle` (radians) is resolved by the engine from rotation_mode —
+    //8-argument signature. `angle` (radians) is resolved by the engine from rotation_mode
     //consume it if your stamp rotates (pencil, custom brushes), ignore it otherwise.
     drawSpot: function(brush, context, x, y, size, alpha, event, angle){
         //... draw one stamp at (x, y)
@@ -150,7 +162,7 @@ size, alpha, flow, spacing,
 rotation_mode, fixed_angle, angle_jitter,
 size_jitter, opacity_jitter, scatter,
 smoothing, brush_fade_in,
-pressure_affects_alpha, pressure_affects_size
+pressure_affects_alpha, pressure_affects_size, size_max
 ```
 
 At `register()` time the engine snapshots whichever of these your tool declares into `tool._defaults`. The Settings > Advanced panel edits the live values and persists overrides to `localStorage["drawr.toolOverrides"]`; "Reset defaults" restores from that snapshot and wipes the override entry. Fields you don't declare stay absent after reset, there is no hidden fallback

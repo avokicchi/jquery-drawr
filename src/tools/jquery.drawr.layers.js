@@ -1,0 +1,349 @@
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-layers mdi-24px",
+	name: "layers",
+	type: "toggle",
+	order: 34,
+	buttonCreated: function(brush, button){
+		var self = this;
+		var plugin = self.plugin;
+
+		self.$layersToolbox = plugin.create_toolbox.call(self, "layers", null, "Layers", 220);
+
+		//toolbar actions that operate on the active layer. built once; render() re-applies
+		//enabled/disabled state on every layer mutation.
+		var toolbarDefs = [
+			{ key:"add",       icon:"mdi-plus",                title:"Add layer"   },
+			{ key:"delete",    icon:"mdi-close",               title:"Delete layer" },
+			{ key:"clear",     icon:"mdi-delete",              title:"Clear layer" },
+			{ key:"paste",     icon:"mdi-content-paste",       title:"Paste clipboard image to active layer" },
+			{ key:"moveup",    icon:"mdi-arrow-up",            title:"Move layer up" },
+			{ key:"movedown",  icon:"mdi-arrow-down",          title:"Move layer down" },
+			{ key:"mergedown", icon:"mdi-arrow-collapse-down", title:"Merge down" }
+		];
+		var toolbarHtml = '<div class="drawr-layers-toolbar" style="display:flex;gap:2px;padding:4px 6px;border-bottom:1px solid rgba(255,255,255,0.1);align-items:center;">';
+		for(var i = 0; i < toolbarDefs.length; i++){
+			var d = toolbarDefs[i];
+			toolbarHtml += '<span class="drawr-layers-tb-' + d.key + ' mdi ' + d.icon + '" title="' + d.title + '" style="font-size:18px;width:24px;height:24px;line-height:24px;text-align:center;cursor:pointer;border-radius:3px;"></span>';
+		}
+		toolbarHtml += '</div>';
+		self.$layersToolbox.append(toolbarHtml);
+		self.$layersToolbox.append('<div class="drawr-layers-rows" style="padding:4px 6px;"></div>');
+
+		var $toolbar = self.$layersToolbox.find('.drawr-layers-toolbar');
+		var $rows = self.$layersToolbox.find('.drawr-layers-rows');
+		var $tbAdd       = $toolbar.find('.drawr-layers-tb-add');
+		var $tbDelete    = $toolbar.find('.drawr-layers-tb-delete');
+		var $tbClear     = $toolbar.find('.drawr-layers-tb-clear');
+		var $tbPaste     = $toolbar.find('.drawr-layers-tb-paste');
+		var $tbMoveUp    = $toolbar.find('.drawr-layers-tb-moveup');
+		var $tbMoveDown  = $toolbar.find('.drawr-layers-tb-movedown');
+		var $tbMergeDown = $toolbar.find('.drawr-layers-tb-mergedown');
+
+		//apply enabled/disabled styling; returns the can-flag for handler short-circuits.
+		function setEnabled($btn, enabled){
+			$btn.css({
+				"opacity": enabled ? 1 : 0.3,
+				"cursor":  enabled ? "pointer" : "not-allowed"
+			});
+			$btn.data("enabled", !!enabled);
+		}
+
+		//escape for safe interpolation of user-entered names into the html template.
+		function esc(s){
+			return String(s == null ? "" : s).replace(/[&<>"']/g, function(ch){
+				return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch];
+			});
+		}
+
+		//iOS Scribble activates when the Apple Pencil approaches any visible <input type=text>,
+		//which hijacks drawing strokes that happen to pass near the layer-name field. Workaround:
+		//keep the <input> display:none except while actively editing, and show a plain <span> in
+		//its place. A span is not a Scribble target, so pencil proximity is harmless; tap to edit
+		//still works because the span's click swaps in the real input and focuses it. (^_^)b
+		function makeScribbleSafe($input, onCommit){
+			var placeholder = $input.val() || "";
+			var $span = $('<span class="layer-name-display"></span>').css({
+				"flex": "1",
+				"min-width": "0",
+				"font-weight": "bold",
+				"font-size": "11px",
+				"color": "inherit",
+				"padding": "1px 3px",
+				"border": "1px solid transparent",
+				"border-radius": "2px",
+				"cursor": "text",
+				"text-align": "left",
+				"overflow": "hidden",
+				"text-overflow": "ellipsis",
+				"white-space": "nowrap"
+			}).text(placeholder);
+			$input.before($span).hide();
+			$span.on('pointerdown mousedown touchstart', function(e){ e.stopPropagation(); });
+			$span.on('click', function(e){
+				e.stopPropagation();
+				$span.hide();
+				$input.show();
+				//defer focus one tick so Safari/WebKit accepts the focus from a synthetic path.
+				setTimeout(function(){
+					$input.trigger('focus');
+					try { $input[0].select(); } catch(_){}
+				}, 0);
+			});
+			$input.on('blur.scribble', function(){
+				if(typeof onCommit === 'function') onCommit.call($input[0], $input.val());
+				$span.text($input.val() || placeholder);
+				$input.hide();
+				$span.show();
+			});
+		}
+
+		function blendOptionsHtml(current){
+			var modes = (plugin.BLEND_MODES || [{value:"normal",label:"Normal"},{value:"multiply",label:"Multiply"}]);
+			var html = "";
+			for(var i = 0; i < modes.length; i++){
+				var m = modes[i];
+				html += '<option value="' + m.value + '"' + (current === m.value ? ' selected' : '') + '>' + m.label + '</option>';
+			}
+			return html;
+		}
+
+		//toolbar handlers. read activeLayerIndex at click time so they always operate on
+		//whatever is currently selected.
+		$tbAdd.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var layer = plugin.add_layer.call(self, "normal");
+			if(layer){
+				plugin.set_active_layer.call(self, 0);
+				render();
+			}
+		});
+		$tbDelete.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var idx = self.activeLayerIndex;
+			var layer = self.layers[idx];
+			if(!layer) return;
+			if(!window.confirm("Delete \"" + (layer.name || "New layer") + "\"?")) return;
+			plugin.delete_layer.call(self, idx);
+			render();
+		});
+		$tbClear.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var idx = self.activeLayerIndex;
+			var layer = self.layers[idx];
+			if(!layer) return;
+			if(!window.confirm("Clear \"" + (layer.name || "New layer") + "\"?")) return;
+			plugin.clear_layer.call(self, idx);
+		});
+
+		//grow all layer canvases to at least newW x newH, preserving pixels at (0,0). Used by
+		//paste when the clipboard image is larger than the current canvas. Existing layer 0
+		//content is preserved; any freshly exposed area on layer 0 gets white under
+		//no-transparency mode so paper coverage stays consistent with initialize_canvas.
+		function grow_canvas_preserving(newW, newH){
+			if(newW <= self.width && newH <= self.height) return false;
+			newW = Math.max(self.width, newW);
+			newH = Math.max(self.height, newH);
+			for(var li = 0; li < self.layers.length; li++){
+				var lc = self.layers[li].canvas;
+				var tmp = document.createElement("canvas");
+				tmp.width = lc.width;
+				tmp.height = lc.height;
+				tmp.getContext("2d").drawImage(lc, 0, 0);
+				//setting width/height clears the canvas; paint back after.
+				lc.width = newW;
+				lc.height = newH;
+				var lctx = lc.getContext("2d", { alpha: true });
+				if(li === 0 && self.settings.enable_transparency === false){
+					lctx.fillStyle = "white";
+					lctx.fillRect(0, 0, newW, newH);
+				}
+				lctx.drawImage(tmp, 0, 0);
+				self.layers[li].$el.width(newW * self.zoomFactor);
+				self.layers[li].$el.height(newH * self.zoomFactor);
+			}
+			plugin.draw_checkerboard.call(self);
+			return true;
+		}
+
+		//paste a clipboard image onto the active layer. grows the canvas (preserving all
+		//layers) if the image doesn't fit, then re-centers so the enlarged artwork is visible.
+		//needs navigator.clipboard.read, which requires a user gesture (the click satisfies
+		//this) and clipboard-read permission. no prompt on resize, per user preference.
+		$tbPaste.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			if(!navigator.clipboard || !navigator.clipboard.read){
+				window.alert("Clipboard read is not supported in this browser.");
+				return;
+			}
+			navigator.clipboard.read().then(function(items){
+				//find the first image/* blob across all clipboard items.
+				for(var i = 0; i < items.length; i++){
+					var types = items[i].types || [];
+					for(var j = 0; j < types.length; j++){
+						if(/^image\//.test(types[j])){
+							return items[i].getType(types[j]);
+						}
+					}
+				}
+				return null;
+			}).then(function(blob){
+				if(!blob){ window.alert("No image found on the clipboard."); return; }
+				var url = URL.createObjectURL(blob);
+				var img = new Image();
+				img.onload = function(){
+					URL.revokeObjectURL(url);
+					//snapshot active layer BEFORE mutation so undo restores the pre-paste state.
+					plugin.record_undo_entry.call(self);
+					var grew = grow_canvas_preserving(img.width, img.height);
+					var actx = plugin.active_context.call(self);
+					actx.save();
+					actx.globalCompositeOperation = "source-over";
+					actx.globalAlpha = 1;
+					actx.drawImage(img, 0, 0);
+					actx.restore();
+					//if we resized, re-center like the load action does so the user sees
+					//the newly enlarged canvas instead of staring at an offset corner.
+					if(grew){
+						var cx = (self.width  - self.containerWidth)  / 2;
+						var cy = (self.height - self.containerHeight) / 2;
+						plugin.apply_scroll.call(self, cx, cy, false);
+					}
+				};
+				img.onerror = function(){
+					URL.revokeObjectURL(url);
+					window.alert("Could not decode the clipboard image.");
+				};
+				img.src = url;
+			}).catch(function(err){
+				window.alert("Could not read the clipboard: " + (err && err.message ? err.message : err));
+			});
+		});
+
+		$tbMoveUp.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.move_layer_down.call(self, self.activeLayerIndex + 1);
+			render();
+		});
+		$tbMoveDown.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.move_layer_down.call(self, self.activeLayerIndex);
+			render();
+		});
+		$tbMergeDown.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.merge_layer_down.call(self, self.activeLayerIndex);
+			render();
+		});
+
+		//render the row list. top-of-stack first (Photoshop convention).
+		function render(){
+			$rows.empty();
+			var activeIdx = self.activeLayerIndex;
+
+			//toolbar enable/disable based on the active layer.
+			setEnabled($tbAdd,       self.layers.length < plugin.MAX_LAYERS);
+			setEnabled($tbDelete,    self.layers.length > 1);
+			setEnabled($tbClear,     true);
+			setEnabled($tbPaste,     true);
+			setEnabled($tbMoveUp,    activeIdx < self.layers.length - 1);
+			setEnabled($tbMoveDown,  activeIdx > 0);
+			setEnabled($tbMergeDown, activeIdx > 0);
+
+			for(var visualIndex = self.layers.length - 1; visualIndex >= 0; visualIndex--){
+				(function(idx){
+					var layer = self.layers[idx];
+					var isActive = idx === activeIdx;
+					var $row = $(
+						'<div class="drawr-layer-row" data-idx="' + idx + '" style="' +
+							'display:flex;flex-direction:column;gap:2px;padding:4px 6px;margin-bottom:3px;border-radius:3px;cursor:pointer;' +
+							'background:' + (isActive ? 'rgba(255,165,0,0.25)' : 'rgba(255,255,255,0.05)') + ';' +
+							'border:1px solid ' + (isActive ? 'orange' : 'rgba(255,255,255,0.12)') + ';' +
+						'">' +
+							'<div style="display:flex;align-items:center;gap:4px;">' +
+								'<span class="layer-vis mdi ' + (layer.visible ? 'mdi-eye' : 'mdi-eye-off') + '" title="Toggle visibility" style="cursor:pointer;font-size:16px;width:18px;text-align:center;"></span>' +
+								'<input class="layer-name" type="text" value="' + esc(layer.name || "New layer") + '" ' +
+									'style="flex:1;min-width:0;font-weight:bold;font-size:11px;background:transparent;border:1px solid transparent;color:inherit;padding:1px 3px;border-radius:2px;">' +
+							'</div>' +
+							'<div style="display:flex;align-items:center;gap:4px;">' +
+								'<select class="layer-mode" style="flex:1;color:#333;font-size:11px;">' +
+									blendOptionsHtml(layer.mode) +
+								'</select>' +
+								'<input class="layer-opacity" type="range" min="0" max="100" value="' + Math.round(layer.opacity * 100) + '" style="flex:1;min-width:0;height:14px;margin:0;">' +
+								'<span class="layer-opacity-label" style="min-width:26px;text-align:right;font-size:10px;font-variant-numeric:tabular-nums;">' + Math.round(layer.opacity * 100) + '</span>' +
+							'</div>' +
+						'</div>'
+					);
+
+					//row click sets active (but ignore clicks on controls inside the row)
+					$row.on('pointerdown', function(e){
+						if($(e.target).is('.layer-vis, .layer-name, .layer-name-display, select, input, option')) return;
+						plugin.set_active_layer.call(self, idx);
+						render();
+						e.stopPropagation();
+					});
+
+					$row.find('.layer-vis').on('click', function(e){
+						e.stopPropagation();
+						plugin.set_layer_visibility.call(self, idx, !layer.visible);
+						render();
+					});
+
+					//name input keyboard-focused editing. swallow pointer/key events so the
+					//row-click handler and the global toolbox-drag don't interfere.
+					var $name = $row.find('.layer-name')
+						.on('pointerdown mousedown touchstart keydown', function(e){ e.stopPropagation(); })
+						.on('focus', function(){ $(this).css('border-color', 'rgba(255,255,255,0.4)'); })
+						.on('blur', function(){
+							$(this).css('border-color', 'transparent');
+							plugin.set_layer_name.call(self, idx, this.value || "New layer");
+							if(!this.value) this.value = "New layer";
+						})
+						.on('keydown', function(e){ if(e.key === 'Enter') this.blur(); });
+					makeScribbleSafe($name);
+
+					$row.find('.layer-mode').on('change', function(e){
+						e.stopPropagation();
+						plugin.set_layer_mode.call(self, idx, this.value);
+					}).on('pointerdown', function(e){ e.stopPropagation(); });
+
+					$row.find('.layer-opacity').on('input', function(e){
+						e.stopPropagation();
+						var v = parseInt(this.value, 10) / 100;
+						plugin.set_layer_opacity.call(self, idx, v);
+						$row.find('.layer-opacity-label').text(Math.round(v * 100));
+					}).on('pointerdown', function(e){ e.stopPropagation(); });
+
+					$rows.append($row);
+				})(visualIndex);
+			}
+		}
+
+		//expose for external callers (e.g. the panel should refresh when something else mutates layers).
+		self._layersPanelRender = render;
+		render();
+	},
+	action: function(brush, context){
+		var self = this;
+		if(typeof self._layersPanelRender === "function") self._layersPanelRender();
+		if(self.$layersToolbox.is(":visible")){
+			self.$layersToolbox.hide();
+		} else {
+			self.plugin.show_toolbox.call(self, self.$layersToolbox);
+		}
+	},
+	cleanup: function(){
+		var self = this;
+		if(self.$layersToolbox){
+			self.$layersToolbox.remove();
+			delete self.$layersToolbox;
+		}
+		delete self._layersPanelRender;
+	}
+});

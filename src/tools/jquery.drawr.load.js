@@ -9,8 +9,8 @@ jQuery.fn.drawr.register({
 		var self = this;
 
 		self.$loadToolbox = self.plugin.create_toolbox.call(self,"load",
-			{ left: $(self).parent().offset().left + $(self).parent().innerWidth()/2,
-			  top:  $(self).parent().offset().top  + $(self).parent().innerHeight()/2 },
+			{ left: self.$container.offset().left + self.$container.innerWidth()/2,
+			  top:  self.$container.offset().top  + self.$container.innerHeight()/2 },
 			"Load image", 160);
 
 		self.plugin.create_text.call(self, self.$loadToolbox, "Load an image onto the canvas.");
@@ -38,9 +38,27 @@ jQuery.fn.drawr.register({
 				var img = document.createElement("img");
 				img.crossOrigin = "Anonymous";
 				img.onload = function(){
-					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
+					//load replaces the active layer (when layers are active). single-layer falls
+					//through to the main canvas context as before. drop history and push a
+					//sticky baseline so undo can step back through subsequent strokes but not
+					//past the load itself.
+					var ctx = self.plugin.active_context.call(self);
+					//reset compositing state: the last tool's drawStart may have left behind a
+					//non-default globalAlpha or globalCompositeOperation, which would otherwise
+					//stamp the loaded image at e.g. 30% opacity or in destination-out mode.
+					ctx.globalCompositeOperation = "source-over";
+					ctx.globalAlpha = 1;
 					ctx.drawImage(img, 0, 0);
-					self.plugin.record_undo_entry.call(self);
+					self.undoStack = [];
+					self.redoStack = [];
+					var _l = self.layers[self.activeLayerIndex];
+					self.undoStack.push({
+						data: _l.canvas.toDataURL("image/png"),
+						layerId: _l.id,
+						sticky: true
+					});
+					if(typeof self.$undoButton !== "undefined") self.$undoButton.css("opacity", 0.5);
+					if(typeof self.$redoButton !== "undefined") self.$redoButton.css("opacity", 0.5);
 				};
 				img.src = dataUrl;
 			}

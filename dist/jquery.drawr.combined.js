@@ -18,7 +18,26 @@
 
 (function( $ ) {
 
-	var DRAWR_VERSION = "1.0.1";
+	var DRAWR_VERSION = "1.0.4";
+
+	//inject global stylesheet once per page load. provides :active press-feedback for
+	//toolbox buttons and tool buttons (tactile feedback on both desktop and touch).
+	function _drawrInjectStyle(){
+		if(document.getElementById("drawr-global-style")) return;
+		var css = [
+			".drawr-toolwindow-btn{transition:transform 60ms ease-out,box-shadow 80ms ease-out,background 80ms ease-out;}",
+			".drawr-toolwindow-btn:active{transform:translateY(1px);background:linear-gradient(to bottom,rgba(0,0,0,0.25) 0%,rgba(255,255,255,0.05) 100%) !important;box-shadow:inset 0 1px 3px rgba(0,0,0,0.35) !important;}",
+			".drawr-tool-btn{transition:filter 80ms ease-out,box-shadow 80ms ease-out;}",
+			".drawr-tool-btn:active{filter:brightness(0.82);box-shadow:inset 0 1px 4px rgba(0,0,0,0.35);}",
+			".drawr-layer-row .layer-vis:active,.drawr-layer-row .layer-moveup:active,.drawr-layer-row .layer-movedown:active,.drawr-layer-row .layer-delete:active{filter:brightness(1.4);}"
+		].join("\n");
+		var s = document.createElement("style");
+		s.id = "drawr-global-style";
+		s.type = "text/css";
+		s.appendChild(document.createTextNode(css));
+		(document.head || document.documentElement).appendChild(s);
+	}
+	_drawrInjectStyle();
 
 	$.fn.drawr = function( action, param, param2 ) {
 		var plugin = this;
@@ -119,23 +138,387 @@
 		};
 		plugin.is_dragging = false;
 
-		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
-		//pressure is reshaped as `pow(pressure, gamma)` where gamma is a global user-adjustable curve
-		//(see plugin.read_pressure_curve). gamma<1 boosts low pressure so gentle stylus strokes (Apple
-		//Pencil resting pressure sits around 0.2-0.3) reach a useful fraction of the base; gamma=1 is
-		//linear; gamma>1 requires a firmer press.
+		//Compute the final alpha and size for a brush spot, scaling by pen pressure if supported.
+		//Pressure is reshaped with a user-adjustable curve (gamma): <1 helps light presses show up
+		//(Apple Pencil rests around 0.2-0.3), 1 is linear, >1 needs a firmer press. See
+		//plugin.read_pressure_curve.
+		//Alpha just multiplies with the shaped pressure (it already caps at 1). Size interpolates
+		//between `size` (light press) and `size_max` (full press): size + (size_max - size) * shaped.
+		//If size_max < size we clamp to size, so pressing harder never shrinks the brush.
 		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure, pen_pressure){
-			var shaped = Math.pow(pressure, plugin.read_pressure_curve());
-			return {
-				alpha: (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha,
-				size:  parseFloat((brush.pressure_affects_size && pen_pressure) ? Math.max(1, brushSize * shaped) : brushSize)
-			};
+			var gamma  = plugin.read_pressure_curve();
+			var shaped = Math.pow(pressure, gamma);
+			var alpha  = (brush.pressure_affects_alpha && pen_pressure) ? Math.min(1, brushAlpha * shaped) : brushAlpha;
+			var size;
+			if(brush.pressure_affects_size){
+				var maxSize = (typeof brush.size_max === "number") ? brush.size_max : brushSize;
+				if(maxSize < brushSize) maxSize = brushSize;
+				//No pen pressure → base size, no growth. On stylus, pressure lerps from size→size_max.
+				var sizePressure = pen_pressure ? pressure : 0;
+				var sizeShaped   = Math.pow(sizePressure, gamma);
+				size = Math.max(0.5, brushSize + (maxSize - brushSize) * sizeShaped);
+			}else{
+				size = brushSize;
+			}
+			return { alpha: alpha, size: parseFloat(size) };
 		};
 
 		//returns the CSS transform string shared by the canvas and background canvas.
 		plugin.canvas_transform = function(x, y, angle){
 			return "translate(" + -x + "px," + -y + "px) rotate(" + angle + "rad)";
 		};
+
+		//---- Layers -----------------------------------------------------------------------
+		//Layer 0 is the main <canvas>; extra layers are sibling <canvas> elements inside
+		//drawr-container. The browser blends them together on the GPU via CSS mix-blend-mode,
+		//so a stroke still draws into a single canvas and performance matches single-layer mode.
+		//
+		//Multiply blending reaches through transparent pixels down to $bgCanvas (checkerboard
+		//or paper), which is what we want on screen. Export skips $bgCanvas, so saved output
+		//only carries the artwork.
+		plugin.MAX_LAYERS = 4;
+
+		//Supported layer blend modes. The name is used both as the CSS mix-blend-mode
+		//value (for on-screen compositing) and the canvas globalCompositeOperation
+		//(for export). All listed values are spec-supported in both domains.
+		plugin.BLEND_MODES = [
+			{ value: "normal",   label: "Normal"   },
+			{ value: "multiply", label: "Multiply" },
+			{ value: "screen",   label: "Screen"   },
+			{ value: "overlay",  label: "Overlay"  },
+			{ value: "darken",   label: "Darken"   },
+			{ value: "lighten",  label: "Lighten"  }
+		];
+		plugin._blendCssValue = function(mode){
+			for(var i = 0; i < plugin.BLEND_MODES.length; i++){
+				if(plugin.BLEND_MODES[i].value === mode) return mode;
+			}
+			return "normal";
+		};
+
+		//returns the 2D context of the currently-active layer. safe to call repeatedly; the
+		//browser caches getContext on a given canvas, so a fresh call per spot is free.
+		plugin.active_context = function(){
+			var layer = this.layers[this.activeLayerIndex];
+			return layer.canvas.getContext("2d", { alpha: true });
+		};
+
+		//resolves a stable layer id to its current array index. undo records use ids so that
+		//reorder/delete don't invalidate history. returns -1 if the layer no longer exists.
+		plugin.resolve_layer_by_id = function(id){
+			if(!this.layers) return -1;
+			for(var i = 0; i < this.layers.length; i++){
+				if(this.layers[i].id === id) return i;
+			}
+			return -1;
+		};
+
+		//returns id of the currently-active layer.
+		plugin.active_layer_id = function(){
+			return this.layers[this.activeLayerIndex].id;
+		};
+
+		//apply this instance's transform + zoom-scaled CSS size to every layer canvas and $bgCanvas.
+		//called from apply_scroll/apply_rotation/apply_zoom so multi-layer stays in perfect alignment.
+		plugin.broadcast_transform = function(){
+			var self = this;
+			var transform = plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0);
+			$(self).css("transform", transform);
+			if(self.layers){
+				//iterate all layers; the main canvas may sit at any array position after
+				//move_layer_down, so we can't skip index 0. Re-applying the transform to the
+				//main canvas's own $el is a harmless no-op.
+				for(var i = 0; i < self.layers.length; i++){
+					self.layers[i].$el.css("transform", transform);
+				}
+			}
+			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
+		};
+
+		//mirror the main canvas's zoomed CSS display size onto every layer canvas.
+		plugin.broadcast_zoom_css = function(){
+			var self = this;
+			if(!self.layers) return;
+			var zoom = self.zoomFactor || 1;
+			//same reason as broadcast_transform: the main canvas may be at any index.
+			for(var i = 0; i < self.layers.length; i++){
+				self.layers[i].$el.width(self.width * zoom);
+				self.layers[i].$el.height(self.height * zoom);
+			}
+		};
+
+		//Add a new layer as a sibling canvas inside drawr-container. Pixel size matches the
+		//main canvas; display size follows zoom. New layers go to the bottom of the stack so
+		//they don't immediately hide existing artwork. Stacking is finalised by restack_layers.
+		plugin.add_layer = function(mode, name){
+			var self = this;
+			if(self.layers.length >= plugin.MAX_LAYERS) return null;
+			mode = mode || "normal";
+			var c = document.createElement("canvas");
+			c.width = self.width;
+			c.height = self.height;
+			var $c = $(c);
+			$c.addClass("drawr-layer");
+			$c.css({
+				"position": "absolute",
+				"top": 0, "left": 0,
+				"pointer-events": "none",
+				"width": (self.width * (self.zoomFactor || 1)) + "px",
+				"height": (self.height * (self.zoomFactor || 1)) + "px",
+				"transform-origin": "50% 50%",
+				"transform": plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0),
+				"mix-blend-mode": plugin._blendCssValue(mode),
+				"opacity": 1
+			});
+			//place below the current bottom layer in the DOM. z-index (set by restack_layers)
+			//is authoritative for stacking, so DOM order is cosmetic, but we still mirror it.
+			$c.insertBefore(self.layers[0].$el);
+			var layer = {
+				id: self._nextLayerId++,
+				canvas: c,
+				$el: $c,
+				name: name || "New layer",
+				mode: mode,
+				visible: true,
+				opacity: 1,
+				history_trimmed: false
+			};
+			self.layers.unshift(layer);
+			//existing active-layer pointer now refers to a layer one slot higher in the array.
+			if(typeof self.activeLayerIndex === "number") self.activeLayerIndex++;
+			plugin.restack_layers.call(self);
+			return layer;
+		};
+
+		//re-apply z-indices to match current array order. called after add/delete/reorder.
+		plugin.restack_layers = function(){
+			var self = this;
+			for(var i = 0; i < self.layers.length; i++){
+				self.layers[i].$el.css("z-index", 1 + i);
+			}
+		};
+
+		//Delete a layer (always leaves at least one). The main <canvas> element can't be
+		//removed from the page, so if the user deletes the layer that owns it we instead
+		//copy a neighbouring layer's pixels and metadata onto the main canvas and remove
+		//the neighbour. From the user's side the result looks the same: the clicked layer
+		//is gone, and its neighbour now sits on the main canvas.
+		plugin.delete_layer = function(index){
+			var self = this;
+			if(self.layers.length <= 1) return;
+			if(index < 0 || index >= self.layers.length) return;
+			var target = self.layers[index];
+			if(target.canvas === self){
+				//pick a donor: prefer the layer directly above; fall back to the one below.
+				var donorIdx = (index + 1 < self.layers.length) ? index + 1 : index - 1;
+				var donor = self.layers[donorIdx];
+				var mctx = target.canvas.getContext("2d", { alpha: true });
+				mctx.globalCompositeOperation = "source-over";
+				mctx.globalAlpha = 1;
+				mctx.clearRect(0, 0, self.width, self.height);
+				mctx.drawImage(donor.canvas, 0, 0);
+				//main canvas adopts donor's identity so undo entries keyed by the donor's id
+				//continue to work (they now restore to the main canvas). the original target
+				//layer's id is abandoned; its undo entries get skipped by resolve_layer_by_id.
+				target.id = donor.id;
+				target.name = donor.name;
+				target.mode = donor.mode;
+				target.visible = donor.visible;
+				target.opacity = donor.opacity;
+				target.history_trimmed = !!donor.history_trimmed;
+				//apply the adopted CSS state to the main canvas.
+				target.$el.css("mix-blend-mode", plugin._blendCssValue(donor.mode));
+				target.$el.css("opacity", donor.opacity);
+				target.$el.css("display", donor.visible ? "" : "none");
+				//remove the donor.
+				donor.$el.remove();
+				self.layers.splice(donorIdx, 1);
+				//active pointer: if donor was active, main canvas now holds its data, so point at main.
+				if(self.activeLayerIndex === donorIdx) self.activeLayerIndex = self.layers.indexOf(target);
+				else if(self.activeLayerIndex > donorIdx) self.activeLayerIndex--;
+			} else {
+				//simple case: detach the DOM element and splice out.
+				target.$el.remove();
+				self.layers.splice(index, 1);
+				if(self.activeLayerIndex > index) self.activeLayerIndex--;
+				else if(self.activeLayerIndex === index){
+					if(self.activeLayerIndex >= self.layers.length) self.activeLayerIndex = self.layers.length - 1;
+				}
+			}
+			if(self.activeLayerIndex < 0) self.activeLayerIndex = 0;
+			plugin.restack_layers.call(self);
+		};
+
+		//swap layer at index with the one below it (index-1). covers "move up" by symmetry.
+		//the main canvas element can sit at any array position; z-index handles stacking
+		//regardless of which canvas is position:relative vs absolute.
+		plugin.move_layer_down = function(index){
+			var self = this;
+			if(index < 1 || index >= self.layers.length) return;
+			var tmp = self.layers[index];
+			self.layers[index] = self.layers[index - 1];
+			self.layers[index - 1] = tmp;
+			//keep DOM order in sync with array order (cosmetic; z-index is authoritative).
+			tmp.$el.insertBefore(self.layers[index].$el);
+			if(self.activeLayerIndex === index) self.activeLayerIndex = index - 1;
+			else if(self.activeLayerIndex === index - 1) self.activeLayerIndex = index;
+			plugin.restack_layers.call(self);
+		};
+
+		plugin.set_active_layer = function(index){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.activeLayerIndex = index;
+		};
+
+		plugin.set_layer_mode = function(index, mode){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].mode = mode;
+			//apply to every layer including the main canvas. multiply on the bottom-most
+			//layer is a no-op visually (nothing below to blend with), but after reorder any
+			//layer may end up on top.
+			self.layers[index].$el.css("mix-blend-mode", plugin._blendCssValue(mode));
+		};
+
+		plugin.set_layer_visibility = function(index, visible){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].visible = !!visible;
+			self.layers[index].$el.css("display", visible ? "" : "none");
+		};
+
+		plugin.set_layer_opacity = function(index, opacity){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			var op = Math.max(0, Math.min(1, opacity));
+			self.layers[index].opacity = op;
+			self.layers[index].$el.css("opacity", op);
+		};
+
+		plugin.set_layer_name = function(index, name){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			self.layers[index].name = name;
+		};
+
+		//wipe a single layer's pixels while keeping its metadata (name/mode/opacity/visibility).
+		//only the bottom layer under no-transparency mode fills white, matching the invariant
+		//that clear_canvas() maintains for single-layer drawings; clearing a non-base layer to
+		//white would obscure everything below it.
+		plugin.clear_layer = function(index){
+			var self = this;
+			if(index < 0 || index >= self.layers.length) return;
+			var layer = self.layers[index];
+			var ctx = layer.canvas.getContext("2d", { alpha: true });
+			ctx.save();
+			ctx.globalCompositeOperation = "source-over";
+			ctx.globalAlpha = 1;
+			if(index === 0 && self.settings && self.settings.enable_transparency === false){
+				ctx.fillStyle = "white";
+				ctx.fillRect(0, 0, self.width, self.height);
+			} else {
+				ctx.clearRect(0, 0, self.width, self.height);
+			}
+			ctx.restore();
+		};
+
+		//blend layers[index] (upper) into layers[index-1] (lower) using the upper layer's
+		//blend mode + opacity, then remove the upper layer. mirrors what composite_for_export
+		//does on screen, but only between two neighbours.
+		plugin.merge_layer_down = function(index){
+			var self = this;
+			if(index < 1 || index >= self.layers.length) return;
+			var src = self.layers[index];
+			var dst = self.layers[index - 1];
+
+			//1. blend src into dst using src's mode+opacity.
+			var dctx = dst.canvas.getContext("2d", { alpha: true });
+			dctx.save();
+			dctx.globalAlpha = (typeof src.opacity === "number") ? src.opacity : 1;
+			dctx.globalCompositeOperation = plugin._blendCssValue(src.mode || "normal");
+			dctx.drawImage(src.canvas, 0, 0);
+			dctx.restore();
+
+			//2. remove src. mirrors delete_layer's main-canvas special case: if src is the
+			//main canvas DOM element (which can't be removed from the page), copy dst's
+			//newly-merged pixels into main and remove dst instead, adopting dst's identity
+			//so undo ids continue to resolve.
+			if(src.canvas === self){
+				var mctx = src.canvas.getContext("2d", { alpha: true });
+				mctx.globalCompositeOperation = "source-over";
+				mctx.globalAlpha = 1;
+				mctx.clearRect(0, 0, self.width, self.height);
+				mctx.drawImage(dst.canvas, 0, 0);
+				src.id = dst.id;
+				src.name = dst.name;
+				src.mode = dst.mode;
+				src.visible = dst.visible;
+				src.opacity = dst.opacity;
+				src.history_trimmed = !!dst.history_trimmed;
+				src.$el.css("mix-blend-mode", plugin._blendCssValue(dst.mode));
+				src.$el.css("opacity", dst.opacity);
+				src.$el.css("display", dst.visible ? "" : "none");
+				dst.$el.remove();
+				self.layers.splice(index - 1, 1);
+				self.activeLayerIndex = self.layers.indexOf(src);
+			} else {
+				src.$el.remove();
+				self.layers.splice(index, 1);
+				self.activeLayerIndex = index - 1;
+			}
+			plugin.restack_layers.call(self);
+		};
+
+		//collapse back to a single base layer: strips every extra sibling canvas and resets
+		//the base layer's metadata (name/mode/opacity/visibility) to defaults. the base layer
+		//is always self.layers[0]; delete_layer preserves this invariant by copying donor
+		//pixels into the main canvas when the main canvas itself is the deletion target.
+		//caller is responsible for clearing pixels first (or not) as appropriate.
+		plugin.collapse_to_base_layer = function(){
+			var self = this;
+			if(!self.layers || self.layers.length === 0) return;
+			for(var i = self.layers.length - 1; i >= 1; i--){
+				self.layers[i].$el.remove();
+				self.layers.splice(i, 1);
+			}
+			var base = self.layers[0];
+			base.name = "New layer";
+			base.mode = "normal";
+			base.visible = true;
+			base.opacity = 1;
+			base.history_trimmed = false;
+			base.$el.css({ "mix-blend-mode": "normal", "opacity": 1, "display": "" });
+			self.activeLayerIndex = 0;
+			plugin.restack_layers.call(self);
+			if(typeof self._layersPanelRender === "function") self._layersPanelRender();
+		};
+
+		//composite all visible layers into a fresh canvas for export. mirrors what the GPU
+		//does on screen via mix-blend-mode, but without $bgCanvas, so saved output carries
+		//only the artwork.
+		plugin.composite_for_export = function(){
+			var self = this;
+			var out = document.createElement("canvas");
+			out.width = self.width;
+			out.height = self.height;
+			var ctx = out.getContext("2d", { alpha: self.settings.enable_transparency });
+			if(self.settings.enable_transparency == false){
+				ctx.fillStyle = "white";
+				ctx.fillRect(0, 0, self.width, self.height);
+			}
+			for(var i = 0; i < self.layers.length; i++){
+				var layer = self.layers[i];
+				if(!layer.visible) continue;
+				ctx.globalAlpha = layer.opacity;
+				ctx.globalCompositeOperation = (i > 0 && layer.mode && layer.mode !== "normal") ? plugin._blendCssValue(layer.mode) : "source-over";
+				ctx.drawImage(layer.canvas, 0, 0);
+			}
+			ctx.globalAlpha = 1;
+			ctx.globalCompositeOperation = "source-over";
+			return out;
+		};
+		//---- /Layers ----------------------------------------------------------------------
 
 		//reads border-top and border-left pixel widths from an element's computed style.
 		plugin.get_border = function(el){
@@ -146,17 +529,17 @@
 			};
 		};
 
-		//Evaluates a centripetal Catmull-Rom spline (alpha=0.5) at parameter u (0..1) for the
-		//segment p1 -> p2, using p0 and p3 as the outer control points. The centripetal
-		//parameterisation guarantees no cusps or loops regardless of knot spacing or sharp
-		//direction changes — unlike the uniform variant which overshoots into loops at turns.
-		//Uses the Barry–Goldman recursive form (three linear interpolations per level, three levels),
-		//which is numerically friendlier for drawing apps than expanding the basis polynomials.
+		//Evaluate a centripetal Catmull-Rom spline at u (0..1) along the segment p1 -> p2,
+		//with p0 and p3 as outer control points. "Centripetal" just means the math spaces
+		//knots in a way that keeps the curve smooth through sharp turns; the uniform variant
+		//loops around on hairpins. Implemented with the Barry–Goldman form (three nested
+		//linear interpolations), which is more numerically stable than expanding the basis
+		//polynomials.
 		//Refs:
-		//Catmull-Rom spline — https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
-		//Barry–Goldman algorithm — https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
+		//Catmull-Rom spline: https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
+		//Barry–Goldman algorithm: https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
 		//generalised to non-uniform knot spacing; see also Yuksel et al., "On the Parameterization of
-		//Catmull-Rom Curves", 2011 — http://www.cemyuksel.com/research/catmullrom_param/).
+		//Catmull-Rom Curves", 2011, at http://www.cemyuksel.com/research/catmullrom_param/).
 		plugin.catmull_rom_point = function(p0, p1, p2, p3, u) {
 			var d01 = Math.sqrt(plugin.distance_between(p0, p1));
 			var d12 = Math.sqrt(plugin.distance_between(p1, p2));
@@ -187,12 +570,12 @@
 			};
 		};
 
-		//central per-spot pipeline. applies brush dynamics (size/opacity/angle jitter, flow,
-		//scatter, rotation mode, fade-in) on top of the calculated base size/alpha, then calls
-		//brush.drawSpot with the resolved values. all three interpolation loops (drawMove linear,
-		//Catmull-Rom, drawStop flush) funnel through here so dynamics apply uniformly.
-		//strokeAngleRad: direction of travel at this spot in radians (atan2(dx, dy) convention
-		//matching plugin.angle_between); undefined means no direction available (first/stationary spot).
+		//Central per-spot pipeline. Applies brush dynamics (jitter on size/opacity/angle,
+		//flow, scatter, rotation mode, fade-in) on top of the base size/alpha, then calls
+		//brush.drawSpot. All three interpolation paths (drawMove linear, Catmull-Rom, drawStop
+		//flush) go through here so dynamics apply the same way everywhere.
+		//strokeAngleRad: direction of travel in radians (same convention as plugin.angle_between).
+		//Pass undefined when there's no direction yet, e.g. the very first spot of a stroke.
 		plugin.emit_spot = function(context, brush, baseX, baseY, strokeAngleRad, size, alpha, e) {
 			var self = this;
 
@@ -283,16 +666,18 @@
 		//Binds touch event listeners to the canvas's parent container
 		plugin.bind_draw_events = function(){
 			var self=this;
-			var context = self.getContext("2d", { alpha: self.settings.enable_transparency });
+			//active-layer context resolver. re-fetched per call so layer switches take effect
+			//immediately. getContext is cached by the browser, so repeat calls are free.
+			var ctx = function(){ return plugin.active_context.call(self); };
 			$(self).data("is_drawing",false);$(self).data("lastx",null);$(self).data("lasty",null);
-			$(self).parent().on("touchstart." + self._evns, function(e){ e.preventDefault(); });//cancel scroll.
+			self.$container.on("touchstart." + self._evns, function(e){ e.preventDefault(); });//cancel scroll.
 
 			//true if inside canvas, false if outside canvas.
 			//used to check if an initial click or touch start event is valid inside the container
 			//and needs to be tracked through move/end events.
 			self.boundCheck = function(event){
 				//new rotation-aware hit test
-				var parent = $(self).parent()[0];
+				var parent = self.$container[0];
 				var border = plugin.get_border(parent);
 				var box = parent.getBoundingClientRect();
 				var eventX = event.pageX;
@@ -315,7 +700,7 @@
 			//returns true if the event's pointer is within the container element.
 			//used for right-drag pan initiation and hover highlight, where an approximate test is sufficient.
 			self.containerBoundCheck = function(event){
-				var parent = $(self).parent()[0];
+				var parent = self.$container[0];
 				var box = parent.getBoundingClientRect();
 				var eventX = event.originalEvent.clientX;
 				var eventY = event.originalEvent.clientY;
@@ -350,9 +735,11 @@
 					if(pts.length >= 2){
 						//erase any dot drawn by the first touch before the gesture was detected
 						if(self._gestureAbortSnapshot){
-							context.putImageData(self._gestureAbortSnapshot, 0, 0);
+							ctx().putImageData(self._gestureAbortSnapshot, 0, 0);
 							self._gestureAbortSnapshot = null;
 						}
+						//a second finger aborts any pending or active long-press pick.
+						plugin.cancel_color_picker.call(self);
 						var t1 = pts[0], t2 = pts[1];
 						self.gestureStart = {
 							dist:	 plugin.distance_between(t1, t2),
@@ -372,12 +759,20 @@
 
 				if(self.$brushToolbox.is(":visible") && self.boundCheck.call(self,e)==true && self.containerBoundCheck.call(self,e)==true){//yay! We're drawing!
 					if(plugin.is_dragging==false){
-						mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
-						//save snapshot so the second touch can erase this stroke start if a gesture is detected
-						if(e.originalEvent.pointerType === "touch") self._gestureAbortSnapshot = context.getImageData(0, 0, self.width, self.height);
+						mouse_data = plugin.get_mouse_data.call(self,e,self.$container[0],self);
+						//save snapshot of the active layer so the second touch can erase this stroke
+						//start if a gesture is detected. only the active layer can have changed.
+						var _startCtx = ctx();
+						//snapshot for touch (so a 2-finger gesture can roll back the first dot) and
+						//for any pointer type when the long-press colour picker is enabled (the
+						//rollback path is identical). skip when the eyedropper is active, since
+						//picking-while-picking is pointless and the eyedropper doesn't place a dot.
+						var _wantSnapshot = e.originalEvent.pointerType === "touch" ||
+							(self.settings.long_press_pick_enabled && self.active_brush.name !== "eyedropper");
+						if(_wantSnapshot) self._gestureAbortSnapshot = _startCtx.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
 						self._activeButton = e.button;//store button, since pointer events only have useful button info in pointerdown, and we catch pointermove later.
-						context.lineCap = "round";context.lineJoin = 'round';
+						_startCtx.lineCap = "round";_startCtx.lineJoin = 'round';
 
 						//reset fade-in counter at start of stroke
 						self._fadeInSpotCount = 0;
@@ -393,12 +788,49 @@
 							self._fadeInSpotCount++;
 							startAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
 						}
-						//first spot has no stroke direction yet so we pass angle=0 so tools consuming
-						//the 8th arg get a deterministic value. fade-in already applied inline above,
-						//so this call bypasses emit_spot to avoid double-incrementing the counter.
-						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
-						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,startAlpha,e,0);
+						//Resolve the first spot's angle. There's no stroke direction yet, so
+						//follow_stroke/follow_jitter fall back to 0; fixed uses fixed_angle;
+						//random_jitter randomises. Mirrors emit_spot so the first stamp matches
+						//the rest. Fade-in was applied above, so we bypass emit_spot here to
+						//avoid counting the first spot twice.
+						var _startMode = self.active_brush.rotation_mode || "none";
+						var _startAngle = 0;
+						if(_startMode === "fixed"){
+							_startAngle = self.active_brush.fixed_angle || 0;
+						} else if(_startMode === "random_jitter"){
+							_startAngle = Math.random() * Math.PI * 2;
+						} else if(_startMode === "follow_jitter"){
+							_startAngle = (Math.random() * 2 - 1) * (self.active_brush.angle_jitter || 0) * Math.PI;
+						}
+						//Draw the first spot at the brush's base size, ignoring pressure. Why:
+						//the Pointer Events spec returns pressure=0.5 on pointerdown before the
+						//stylus has given a real reading (Apple Pencil and Surface Pen both do
+						//this). With pressure_affects_size and a wide size_max, that placeholder
+						//0.5 would paint a huge first dot. Photoshop and Krita also de-emphasise
+						//landing pressure. Alpha still gets pressure-scaled so fade-in still works.
+						var _startSize = self.active_brush.pressure_affects_size ? self.brushSize : calculatedSize;
+						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
+						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
 						$(self).trigger("drawr:drawstart", [{x: mouse_data.x, y: mouse_data.y, tool: self.active_brush.name, size: calculatedSize, alpha: startAlpha, pressure: mouse_data.pressure}]);
+
+						//arm the long-press colour picker timer. get cancelled on movement
+						//past tolerance (drawMove) or on release (drawStop). on fire, rolls back
+						//the initial dot above via the snapshot we just took and enters pick mode.
+						if(self.settings.long_press_pick_enabled && self.active_brush.name !== "eyedropper"){
+							if(self._longPressTimer) clearTimeout(self._longPressTimer);
+							var _rect = self.$container[0].getBoundingClientRect();
+							self._longPressStart = {
+								pageX: e.pageX, pageY: e.pageY,
+								canvasX: mouse_data.x, canvasY: mouse_data.y,
+								viewX: e.pageX - _rect.left - window.scrollX,
+								viewY: e.pageY - _rect.top  - window.scrollY
+							};
+							self._longPressTimer = setTimeout(function(){
+								self._longPressTimer = null;
+								plugin.activate_color_picker.call(self);
+							}, self.settings.long_press_pick_duration);
+						}
+
 						plugin.request_redraw.call(self);
 					}
 				}
@@ -414,6 +846,37 @@
 					self.activePointers[e.originalEvent.pointerId] = {x: e.pageX, y: e.pageY};
 				}
 
+				//long-press colour picker: while active, hunt a colour under the pointer
+				//(no drawing). live-updates brushColor so the palette swatch tracks your finger.
+				if(self._pickerActive){
+					var _pmd = plugin.get_mouse_data.call(self, e, self.$container[0], self);
+					var _pRect = self.$container[0].getBoundingClientRect();
+					self._pickerPos     = { x: _pmd.x, y: _pmd.y };
+					self._pickerViewPos = { x: e.pageX - _pRect.left - window.scrollX, y: e.pageY - _pRect.top - window.scrollY };
+					plugin.sample_picker_color.call(self, _pmd.x, _pmd.y);
+					//live-mirror into brushColor + palette so the user sees feedback while hunting.
+					if(self._pickerColor){
+						self.brushColor = { r: self._pickerColor.r, g: self._pickerColor.g, b: self._pickerColor.b };
+						if(self.$settingsToolbox){
+							var _hex = plugin.rgb_to_hex(self._pickerColor.r, self._pickerColor.g, self._pickerColor.b);
+							self.$settingsToolbox.find('.color-picker.active-drawrpalette').drawrpalette("set", _hex);
+						}
+					}
+					plugin.request_redraw.call(self);
+					return;
+				}
+
+				//long-press armed: cancel if the user drifts past tolerance. the normal stroke
+				//then proceeds uninterrupted from this same pointermove event.
+				if(self._longPressTimer){
+					var _lpdx = e.pageX - self._longPressStart.pageX;
+					var _lpdy = e.pageY - self._longPressStart.pageY;
+					if(Math.sqrt(_lpdx*_lpdx + _lpdy*_lpdy) > self.settings.long_press_pick_move_tolerance){
+						clearTimeout(self._longPressTimer);
+						self._longPressTimer = null;
+					}
+				}
+
 				//apply pinch zoom and rotation while gesturing
 				if(self.isGesturing){
 					var pts = Object.values(self.activePointers);
@@ -427,7 +890,7 @@
 						var newMidY  = (t1.y + t2.y) / 2;
 						/*keep the canvas point under the initial pinch centre pinned to the
 						current finger midpoint, combine zoom-centering and panning in one step */
-						var rect  = $(self).parent()[0].getBoundingClientRect();
+						var rect  = self.$container[0].getBoundingClientRect();
 						var cLeft = rect.left + window.scrollX;
 						var cTop  = rect.top  + window.scrollY;
 						var newScrollX = (gs.midX - cLeft + gs.scrollX) * (newZoom / gs.zoom) - (newMidX - cLeft);
@@ -445,9 +908,12 @@
 						newScrollX -= dX - (dX * Math.cos(dAngle) - dY * Math.sin(dAngle));
 						newScrollY -= dY - (dX * Math.sin(dAngle) + dY * Math.cos(dAngle));
 						self.gesturePivot = { x: pvX, y: pvY };
+						//pinch zoom bypasses apply_zoom, so trigger the zoom-percentage readout here too.
+						if(newZoom !== self.zoomFactor) self.zoomIndicatorTimer = 500;
 						self.zoomFactor = newZoom;
 						$(self).width(self.width * newZoom);
 						$(self).height(self.height * newZoom);
+						plugin.broadcast_zoom_css.call(self);
 						plugin.draw_checkerboard.call(self);
 						plugin.apply_scroll.call(self, newScrollX, newScrollY, true);
 						plugin.apply_rotation.call(self, gs.rotation + dAngle, false);
@@ -466,66 +932,78 @@
 				var bound_check = self.boundCheck.call(self,e) && self.containerBoundCheck.call(self,e);
 
 				if(bound_check){
-					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue inset";
+					self.$container.find(".sfx-canvas")[0].style.boxShadow="0px 0px 5px 1px skyblue inset";
 				} else {
-					$(self).parent().find(".sfx-canvas")[0].style.boxShadow="";
+					self.$container.find(".sfx-canvas")[0].style.boxShadow="";
 				}
 
-				var mouse_data = plugin.get_mouse_data.call(self,e,$(self).parent()[0],self);
+				var mouse_data = plugin.get_mouse_data.call(self,e,self.$container[0],self);
 
 				if($(self).data("is_drawing")==true && plugin.check_ignore(e)==false){
 
 					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure, self.pen_pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
-					//spacing as a fraction of size (brush dynamics). fallback to 0.25 matches the old hardcoded /4.
-					var spacingFrac = (typeof self.active_brush.spacing === "number") ? self.active_brush.spacing : 0.25;
-					var stepSize = calculatedSize * spacingFrac;
-					if(stepSize<1) stepSize = 1;
 
-					if(self.active_brush.smoothing) {
-						//smooth path: buffer raw knots and draw a Catmull-Rom segment lagging one event behind,
-						//using the new knot as the lookahead (P3) that shapes the tangent of the previous segment.
-						//Only accept a new knot if it is far enough from the last one. Sub-pixel (or near-pixel)
-						//knot spacing gives the spline no room to round corners, so high-precision stylus input
-						//would pass through every jitter point rather than smoothing over them.
-						//Cutoff is a fraction of brush size (not stepSize) — knot decimation is about jitter
-						//tolerance for the spline, which is unrelated to how densely the spline is sampled.
-						var knotCutoff = calculatedSize * 0.375;
-						if(knotCutoff < 1) knotCutoff = 1;
-						var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
-						if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < knotCutoff) return;
-						self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
-						var knots = self._smoothKnots;
-						var n = knots.length - 1; //last index
-						if(n >= 2) {
-							//draw segment knots[n-2]->knots[n-1]; knots[n] is the lookahead control point
-							var p0 = knots[Math.max(0, n-3)];
-							var p1 = knots[n-2];
-							var p2 = knots[n-1];
-							var p3 = knots[n];
-							//rescale accumDist when stepSize changes (e.g. stylus pressure shift) so the
-							//fractional progress towards the next spot is preserved, preventing the while
-							//loop in draw_catmull_segment from firing multiple times at the same point.
-							if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
-								self._smoothAccumDist = self._smoothAccumDist * (stepSize / self._smoothLastStepSize);
-							}
-							self._smoothLastStepSize = stepSize;
-							self._smoothAccumDist = plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
+					//navigation tools (move, eyedropper) operate on raw pointer events, so bypass the
+					//spacing/smoothing/jitter pipeline so every pointermove forwards straight to drawSpot.
+					//otherwise leftover brushSize/spacing from the previously-active paint tool would
+					//throttle the event rate and make panning/rotating choppy.
+					if(self.active_brush.raw_input){
+						if(typeof self.active_brush.drawSpot !== "undefined"){
+							self.active_brush.drawSpot.call(self, self.active_brush, ctx(), mouse_data.x, mouse_data.y, calculatedSize, calculatedAlpha, e, 0);
 						}
 					} else {
-						//original linear interpolation along the line between the last drawn spot and the current position
-						var positions = $(self).data("positions");
-						var currentSpot = {x:mouse_data.x,y:mouse_data.y};
-						var lastSpot=positions[positions.length-1];
-						var dist = plugin.distance_between(lastSpot, currentSpot);
-						var angle = plugin.angle_between(lastSpot, currentSpot);
-						for (var i = stepSize; i < dist; i+=stepSize) {
-							x = lastSpot.x + (Math.sin(angle) * i);
-							y = lastSpot.y + (Math.cos(angle) * i);
-							plugin.emit_spot.call(self, context, self.active_brush, x, y, angle, calculatedSize, calculatedAlpha, e);
-							positions.push({x:x,y:y});
+						//spacing as a fraction of size (brush dynamics). fallback to 0.25 matches the old hardcoded /4.
+						var spacingFrac = (typeof self.active_brush.spacing === "number") ? self.active_brush.spacing : 0.25;
+						var stepSize = calculatedSize * spacingFrac;
+						if(stepSize<1) stepSize = 1;
+
+						if(self.active_brush.smoothing) {
+							//Smooth path: buffer raw knots and draw a Catmull-Rom segment one event
+							//behind, using the newest knot as the lookahead (P3) that shapes the
+							//previous segment's tangent. A knot is only accepted if it's far enough
+							//from the last one; near-pixel spacing leaves the spline no room to round
+							//corners, and a high-precision stylus would just trace every jitter point.
+							//The cutoff is a fraction of brush size (jitter tolerance, independent of
+							//how densely we sample along the spline).
+							var knotCutoff = calculatedSize * 0.375;
+							if(knotCutoff < 1) knotCutoff = 1;
+							var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
+							if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < knotCutoff) return;
+							self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
+							var knots = self._smoothKnots;
+							var n = knots.length - 1; //last index
+							if(n >= 2) {
+								//draw segment knots[n-2]->knots[n-1]; knots[n] is the lookahead control point
+								var p0 = knots[Math.max(0, n-3)];
+								var p1 = knots[n-2];
+								var p2 = knots[n-1];
+								var p3 = knots[n];
+								//rescale accumDist when stepSize changes (e.g. stylus pressure shift) so the
+								//fractional progress towards the next spot is preserved, preventing the while
+								//loop in draw_catmull_segment from firing multiple times at the same point.
+								if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
+									self._smoothAccumDist = self._smoothAccumDist * (stepSize / self._smoothLastStepSize);
+								}
+								self._smoothLastStepSize = stepSize;
+								self._smoothAccumDist = plugin.draw_catmull_segment.call(self, ctx(), self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
+							}
+						} else {
+							//original linear interpolation along the line between the last drawn spot and the current position
+							var positions = $(self).data("positions");
+							var currentSpot = {x:mouse_data.x,y:mouse_data.y};
+							var lastSpot=positions[positions.length-1];
+							var dist = plugin.distance_between(lastSpot, currentSpot);
+							var angle = plugin.angle_between(lastSpot, currentSpot);
+							var _moveCtx = ctx();
+							for (var i = stepSize; i < dist; i+=stepSize) {
+								x = lastSpot.x + (Math.sin(angle) * i);
+								y = lastSpot.y + (Math.cos(angle) * i);
+								plugin.emit_spot.call(self, _moveCtx, self.active_brush, x, y, angle, calculatedSize, calculatedAlpha, e);
+								positions.push({x:x,y:y});
+							}
+							$(self).data("positions",positions);
 						}
-						$(self).data("positions",positions);
 					}
 				}
 				var tbPageX = e.pageX || (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches[0] && e.originalEvent.touches[0].pageX) || 0;
@@ -547,24 +1025,24 @@
 					var delta = Math.max(-0.1, Math.min(0.1, e.originalEvent.deltaY * -0.005));
 
 					var newZoomies = self.zoomFactor + delta;
-					var containerOffset = $(self).parent().offset();
+					var containerOffset = self.$container.offset();
 					var focalX = e.pageX - containerOffset.left;
 					var focalY = e.pageY - containerOffset.top;
 					plugin.apply_zoom.call(self, newZoomies, focalX, focalY);
 				};
-				$(self).parent().on("wheel." + self._evns, function(e){
+				self.$container.on("wheel." + self._evns, function(e){
 					e.preventDefault();
 					self.scrollWheel(e);
 				});
 			}
-			$(self).parent().on("contextmenu." + self._evns, function(e){ e.preventDefault(); });
+			self.$container.on("contextmenu." + self._evns, function(e){ e.preventDefault(); });
 			//middle mouse button is claimed for canvas panning, so block the browser's autoscroll-on-middle-click
 			//over the whole container. Autoscroll fires on `mousedown` (not pointerdown), hence the separate bind.
-			$(self).parent().on("mousedown." + self._evns, function(e){
+			self.$container.on("mousedown." + self._evns, function(e){
 				if(e.button === 1) e.preventDefault();
 			});
 			//prevent browser native touch gestures (scroll, pinch-zoom) so pointer events fire uninterrupted
-			$(self).parent().css("touch-action", "none");
+			self.$container.css("touch-action", "none");
 
 			$(window).bind("pointermove." + self._evns, self.drawMove);
 
@@ -576,6 +1054,18 @@
 				//remove pointer from tracking map on lift or cancel
 				if(e.originalEvent && e.originalEvent.pointerType === "touch"){
 					delete self.activePointers[e.originalEvent.pointerId];
+				}
+
+				//long-press timer still armed (user released before it fired): disarm and
+				//fall through to the normal stroke end for whatever tool is active.
+				if(self._longPressTimer){ clearTimeout(self._longPressTimer); self._longPressTimer = null; }
+
+				//long-press colour picker active: commit the sampled colour and short-circuit.
+				//the tool never saw a drawing stroke (drawStart rolled back on activation),
+				//so sending it a drawStop here would be meaningless.
+				if(self._pickerActive){
+					plugin.commit_color_picker.call(self);
+					return;
 				}
 
 				//end gesture mode when fewer than two touch pointers remain
@@ -615,13 +1105,13 @@
 						if(self._smoothLastStepSize && self._smoothLastStepSize !== stepSize) {
 							flushAccum = flushAccum * (stepSize / self._smoothLastStepSize);
 						}
-						plugin.draw_catmull_segment.call(self, context, self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, flushAccum);
+						plugin.draw_catmull_segment.call(self, ctx(), self.active_brush, p0, p1, p2, p2, stepSize, calculatedSize, calculatedAlpha, e, flushAccum);
 						self._smoothKnots = null;
 						self._smoothAccumDist = 0;
 						self._smoothLastStepSize = null;
 					}
 
-					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,context,mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
+					if(typeof self.active_brush.drawStop!=="undefined") result = self.active_brush.drawStop.call(self,self.active_brush,ctx(),mouse_data.x,mouse_data.y,calculatedSize,calculatedAlpha,e);
 					//if there is an action to undo
 					if(typeof result!=="undefined"){
 						plugin.record_undo_entry.call(self);
@@ -635,7 +1125,7 @@
 					if($(this).data("dragging") == true){
 						var owner = this.ownerCanvas;
 						if(owner && owner._toolboxPositions){
-							var containerOffset = $(owner).parent().offset();
+							var containerOffset = owner.$container.offset();
 							var o = $(this).offset();
 							owner._toolboxPositions[$(this).data("toolbox-id")] = {
 								left: o.left - containerOffset.left,
@@ -652,18 +1142,35 @@
 
 		//function that can be called to clear the canvas from elsewhere in the plugin 
 		//as long as you call it with a "this" of the canvas
-		plugin.clear_canvas = function(record_undo){
+		//scope: "active" (default) clears only the active layer; "all" clears every layer.
+		//the public "clear" action passes "all" to wipe the whole artwork; internal callers
+		//(undo/redo restoring a single layer, post-load reset) use "active".
+		plugin.clear_canvas = function(record_undo, scope){
 			if(record_undo) {
 				this.plugin.record_undo_entry.call(this);
 			}
-			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
-			if(this.settings.enable_transparency==false){
-				context.fillStyle="white";
-				context.globalCompositeOperation="source-over";
-				context.globalAlpha=1;
-				context.fillRect(0,0,this.width,this.height);
+			scope = scope || "active";
+			var self = this;
+			var clearOne = function(canvas, fillWhite){
+				var c = canvas.getContext("2d", { alpha: true });
+				if(fillWhite){
+					c.fillStyle = "white";
+					c.globalCompositeOperation = "source-over";
+					c.globalAlpha = 1;
+					c.fillRect(0, 0, self.width, self.height);
+				} else {
+					c.clearRect(0, 0, self.width, self.height);
+				}
+			};
+			if(scope === "all" && self.layers){
+				//layer 0 honours enable_transparency; extras always clear transparent so blending
+				//composes correctly with layer 0.
+				clearOne(self.layers[0].canvas, self.settings.enable_transparency == false);
+				for(var i = 1; i < self.layers.length; i++) clearOne(self.layers[i].canvas, false);
 			} else {
-				context.clearRect(0,0,this.width,this.height);
+				var idx = self.layers ? self.activeLayerIndex : 0;
+				var target = self.layers ? self.layers[idx].canvas : self;
+				clearOne(target, idx === 0 && self.settings.enable_transparency == false);
 			}
 		};
 
@@ -673,8 +1180,23 @@
 			if(typeof this.$undoButton!=="undefined"){
 				this.$undoButton.css("opacity",1);
 			}
-			this.undoStack.push({data: this.toDataURL("image/png"),current: true});
-			if(this.undoStack.length>(this.settings.undo_max_levels+1)) this.undoStack.shift();
+			//snapshot the active layer's state AFTER the action. undo will walk the stack for
+			//the previous entry matching this layerId and restore that; if none, it clears.
+			var layer = this.layers[this.activeLayerIndex];
+			this.undoStack.push({data: layer.canvas.toDataURL("image/png"), layerId: layer.id});
+			//enforce the cap by dropping the oldest non-sticky entry. sticky entries are
+			//baselines (loaded image) and shouldn't count toward the cap. when we drop a
+			//real entry, mark its layer as history-trimmed, so undo's fallback-to-clear must
+			//refuse once we've lost the layer's oldest state.
+			if(this.undoStack.length > (this.settings.undo_max_levels + 1)){
+				for(var i = 0; i < this.undoStack.length; i++){
+					if(this.undoStack[i].sticky) continue;
+					var dropped = this.undoStack.splice(i, 1)[0];
+					var didx = plugin.resolve_layer_by_id.call(this, dropped.layerId);
+					if(didx >= 0) this.layers[didx].history_trimmed = true;
+					break;
+				}
+			}
 			//new drawing action invalidates redo history
 			this.redoStack = [];
 			if(typeof this.$redoButton!=="undefined"){
@@ -693,12 +1215,11 @@
 			plugin.activate_brush.call(this, $(button).data("data"));
 		};
 
-		//activates a brush ( a tool plugin ).
 		//---- Persistence & cross-instance sync -------------------------------------------------
-		//Two localStorage keys: drawr.toolOverrides ({ [name]: { field: value } }) for built-in tools,
-		//and drawr.customBrushes ([ { id, ... } ]) for user-created brushes (step 8 populates these).
-		//Writes propagate to (a) all same-page drawr canvases via $.fn.drawr._instances, and (b) other
-		//tabs via the storage event. The writing tab does not receive its own storage event.
+		//Two localStorage keys hold tool state: drawr.toolOverrides ({ [name]: { field: value } })
+		//for built-in tools, and drawr.customBrushes ([ { id, ... } ]) for user-created brushes.
+		//Writes propagate to every drawr canvas on the page via $.fn.drawr._instances, and to
+		//other tabs via the storage event (which the writing tab does not receive itself).
 
 		plugin.read_overrides = function(){
 			try {
@@ -745,7 +1266,7 @@
 			plugin._pressureCurveCache = gamma;
 			try { window.localStorage.setItem("drawr.pressureCurve", String(gamma)); } catch(e){}
 		};
-		//Refresh settings UI on every instance (no tool filter — this is a global setting).
+		//Refresh settings UI on every instance (no tool filter; this is a global setting).
 		plugin.broadcast_pressure_curve_change = function(){
 			var instances = $.fn.drawr._instances || [];
 			for(var i = 0; i < instances.length; i++){
@@ -758,7 +1279,7 @@
 			}
 		};
 
-		//apply overrides from localStorage onto already-registered tools. idempotent — safe to re-run.
+		//apply overrides from localStorage onto already-registered tools. idempotent, safe to re-run.
 		//sets a guard so we don't iterate every call; set `force=true` to re-apply after a storage event.
 		plugin.apply_overrides = function(force){
 			if($.fn.drawr._overridesApplied && !force) return;
@@ -989,8 +1510,8 @@
 			}
 
 			//patch fields on brushes that exist in both but may have changed (e.g. edited in another tab).
-			//We only copy the canonical dynamics fields — not id/icon/image_data_url, which shouldn't
-			//change for an existing brush — so reuse the single source of truth for that list.
+			//We only copy the canonical dynamics fields (not id/icon/image_data_url, which shouldn't
+			//change for an existing brush), so reuse the single source of truth for that list.
 			var dynFields = $.fn.drawr._dynamicsFields || [];
 			for(var eid2 in existingById){
 				if(recordById[eid2]){
@@ -1037,7 +1558,7 @@
 		};
 
 		plugin.activate_brush = function(brush){
-			var context = this.getContext("2d", { alpha: this.settings.enable_transparency });
+			var context = plugin.active_context.call(this);
 			if(typeof this.active_brush!=="undefined" && typeof this.active_brush.deactivate!=="undefined"){
 				this.active_brush.deactivate.call(this,this.active_brush,context);
 			}
@@ -1062,7 +1583,8 @@
 
 			var button_width = 100/self.settings.toolbox_cols;
 			var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
-			el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : button_width + "%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
+			//faint outline (not border) so we can visually separate buttons without adding to the layout box.
+			el.css({ "outline" : "1px solid rgba(0,0,0,0.15)", "outline-offset" : "0px", "text-align":"center","padding": "0px 0px 0px 0px","width" : button_width + "%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
 			if(typeof css!=="undefined") el.css(css);
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
@@ -1070,7 +1592,7 @@
 			el.on("pointerdown." + self._evns, function(e){
 				if($(this).data("type")=="brush") plugin.select_button.call(self,this);
 				if(typeof data.action!=="undefined") {
-					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
+					var ctx = plugin.active_context.call(self);
 					data.action.call(self,data,ctx);
 				}
 				if($(this).data("type")=="toggle") {//toggle data attribute and select effect
@@ -1086,10 +1608,12 @@
 			//stopPropagation so clicking × doesn't also select the brush underneath.
 			if(data.removable){
 				el.css("position", "relative");
-				var $x = $("<span class='drawr-tool-x' title='Remove brush'>×</span>");
+				//use an MDI glyph rather than the × unicode character. the latter falls back
+				//to tofu on systems whose default font lacks the geometric-shape range.
+				var $x = $("<span class='drawr-tool-x mdi mdi-close' title='Remove brush'></span>");
 				$x.css({
 					position: "absolute", top: "0px", right: "2px",
-					width: "12px", height: "12px", lineHeight: "10px", fontSize: "14px",
+					width: "12px", height: "12px", lineHeight: "12px", fontSize: "12px",
 					color: "#900", background: "rgba(255,255,255,0.7)", borderRadius: "50%",
 					textAlign: "center", cursor: "pointer", userSelect: "none", zIndex: 1
 				});
@@ -1147,14 +1671,17 @@
 		/* create a checkbox */
 		plugin.create_checkbox = function(toolbox, title, checked){
 			var key = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+			//unique id per checkbox so the <label for=…> association is unambiguous on iOS
+			//(tapping the label text reliably toggles the box; wrapping-label alone is flaky
+			//on some mobile browsers when paired with pointer-event listeners on ancestors).
+			var uid = 'drawr-cb-' + Math.random().toString(36).slice(2, 9);
 			$(toolbox).append(
-				'<div style="clear:both;text-align:left;padding:4px 8px;">' +
-				'<label style="cursor:pointer;user-select:none;">' +
-				'<input type="checkbox" class="checkbox-component checkbox-' + key + '"' + (checked ? ' checked' : '') + ' style="margin-right:5px;">' +
-				title +
-				'</label></div>'
+				'<div style="clear:both;text-align:left;padding:4px 8px;display:flex;align-items:center;gap:5px;">' +
+				'<input id="' + uid + '" type="checkbox" class="checkbox-component checkbox-' + key + '"' + (checked ? ' checked' : '') + ' style="margin:0;flex:0 0 auto;">' +
+				'<label for="' + uid + '" style="cursor:pointer;user-select:none;line-height:1;margin:0;">' + title + '</label>' +
+				'</div>'
 			);
-			$(toolbox).find('.checkbox-' + key).on('pointerdown touchstart', function(e){
+			$(toolbox).find('.checkbox-' + key).on('pointerdown', function(e){
 				e.stopPropagation();
 			});
 			return $(toolbox).find('.checkbox-' + key);
@@ -1170,23 +1697,53 @@
 			return $(toolbox).find('label:last');
 		};
 
-		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact. */
-		plugin.create_slider = function(toolbox,title,min,max,value){
+		/* create a slider: inline [label][range][value] row, so tall dialogs with many sliders stay compact.
+		   If precision is truthy, adds tiny -/+ buttons on either side that nudge the value by 1. */
+		plugin.create_slider = function(toolbox,title,min,max,value,precision){
 			var self=this;
 			var cls = "slider-" + title.toLowerCase();
+			var nudgeBtnStyle = 'flex:0 0 auto;width:16px;height:16px;padding:0;' +
+				'display:inline-flex;align-items:center;justify-content:center;' +
+				'cursor:pointer;user-select:none;' +
+				'border:1px solid rgba(0,0,0,0.25);border-radius:2px;' +
+				'background:linear-gradient(to bottom,rgba(255,255,255,0.18) 0%,rgba(0,0,0,0.08) 100%);' +
+				'color:inherit;';
+			var decHtml = precision ? '<button type="button" class="slider-dec ' + cls + '-dec" tabindex="-1" style="' + nudgeBtnStyle + 'margin-right:-2px;"><i class="mdi mdi-minus" style="font-size:12px;line-height:1;"></i></button>' : '';
+			var incHtml = precision ? '<button type="button" class="slider-inc ' + cls + '-inc" tabindex="-1" style="' + nudgeBtnStyle + 'margin-left:-2px;"><i class="mdi mdi-plus" style="font-size:12px;line-height:1;"></i></button>' : '';
 			$(toolbox).append(
-				'<div style="display:flex;align-items:center;padding:2px 6px;gap:6px;font-size:11px;">' +
+				'<div style="display:flex;align-items:center;padding:2px 6px;gap:4px;font-size:11px;">' +
 					'<label style="flex:0 0 auto;min-width:46px;font-weight:bold;user-select:none;">' + title + '</label>' +
+					decHtml +
 					'<input class="slider-component ' + cls + '" value="' + value + '" type="range" min="' + min + '" max="' + max + '" step="1" style="flex:1 1 auto;min-width:0;background:transparent;height:18px;margin:0;" />' +
+					incHtml +
 					'<span style="flex:0 0 auto;min-width:26px;text-align:right;font-variant-numeric:tabular-nums;">' + value + '</span>' +
 				'</div>'
 			);
-			$(toolbox).find("." + cls).on("pointerdown touchstart",function(e){
+			var $input = $(toolbox).find("." + cls).not("button");
+			$input.on("pointerdown touchstart",function(e){
 				e.stopPropagation();
 			}).on("input." + self._evns,function(e){
-				 $(this).next().text($(this).val());
+				 $(this).nextAll("span").first().text($(this).val());
 			});
-			return $(toolbox).find(".slider-" + title.toLowerCase());
+			if(precision){
+				var nudge = function(delta){
+					var cur = parseFloat($input.val());
+					var mn = parseFloat($input.attr("min"));
+					var mx = parseFloat($input.attr("max"));
+					var next = Math.max(mn, Math.min(mx, cur + delta));
+					if(next === cur) return;
+					$input.val(next).trigger("input").trigger("change");
+				};
+				$(toolbox).find("." + cls + "-dec").on("pointerdown touchstart click", function(e){
+					e.stopPropagation();
+					if(e.type === "click") nudge(-1);
+				});
+				$(toolbox).find("." + cls + "-inc").on("pointerdown touchstart click", function(e){
+					e.stopPropagation();
+					if(e.type === "click") nudge(1);
+				});
+			}
+			return $input;
 		}
 
 		/* create a button */
@@ -1274,7 +1831,7 @@
 		plugin.create_collapsible = function(toolbox, title, collapsedDefault){
 			var uid = 'col-' + Math.random().toString(36).slice(2, 8);
 			var collapsed = !!collapsedDefault;
-			//use MDI chevron glyphs instead of raw unicode triangles — iOS Firefox renders those as
+			//use MDI chevron glyphs instead of raw unicode triangles. iOS Firefox renders those as
 			//tofu/garbled symbols because its default fallback font lacks the geometric-shape range.
 			var chevClass = function(c){ return c ? 'mdi-chevron-right' : 'mdi-chevron-down'; };
 			var $wrap = $(
@@ -1303,9 +1860,13 @@
 		plugin.initialize_canvas = function(width,height,reset){
 
 			this.origStyles = plugin.get_styles(this);
-			this.origParentStyles = plugin.get_styles($(this).parent()[0]);
+			this.origParentStyles = plugin.get_styles(this.$container[0]);
 			$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none", "position": "relative", "z-index": 1 });
-			$(this).parent().css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none" });
+			//`isolation: isolate` confines mix-blend-mode (used by multiply layers) to the
+			//drawr-container, so blending never reaches the surrounding page. $bgCanvas is
+			//still inside the isolated context (by design); multiply reaches through
+			//transparent regions of layer 0 to the paper background.
+			this.$container.css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none", "isolation": "isolate" });
 
 			const style = document.createElement('style');
 			style.textContent = `
@@ -1318,27 +1879,59 @@
 			if(!this.$bgCanvas){
 				this.$bgCanvas = $("<canvas class='drawr-bg-canvas'></canvas>");
 				this.$bgCanvas.css({"position":"absolute","z-index":0,"top":0,"left":0,"pointer-events":"none"});
-				this.$bgCanvas.insertBefore(this);
+				this.$container.prepend(this.$bgCanvas);
+			}
+
+			//drawr-layer-stack: inner wrapper that holds the main canvas + extra layer canvases.
+			//its `isolation: isolate` creates a fresh stacking context so layer mix-blend-mode
+			//only reaches sibling layers. the checkerboard ($bgCanvas) and UI overlay
+			//($memoryCanvas) sit outside and never participate in blending.
+			if(!this.$layerStack){
+				this.$layerStack = $("<div class='drawr-layer-stack'></div>").css({
+					"position": "absolute",
+					"top": 0, "left": 0,
+					"width":  "100%",
+					"height": "100%",
+					"z-index": 1,
+					"isolation": "isolate"
+				});
+				this.$container.append(this.$layerStack);
+				//reparent the main canvas into the stack. extra layer canvases already live
+				//here because add_layer inserts them after the last existing layer's $el.
+				this.$layerStack.append(this);
 			}
 
 			if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
 				this.width=width;
 				this.height=height;
+				//resize extra layer canvases to match. drops their pixel data; acceptable during
+				//explicit resize/load flows.
+				if(this.layers){
+					for(var li = 1; li < this.layers.length; li++){
+						this.layers[li].canvas.width = width;
+						this.layers[li].canvas.height = height;
+					}
+				}
 			}
-			
+
 			if(reset==true){
 				this.zoomFactor = 1;
 				this.rotationAngle = 0;
-				if(typeof this.$zoomToolbox!=="undefined") this.$zoomToolbox.find("input").val(100).trigger("input");
 				plugin.apply_scroll.call(this,0,0,false);
 				$(this).width(width);
 				$(this).height(height);
+				if(this.layers){
+					for(var lj = 1; lj < this.layers.length; lj++){
+						this.layers[lj].$el.width(width);
+						this.layers[lj].$el.height(height);
+					}
+				}
 			}
 
 			plugin.draw_checkerboard.call(this);
 
 			this.pen_pressure = false;//switches mode once it detects.
-			
+
 			var context = this.getContext("2d", { alpha: true });
 			if(this.settings.clear_on_init==true){
 				context.globalAlpha = 1;
@@ -1348,14 +1941,22 @@
 				} else {
 					context.clearRect(0,0,width,height);
 				}
-			} 
+				//clear extra layers to transparent (regardless of paper setting; extras must be
+				//transparent for multiply/normal blending to compose correctly with layer 0).
+				if(this.layers){
+					for(var lk = 1; lk < this.layers.length; lk++){
+						var lctx = this.layers[lk].canvas.getContext("2d", { alpha: true });
+						lctx.clearRect(0, 0, width, height);
+					}
+				}
+			}
 
 			//memory canvas
 			var context = this.$memoryCanvas[0].getContext("2d");
 			context.fillStyle="blue";
 			context.fillRect(0,0,width,height);
-			var parent_width = $(this).parent().innerWidth();
-			var parent_height = $(this).parent().innerHeight();
+			var parent_width = this.$container.innerWidth();
+			var parent_height = this.$container.innerHeight();
 
 			this.$memoryCanvas.css({
 				"z-index": 5,
@@ -1390,6 +1991,25 @@
 				context.translate(-_cx, -_cy);
 				this.effectCallback.call(this,context,this.active_brush,this.scrollX,this.scrollY,this.zoomFactor);
 				context.restore();
+			}
+
+			//long-press colour-picker indicator. drawn outside the rotation transform
+			//so the ring stays upright regardless of canvas rotation.
+			if(this._pickerActive || (typeof this._pickerOpacity === "number" && this._pickerOpacity > 0)){
+				var _pkTarget = (typeof this._pickerTargetOpacity === "number") ? this._pickerTargetOpacity : 0;
+				var _pkCur    = (typeof this._pickerOpacity === "number") ? this._pickerOpacity : 0;
+				this._pickerOpacity = _pkCur + (_pkTarget - _pkCur) * 0.15;
+				if(Math.abs(_pkTarget - this._pickerOpacity) < 0.01) this._pickerOpacity = _pkTarget;
+
+				plugin.draw_picker_indicator.call(this, context);
+
+				//fully faded out: tear down.
+				if(!this._pickerActive && this._pickerOpacity <= 0){
+					this._pickerOpacity = 0;
+					this._pickerViewPos = null;
+					this._pickerPos = null;
+					this._pickerColor = null;
+				}
 			}
 
 			var container_width = this.containerWidth;
@@ -1500,8 +2120,44 @@
 				context.stroke();
 			}
 
+			//zoom percentage indicator, bottom-center of the viewport, fades like the scrollbars.
+			if(this.zoomIndicatorTimer > 0){
+				var _zAlpha = Math.min(0.85, (0.85/100)*this.zoomIndicatorTimer);
+				this.zoomIndicatorTimer -= 5;
+				var _zText = Math.round(this.zoomFactor * 100) + "%";
+				context.save();
+				context.globalAlpha = _zAlpha;
+				context.font = "bold 13px sans-serif";
+				context.textAlign = "center";
+				//use alphabetic baseline + actual glyph metrics. textBaseline "middle" resolves
+				//to em-box middle on iOS Safari (shifts text down), but alphabetic + measured
+				//ascent/descent centers the visible glyph identically on every browser.
+				context.textBaseline = "alphabetic";
+				var _zMetrics = context.measureText(_zText);
+				var _zAscent  = _zMetrics.actualBoundingBoxAscent  || 10;
+				var _zDescent = _zMetrics.actualBoundingBoxDescent || 2;
+				var _zGlyphH  = _zAscent + _zDescent;
+				var _zPadX = 10, _zPadY = 5;
+				var _zBoxW = _zMetrics.width + _zPadX * 2;
+				var _zBoxH = _zGlyphH + _zPadY * 2;
+				var _zBoxX = container_width / 2 - _zBoxW / 2;
+				var _zBoxY = container_height - _zBoxH - 16; //16px margin from bottom
+				context.fillStyle = "rgba(0,0,0,0.6)";
+				if(context.roundRect){
+					context.beginPath();
+					context.roundRect(_zBoxX, _zBoxY, _zBoxW, _zBoxH, 4);
+					context.fill();
+				} else {
+					context.fillRect(_zBoxX, _zBoxY, _zBoxW, _zBoxH);
+				}
+				context.fillStyle = "#fff";
+				//baseline y = box top + top padding + ascent → glyph sits centered in the box.
+				context.fillText(_zText, container_width / 2, _zBoxY + _zPadY + _zAscent);
+				context.restore();
+			}
+
 			//we only keep the loop alive when there is work to do (effectCallback preview or scroll indicators fading in n out). Everything else is triggered via request_redraw.
-			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || (this.settings.debug_mode && this.isGesturing)){
+			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || this.zoomIndicatorTimer > 0 || (this.settings.debug_mode && this.isGesturing) || this._pickerActive || (typeof this._pickerOpacity === "number" && this._pickerOpacity > 0)){
 				this._animFrameQueued = true;
 				window.requestAnimationFrame(this.draw_animations_bound);
 			}
@@ -1516,6 +2172,188 @@
 			}
 		};
 
+		//---- long-press colour picker ----------------------------------------------------
+		//
+		//hold still on the canvas for settings.long_press_pick_duration ms and a colour
+		//ring blooms under the pointer. drag to hunt a colour, release to pick. any
+		//initial dot the active tool placed at drawStart is rolled back using the
+		//existing _gestureAbortSnapshot so picking is never destructive.
+
+		//fires when the long-press timer elapses.
+		plugin.activate_color_picker = function(){
+			var self = this;
+			//setTimeout races pointerup; the user may already have released.
+			if($(self).data("is_drawing") !== true) return;
+
+			//roll back the initial dot placed by the active tool's drawStart.
+			var _ctx = plugin.active_context.call(self);
+			if(self._gestureAbortSnapshot){
+				_ctx.putImageData(self._gestureAbortSnapshot, 0, 0);
+				self._gestureAbortSnapshot = null;
+			}
+
+			//stop drawing without delivering drawStop to the tool: the stroke was
+			//retroactively cancelled, so the tool should not see an end for it.
+			$(self).data("is_drawing", false);
+
+			//multi-layer: composite once into a sample canvas (drawing is locked while
+			//picking, so the snapshot can't go stale). single-layer: sample the active
+			//context directly.
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = plugin.composite_for_export.call(self);
+				self._pickerSampleCtx = self._pickerSampleCanvas.getContext("2d", { alpha: self.settings.enable_transparency });
+			} else {
+				self._pickerSampleCanvas = self;
+				self._pickerSampleCtx = _ctx;
+			}
+
+			self._pickerActive = true;
+			if(typeof self._pickerOpacity !== "number") self._pickerOpacity = 0;
+			self._pickerTargetOpacity = 1;
+
+			//seed position + colour from where the press started.
+			var lp = self._longPressStart;
+			self._pickerPos     = { x: lp.canvasX, y: lp.canvasY };
+			self._pickerViewPos = { x: lp.viewX,   y: lp.viewY };
+			plugin.sample_picker_color.call(self, lp.canvasX, lp.canvasY);
+
+			//small haptic on devices that offer it. no-op on desktop. (^_^)
+			if(typeof navigator !== "undefined" && typeof navigator.vibrate === "function"){
+				try { navigator.vibrate(10); } catch(e) {}
+			}
+
+			plugin.request_redraw.call(self);
+		};
+
+		//samples a pixel from the active sample source into self._pickerColor.
+		//transparent / semi-transparent pixels get composited over the visible paper
+		//background so the picker returns what the user sees, not raw rgba (a fully
+		//transparent pixel reads as (0,0,0,0) and would otherwise pick as black).
+		//approximation: solid paper mode uses the configured paper_color; checkerboard
+		//mode uses white. close enough without sampling the checker pattern itself.
+		plugin.sample_picker_color = function(canvasX, canvasY){
+			var self = this;
+			if(!self._pickerSampleCtx) return;
+			var rx = Math.max(0, Math.min(self.width  - 1, Math.round(canvasX)));
+			var ry = Math.max(0, Math.min(self.height - 1, Math.round(canvasY)));
+			var d = self._pickerSampleCtx.getImageData(rx, ry, 1, 1).data;
+			var a = d[3];
+			if(a < 255){
+				var bg = (self.paperColorMode === "solid")
+					? (plugin.hex_to_rgb(self.paperColor) || { r: 255, g: 255, b: 255 })
+					: { r: 255, g: 255, b: 255 };
+				//standard source-over: out = src*sa + bg*(1-sa). canvas ImageData is
+				//non-premultiplied, so d[0..2] are the original rgb components.
+				var sa = a / 255;
+				var ia = 1 - sa;
+				self._pickerColor = {
+					r: Math.round(d[0] * sa + bg.r * ia),
+					g: Math.round(d[1] * sa + bg.g * ia),
+					b: Math.round(d[2] * sa + bg.b * ia)
+				};
+			} else {
+				self._pickerColor = { r: d[0], g: d[1], b: d[2] };
+			}
+		};
+
+		//release-while-picking: commit the final colour and start the fade-out.
+		plugin.commit_color_picker = function(){
+			var self = this;
+			if(!self._pickerActive) return;
+			var c = self._pickerColor || { r: 0, g: 0, b: 0 };
+			self.brushColor = { r: c.r, g: c.g, b: c.b };
+			var hex = plugin.rgb_to_hex(c.r, c.g, c.b);
+			//mirror into palette UI (matches eyedropper.js flow).
+			if(self.$settingsToolbox) self.$settingsToolbox.find('.color-picker.active-drawrpalette').drawrpalette("set", hex);
+
+			self._pickerActive = false;
+			self._pickerTargetOpacity = 0;
+			//release multi-layer composite so GC can reclaim it. the active-context
+			//reference is harmless to leave; draw_animations teardown clears it anyway.
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = null;
+				self._pickerSampleCtx = null;
+			}
+			plugin.request_redraw.call(self);
+		};
+
+		//two-finger gesture started mid-pick: cancel without committing.
+		plugin.cancel_color_picker = function(){
+			var self = this;
+			if(self._longPressTimer){ clearTimeout(self._longPressTimer); self._longPressTimer = null; }
+			if(!self._pickerActive) return;
+			self._pickerActive = false;
+			self._pickerTargetOpacity = 0;
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = null;
+				self._pickerSampleCtx = null;
+			}
+			plugin.request_redraw.call(self);
+		};
+
+		//renders the picker ring on the memory canvas in container-local coordinates
+		//(called outside the rotation transform so the ring sits upright on screen
+		//regardless of canvas rotation).
+		plugin.draw_picker_indicator = function(context){
+			var self = this;
+			if(self._pickerOpacity <= 0 || !self._pickerViewPos) return;
+			var vx = self._pickerViewPos.x;
+			var vy = self._pickerViewPos.y;
+			var c  = self._pickerColor || { r: 128, g: 128, b: 128 };
+
+			//offset the ring up-and-left so the finger/stylus doesn't occlude the sample point.
+			var offX = -42, offY = -42;
+			var ringR  = 28;
+			var innerR = 22;
+			var cx = vx + offX, cy = vy + offY;
+
+			context.save();
+			context.globalAlpha = self._pickerOpacity;
+
+			//connector line from sample point to ring centre.
+			context.lineWidth = 2;
+			context.strokeStyle = "rgba(0,0,0,0.5)";
+			context.beginPath();
+			context.moveTo(vx, vy);
+			context.lineTo(cx, cy);
+			context.stroke();
+
+			//little crosshair marker at the actual sample point.
+			context.beginPath();
+			context.arc(vx, vy, 4, 0, Math.PI * 2);
+			context.fillStyle = "rgba(255,255,255,0.9)";
+			context.fill();
+			context.lineWidth = 1;
+			context.strokeStyle = "rgba(0,0,0,0.8)";
+			context.stroke();
+
+			//soft drop shadow under the ring.
+			context.beginPath();
+			context.arc(cx, cy + 2, ringR + 2, 0, Math.PI * 2);
+			context.fillStyle = "rgba(0,0,0,0.25)";
+			context.fill();
+
+			//inner filled disc showing the sampled colour.
+			context.beginPath();
+			context.arc(cx, cy, innerR, 0, Math.PI * 2);
+			context.fillStyle = "rgb(" + c.r + "," + c.g + "," + c.b + ")";
+			context.fill();
+
+			//double-stroke ring (white inner + dark outer) for contrast on any background.
+			context.lineWidth = 3;
+			context.strokeStyle = "rgba(255,255,255,0.95)";
+			context.beginPath();
+			context.arc(cx, cy, ringR - 1, 0, Math.PI * 2);
+			context.stroke();
+			context.lineWidth = 2;
+			context.strokeStyle = "rgba(0,0,0,0.75)";
+			context.beginPath();
+			context.arc(cx, cy, ringR + 1, 0, Math.PI * 2);
+			context.stroke();
+
+			context.restore();
+		};
+
 		/* Create floating dialog and appends it hidden after the canvas */
 		plugin.create_toolbox = function(id,position,title,width){
 			var self = this;
@@ -1526,9 +2364,18 @@
 			$(toolbox).css({
 				"position" : "absolute", "z-index" : 6, "cursor" : "move", "width" : width + "px", "height" : "auto", "color" : "#fff",
 				"padding" : "2px", "background" : "linear-gradient(to bottom, rgba(69,72,77,1) 0%,rgba(0,0,0,1) 100%)", "border-radius" : "2px",
-				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center"
+				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center",
+				//touch-action: none tells the browser this element never triggers native scroll
+				//or zoom. On iOS it's the only reliable way to stop a finger/pencil drag across
+				//the toolbox from scrolling the page; preventDefault() in pointerdown is too
+				//late, since the browser decides pan-vs-pointer from touch-action before pointer
+				//events fire. An older fix bound touchstart+preventDefault, but that broke taps
+				//on nested controls (iOS drops the synthesized click when touchstart and
+				//pointerdown are both bound on one element). Buttons, labels, selects, and
+				//sliders still work because they're driven by pointer/click events. (^_^)
+				"touch-action": "none"
 			});
-			$(toolbox).insertAfter($(this).parent());
+			$(toolbox).insertAfter(this.$container);
 			if(position){ $(toolbox).offset(position); }
 			$(toolbox).data("toolbox-id", id);
 			$(toolbox).hide();
@@ -1537,9 +2384,17 @@
 			$(toolbox).on("mousedown." + self._evns, function(e){
 				if(e.button === 1) e.preventDefault();
 			});
-			$(toolbox).on("pointerdown." + self._evns + " touchstart." + self._evns, function(e){
-				if($(e.target).is("button, input, select, textarea, label, a") || $(e.target).closest("button, input, select, textarea, label, a").length) {
-					e.preventDefault();//prevent native scroll, even if we don't wanna drag the toolbox.
+			//drag using pointerdown only; it covers mouse/touch/pen on all modern browsers.
+			//binding touchstart alongside is the root cause of mobile tap failures: iOS Safari
+			//treats a same-element touchstart+pointerdown pair as ambiguous, frequently dropping
+			//the synthesized click on nested buttons/labels/sliders.
+			$(toolbox).on("pointerdown." + self._evns, function(e){
+				//raise this toolbox above any overlapping siblings. happens for every pointerdown
+				//on the dialog, including on its buttons/sliders, so clicking anywhere on a partially
+				//occluded window brings it to the front. (^_^)
+				plugin._toolboxTopZ = (plugin._toolboxTopZ || 6) + 1;
+				this.style.zIndex = plugin._toolboxTopZ;
+				if($(e.target).is("button, input, select, textarea, label, option, a") || $(e.target).closest("button, input, select, textarea, label, option, a").length) {
 					return;
 				}
 				var tbOffset = $(this).offset();
@@ -1558,7 +2413,7 @@
 
 		plugin.get_best_toolbox_position = function(id, width, height, $exclude) {
 
-			var container = $(this).parent();
+			var container = this.$container;
 			var cw = container.innerWidth();
 			var ch = container.innerHeight();
 			var P = 6;
@@ -1617,7 +2472,7 @@
 			var w = $toolbox.outerWidth();
 			var h = $toolbox.outerHeight() || 100;
 			var pos = plugin.get_best_toolbox_position.call(self, id, w, h, $toolbox);
-			var containerOffset = $(self).parent().offset();
+			var containerOffset = self.$container.offset();
 			$toolbox.offset({
 				left: containerOffset.left + pos.left,
 				top:  containerOffset.top  + pos.top
@@ -1662,12 +2517,9 @@
 		//we should probably do that with more operations later on. rotation could affect scroll, so
 		plugin.apply_scroll = function(x,y,setTimer){
 			var self = this;
-			var angle = self.rotationAngle || 0;
-			var transform = plugin.canvas_transform(x, y, angle);
-			$(self).css("transform", transform);
-			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
 			self.scrollX = x;
 			self.scrollY = y;
+			plugin.broadcast_transform.call(self);
 			if(setTimer==true){
 				self.scrollTimer= 500;
 			}
@@ -1678,9 +2530,7 @@
 		plugin.apply_rotation = function(angle,setTimer){
 			var self = this;
 			self.rotationAngle = angle;
-			var transform = plugin.canvas_transform(self.scrollX, self.scrollY, angle);
-			$(self).css("transform", transform);
-			if(self.$bgCanvas) self.$bgCanvas.css("transform", transform);
+			plugin.broadcast_transform.call(self);
 			if(setTimer==true){
 				self.scrollTimer= 500;
 			}
@@ -1697,8 +2547,13 @@
 			self.zoomFactor = zoomFactor;
 			$(self).width(self.width*zoomFactor);
 			$(self).height(self.height*zoomFactor);
+			plugin.broadcast_zoom_css.call(self);
 			plugin.draw_checkerboard.call(self);
 			if(oldZoom > 0 && zoomFactor !== oldZoom){
+				//brief zoom-percentage readout at the bottom of the viewport, mirroring the
+				//fade-in/out behaviour of the scroll indicators (driven from draw_animations).
+				self.zoomIndicatorTimer = 500;
+				plugin.request_redraw.call(self);
 				if(focalX !== undefined){
 					plugin.apply_scroll.call(self, (focalX + self.scrollX) * (zoomFactor / oldZoom) - focalX, (focalY + self.scrollY) * (zoomFactor / oldZoom) - focalY, true);
 				} else {
@@ -1721,6 +2576,7 @@
 
 		//toolset is only a parameter for more helpful errors.
 		plugin.get_tool_by_name = function(toolset, toolname){
+			if(toolname=="brush") toolname = "paintbrush";//backwards compatible...
 			var found = $.fn.drawr.availableTools.find(function(t){ return t.name == toolname; });
 			if(!found) throw new Error("Tool " + toolname + " not found, as referenced in " + toolset);
 			return found;
@@ -1745,8 +2601,12 @@
 				});
 			} else {
 				for(var tool_name of self.toolsets[toolset]){
-					var tool = plugin.get_tool_by_name(toolset, tool_name);
-					plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					try {
+						var tool = plugin.get_tool_by_name(toolset, tool_name);
+						plugin.create_toolbutton.call(self, self.$brushToolbox[0], tool.type || "brush", tool);
+					} catch(e){
+						//tool not found, but keep going.
+					}
 				}
 			}
 		};
@@ -1756,6 +2616,11 @@
 			var currentCanvas = this.first()[0];
 			if(typeof param !== "undefined" && typeof param !== "string") throw new Error("drawr export: mime type must be a string");
 			var mime = typeof param=="undefined" ? "image/png" : param;
+			//with multiple layers, composite in JS so saved output matches the GPU-blended display.
+			//a single-layer instance falls straight through to toDataURL on the main canvas.
+			if(currentCanvas.layers && currentCanvas.layers.length > 1){
+				return plugin.composite_for_export.call(currentCanvas).toDataURL(mime);
+			}
 			return currentCanvas.toDataURL(mime);
 		}
 
@@ -1792,7 +2657,10 @@
 
 				if(typeof param !== "undefined" && typeof param !== "boolean") throw new Error("drawr clear: clear_undo must be a boolean");
 				var clear_undo = typeof param!=="undefined" ? param : false;
-				currentCanvas.plugin.clear_canvas.call(currentCanvas,false);
+				//public clear wipes every layer, then collapses back to a single base layer
+				//so callers get a clean single-layer state (matches fresh-canvas semantics).
+				currentCanvas.plugin.clear_canvas.call(currentCanvas,false,"all");
+				currentCanvas.plugin.collapse_to_base_layer.call(currentCanvas);
 
 				if(clear_undo) {//re-add current version of the canvas.
 					if(typeof currentCanvas.$undoButton!=="undefined") currentCanvas.$undoButton.css("opacity",0.5);
@@ -1801,7 +2669,9 @@
 					currentCanvas.redoStack = [];
 				}
 
-				currentCanvas.undoStack.push({data: currentCanvas.toDataURL("image/png"),current:true});
+				//record the active layer's cleared state so the first undo does something sensible.
+				var _active = currentCanvas.layers[currentCanvas.activeLayerIndex];
+				currentCanvas.undoStack.push({data: _active.canvas.toDataURL("image/png"), layerId: _active.id});
 
 			} else if ( action === "stop" ) {
 				if(!$(currentCanvas).hasClass("active-drawr")) {
@@ -1862,8 +2732,8 @@
 
 				if(typeof param !== "object" || param === null || Array.isArray(param)) throw new Error("drawr movetoolbox: param must be an object");
 				if(typeof param.x !== "number" || typeof param.y !== "number") throw new Error("drawr movetoolbox: param.x and param.y must be numbers");
-				currentCanvas.$brushToolbox.css("left",($(currentCanvas).parent().offset().left + param.x) + "px");
-				currentCanvas.$brushToolbox.css("top",($(currentCanvas).parent().offset().top + param.y) + "px");
+				currentCanvas.$brushToolbox.css("left",(currentCanvas.$container.offset().left + param.x) + "px");
+				currentCanvas.$brushToolbox.css("top",(currentCanvas.$container.offset().top + param.y) + "px");
 				
 			//call with $(selector).drawr("load",something) to load an image.
 			//todo: document what something is. at least the output of a filereader onload (e.target.result) whatever that is.
@@ -1876,10 +2746,23 @@
 				img.crossOrigin = "Anonymous";
 
 				img.onload = function(){
-					var context = currentCanvas.getContext("2d", { alpha: currentCanvas.settings.enable_transparency });
 					plugin.initialize_canvas.call(currentCanvas,img.width,img.height,true);
-					currentCanvas.undoStack = [{data: currentCanvas.toDataURL("image/png"),current:true}];
+					//load replaces the active layer. the canvas resize/reset above has already
+					//cleared every layer to white/transparent, so drawImage straight onto the
+					//active layer context is all that's left.
+					var context = plugin.active_context.call(currentCanvas);
 					context.drawImage(img,0,0);
+					//drop prior history (dimensions changed, older snapshots no longer align),
+					//and mark the loaded state sticky so undo treats it as a baseline: it serves
+					//as a restore target for later strokes, but undo refuses to pop it.
+					currentCanvas.undoStack = [];
+					currentCanvas.redoStack = [];
+					var _lb = currentCanvas.layers[currentCanvas.activeLayerIndex];
+					currentCanvas.undoStack.push({
+						data: _lb.canvas.toDataURL("image/png"),
+						layerId: _lb.id,
+						sticky: true
+					});
 				};
 				img.src=param;
 			//call with $(selector).drawr("destroy") 
@@ -1889,14 +2772,14 @@
 					console.error("The element you are running this command on is not a drawr canvas.");
 					return false;//can't destroy if not initialized.
 				}
-				var parent = $(currentCanvas).parent();
+				var $container = currentCanvas.$container;
 				var evns = currentCanvas._evns;
-				parent.off("touchstart." + evns);
-				parent.off("wheel." + evns);
-				parent.off("contextmenu." + evns);
-				parent.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown." + evns);
-				parent.find(".drawr-toolbox .slider-component").off("input." + evns);
-				parent.find(".drawr-toolbox").off("pointerdown." + evns + " touchstart." + evns);
+				$container.off("touchstart." + evns);
+				$container.off("wheel." + evns);
+				$container.off("contextmenu." + evns);
+				$container.find(".drawr-toolbox .drawr-tool-btn").off("pointerdown." + evns);
+				$container.find(".drawr-toolbox .slider-component").off("input." + evns);
+				$container.find(".drawr-toolbox").off("pointerdown." + evns + " touchstart." + evns);
 				$(window).unbind("pointerup." + evns + " pointercancel." + evns, currentCanvas.drawStop);
 				$(window).unbind("pointermove." + evns, currentCanvas.drawMove);
 				$(window).unbind("pointerdown." + evns, currentCanvas.drawStart);
@@ -1911,6 +2794,23 @@
 
 				currentCanvas.$memoryCanvas.remove();
 				if(currentCanvas.$bgCanvas){ currentCanvas.$bgCanvas.remove(); delete currentCanvas.$bgCanvas; }
+				//remove extra layer canvases (layer 0 is the main canvas, left in place).
+				if(currentCanvas.layers){
+					for(var _li = 1; _li < currentCanvas.layers.length; _li++){
+						currentCanvas.layers[_li].$el.remove();
+					}
+					delete currentCanvas.layers;
+					delete currentCanvas.activeLayerIndex;
+					delete currentCanvas._nextLayerId;
+				}
+				//unwrap drawr-layer-stack: move the main canvas back to drawr-container so
+				//the DOM returns to its pre-init shape. must happen before style/class resets
+				//below, which expect $(currentCanvas).parent() === drawr-container.
+				if(currentCanvas.$layerStack){
+					currentCanvas.$container.append(currentCanvas);
+					currentCanvas.$layerStack.remove();
+					delete currentCanvas.$layerStack;
+				}
 				currentCanvas.$brushToolbox.remove();
 
 				delete currentCanvas.$memoryCanvas;
@@ -1942,6 +2842,7 @@
 				delete currentCanvas.scrollWheel;
 				delete currentCanvas.current_toolset;
 				delete currentCanvas.scrollTimer;
+				delete currentCanvas.zoomIndicatorTimer;
 
 				//reset css and visuals and scrolls
 				$(currentCanvas).width(currentCanvas.width);
@@ -1950,34 +2851,46 @@
 
 				//reset styles to what they were.
 				$(currentCanvas).attr('style', '');
-				$(currentCanvas).parent().attr('style', '');
+				currentCanvas.$container.attr('style', '');
 				$(currentCanvas).css(currentCanvas.origStyles);
-				$(currentCanvas).parent().css(currentCanvas.origParentStyles);
+				currentCanvas.$container.css(currentCanvas.origParentStyles);
 
 				delete currentCanvas.origStyles;
 				delete currentCanvas.origParentStyles;
 
 				$(currentCanvas).removeClass("active-drawr");
-				$(currentCanvas).parent().removeClass("drawr-container");
+				currentCanvas.$container.removeClass("drawr-container");
+				delete currentCanvas.$container;
 			//not an action, but an init call
 			} else if ( typeof action == "object" || typeof action =="undefined" ){
 				if($(currentCanvas).hasClass("active-drawr")) return false;//prevent double init
 				currentCanvas.className = currentCanvas.className + " active-drawr";
-				$(currentCanvas).parent().addClass("drawr-container");
+				//cached reference to drawr-container. stashed first so every later code path
+				//(tools, event handlers, positioning math) can use it instead of
+				//$(this).parent(), which becomes the inner drawr-layer-stack div once
+				//initialize_canvas reparents the main canvas for blend-mode isolation.
+				currentCanvas.$container = $(currentCanvas).parent();
+				currentCanvas.$container.addClass("drawr-container");
 
 				//determine settings
 				var defaultSettings = {
 					"enable_transparency" : true,
 					"enable_scrollwheel_zooming" : true,
-					"canvas_width" : $(currentCanvas).parent().innerWidth(),
-					"canvas_height" : $(currentCanvas).parent().innerHeight(),
+					"canvas_width" : currentCanvas.$container.innerWidth(),
+					"canvas_height" : currentCanvas.$container.innerHeight(),
 					"undo_max_levels" : 5,
 					"color_mode" : "picker",
 					"clear_on_init" : true,
 					"toolbox_cols" : 3,
 					"debug_mode" : false,
 					"paper_color_mode" : "checkerboard",
-					"paper_color" : "#ffffff"
+					"paper_color" : "#ffffff",
+					"hide_advanced_brush_settings" : false,
+					//sketchbook-style: hold still on the canvas for a beat and a colour
+					//ring blooms under the pointer. drag to hunt a colour, release to pick.
+					"long_press_pick_enabled" : true,
+					"long_press_pick_duration" : 700,   //ms
+					"long_press_pick_move_tolerance" : 8 //page px before the hold is abandoned
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
@@ -1989,13 +2902,12 @@
 				currentCanvas.memoryContext.imageSmoothingEnabled= false;
 
 				//cache container dimensions; kept up to date via resize handler
-				var _parent = $(currentCanvas).parent();
-				currentCanvas.containerWidth = _parent.width();
-				currentCanvas.containerHeight = _parent.height();
+				currentCanvas.containerWidth = currentCanvas.$container.width();
+				currentCanvas.containerHeight = currentCanvas.$container.height();
 				currentCanvas._evns = "drawr_" + Math.random().toString(36).slice(2, 9);//event namespace so destroying one drawr instance doesn't affect others.
 				currentCanvas.onWindowResize = function() {
-					currentCanvas.containerWidth = _parent.width();
-					currentCanvas.containerHeight = _parent.height();
+					currentCanvas.containerWidth = currentCanvas.$container.width();
+					currentCanvas.containerHeight = currentCanvas.$container.height();
 				};
 				$(window).on("resize." + currentCanvas._evns, currentCanvas.onWindowResize);
 
@@ -2007,9 +2919,27 @@
 				currentCanvas.paperColorMode = currentCanvas.settings.paper_color_mode;
 				currentCanvas.paperColor = currentCanvas.settings.paper_color;
 
+				//seed layer registry. layer 0 is the main canvas element itself. add_layer/
+				//delete_layer/move_layer_down manage extras. undo records reference layer.id
+				//so reorder/delete don't invalidate history.
+				currentCanvas.layers = [{
+					id: 0,
+					canvas: currentCanvas,
+					$el: $(currentCanvas),
+					name: "New layer",
+					mode: "normal",
+					visible: true,
+					opacity: 1,
+					history_trimmed: false
+				}];
+				currentCanvas.activeLayerIndex = 0;
+				currentCanvas._nextLayerId = 1;
+
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
-				currentCanvas.undoStack = [{data:currentCanvas.toDataURL("image/png"),current:true}];
+				//undo/redo use "walk for prev same-layer" semantics with fallback-to-clear.
+				//no initial seed needed; the first stroke's undo will fallback-clear.
+				currentCanvas.undoStack = [];
 				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
 				context.imageSmoothingEnabled= false;
@@ -2041,14 +2971,14 @@
 		"rotation_mode","fixed_angle","angle_jitter",
 		"size_jitter","opacity_jitter","scatter",
 		"smoothing","brush_fade_in",
-		"pressure_affects_alpha","pressure_affects_size"
+		"pressure_affects_alpha","pressure_affects_size","size_max"
 	];
 
 	/* Register a new tool */
 	$.fn.drawr.register = function (tool){
 		if(typeof $.fn.drawr.availableTools=="undefined") $.fn.drawr.availableTools=[];
 		//snapshot dynamics defaults so Reset-Defaults has a pristine target. Shallow copy of
-		//only the fields the tool actually declares — missing fields stay missing after reset.
+		//only the fields the tool actually declares; missing fields stay missing after reset.
 		if(typeof tool._defaults === "undefined"){
 			var defaults = {};
 			for(var i = 0; i < $.fn.drawr._dynamicsFields.length; i++){
@@ -2786,18 +3716,15 @@
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-spray mdi-24px",
 	name: "airbrush",
-	size: 20,
-	alpha: 0.5,
+	size: 100,
+	alpha: 1,
 	order: 3,
 	brush_fade_in: 10,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
 	smoothing: false,
-	flow: 0.5,
-	spacing: 0.05,
-	scatter: 0,
-	opacity_jitter: 0,
-	size_jitter: 0,
+	flow: 1,
+	spacing: 0.25,
 	rotation_mode: "none",
 	activate: function(brush,context){
 		brush._stampCache = null;
@@ -2834,55 +3761,6 @@ jQuery.fn.drawr.register({
 	}
 });
 jQuery.fn.drawr.register({
-	icon: "mdi mdi-brush mdi-24px",
-	name: "brush",
-	size: 6,
-	alpha: 1,
-	order: 4,
-	pressure_affects_alpha: true,
-	pressure_affects_size: true,
-	brush_fade_in: 20,
-	smoothing: true,
-	flow: 0.9,
-	spacing: 0.15,
-	opacity_jitter: 0.05,
-	rotation_mode: "none",
-	activate: function(brush,context){
-		brush._stampCache = null;
-		brush._stampCacheKey = null;
-	},
-	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,size,alpha,event){
-		context.globalCompositeOperation="source-over";
-		context.globalAlpha = alpha;
-	},
-	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-		var cacheKey = size + '|' + color.r + ',' + color.g + ',' + color.b;
-		if(brush._stampCacheKey !== cacheKey){
-			var sz = Math.max(1, size);
-			var buffer = document.createElement('canvas');
-			buffer.width = sz;
-			buffer.height = sz;
-			var bctx = buffer.getContext('2d');
-			var half = sz / 2;
-			var radgrad = bctx.createRadialGradient(half, half, 0, half, half, half);
-			radgrad.addColorStop(0, 'rgb(' + color.r + ',' + color.g + ',' + color.b + ')');
-			radgrad.addColorStop(0.5, 'rgba(' + color.r + ',' + color.g + ',' + color.b + ',0.5)');
-			radgrad.addColorStop(1, 'rgba(' + color.r + ',' + color.g + ',' + color.b + ',0)');
-			bctx.fillStyle = radgrad;
-			bctx.fillRect(0, 0, sz, sz);
-			brush._stampCache = buffer;
-			brush._stampCacheKey = cacheKey;
-		}
-		context.globalAlpha = alpha;
-		context.drawImage(brush._stampCache, x - size / 2, y - size / 2);
-	},
-	drawStop: function(brush,context,x,y,size,alpha,event){
-		return true;
-	}
-});
-jQuery.fn.drawr.register({
 	icon: "mdi mdi-plus mdi-24px",
 	name: "custom",
 	type: "toggle",
@@ -2894,9 +3772,9 @@ jQuery.fn.drawr.register({
 		var self = this;
 
 		self.$customToolbox = self.plugin.create_toolbox.call(self,"custom",
-			{ left: $(self).parent().offset().left + $(self).parent().innerWidth()/2,
-			  top:  $(self).parent().offset().top  + $(self).parent().innerHeight()/2 },
-			"Custom brush", 160);
+			{ left: self.$container.offset().left + self.$container.innerWidth()/2,
+			  top:  self.$container.offset().top  + self.$container.innerHeight()/2 },
+			"Custom brush", 240);
 
 		self.plugin.create_text.call(self, self.$customToolbox, "Create a new brush from an image.");
 
@@ -2928,16 +3806,17 @@ jQuery.fn.drawr.register({
 			{ value: "random_jitter",  label: "Random" },
 			{ value: "follow_jitter",  label: "Follow±" }
 		], "follow_stroke");
-		self._customSpacing    = self.plugin.create_slider.call(self, $adv, "spacing",    2, 200, 25);
-		self._customFlow       = self.plugin.create_slider.call(self, $adv, "flow",       0, 100, 100);
+		self._customSpacing    = self.plugin.create_slider.call(self, $adv, "spacing",    2, 200, 25, true);
+		self._customFlow       = self.plugin.create_slider.call(self, $adv, "flow",       0, 100, 100, true);
 		self._customSizeJit    = self.plugin.create_slider.call(self, $adv, "sizejitter", 0, 100, 0);
 		self._customOpJit      = self.plugin.create_slider.call(self, $adv, "opjitter",   0, 100, 0);
 		self._customAngleJit   = self.plugin.create_slider.call(self, $adv, "anglejit",   0, 100, 0);
 		self._customScatter    = self.plugin.create_slider.call(self, $adv, "scatter",    0, 100, 0);
-		self._customFixedAngle = self.plugin.create_slider.call(self, $adv, "angle",      0, 359, 0);
-		self._customSize       = self.plugin.create_slider.call(self, $adv, "basesize",   1, 100, 15);
-		self._customAlpha      = self.plugin.create_slider.call(self, $adv, "basealpha",  0, 100, 100);
+		self._customFixedAngle = self.plugin.create_slider.call(self, $adv, "angle",      0, 359, 0, true);
+		self._customSize       = self.plugin.create_slider.call(self, $adv, "basesize",   1, 100, 15, true);
+		self._customAlpha      = self.plugin.create_slider.call(self, $adv, "basealpha",  0, 100, 100, true);
 		self._customFadeIn     = self.plugin.create_slider.call(self, $adv, "fadein",     0, 200, 0);
+		self._customSizeMax    = self.plugin.create_slider.call(self, $adv, "sizemax",    1, 200, 20, true);
 		self._customSmoothing   = self.plugin.create_checkbox.call(self, $adv, "Smoothing",  false);
 		self._customPressureA   = self.plugin.create_checkbox.call(self, $adv, "PressureAlpha", true);
 		self._customPressureS   = self.plugin.create_checkbox.call(self, $adv, "PressureSize",  false);
@@ -2976,7 +3855,8 @@ jQuery.fn.drawr.register({
 				smoothing:      self._customSmoothing.prop("checked"),
 				brush_fade_in:  parseInt(self._customFadeIn.val()),
 				pressure_affects_alpha: self._customPressureA.prop("checked"),
-				pressure_affects_size:  self._customPressureS.prop("checked")
+				pressure_affects_size:  self._customPressureS.prop("checked"),
+				size_max: parseFloat(self._customSizeMax.val())
 			};
 
 			//persist first, then register + paint buttons on every active instance via reconcile.
@@ -3066,8 +3946,8 @@ jQuery.fn.drawr.register({
 	_effect: "blur",
 
 	//Note: the tool object is shared across all drawr instances on a page, so DOM refs MUST live on
-	//`self` (the canvas), not on `brush`. `brush._effect` itself is intentionally still global —
-	//tool config (like pencil's spacing) is shared by design — but we keep a list of every per-canvas
+	//`self` (the canvas), not on `brush`. `brush._effect` itself is intentionally still global
+	//tool config (like pencil's spacing) is shared by design but we keep a list of every per-canvas
 	//dropdown on the tool so a change in one canvas syncs the others.
 	buttonCreated: function(brush, button) {
 		var self = this;
@@ -3205,98 +4085,6 @@ jQuery.fn.drawr.register({
 });
 
 jQuery.fn.drawr.register({
-	icon: "mdi mdi-circle-outline mdi-24px",
-	name: "ellipse",
-	size: 3,
-	alpha: 1,
-	order: 10,
-	activate: function(brush, context) {},
-	deactivate: function(brush, context) {},
-	drawStart: function(brush, context, x, y, size, alpha, event) {
-		context.globalCompositeOperation = "source-over";
-		brush.currentAlpha = alpha;
-		brush.currentSize = size;
-		brush.startPosition = { x: x, y: y };
-		this.effectCallback = brush.effectCallback;
-		context.globalAlpha = alpha;
-		this.tempColor = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-	},
-	drawStop: function(brush, context, x, y, size, alpha, event) {
-		context.globalAlpha = alpha;
-		context.lineWidth = size;
-		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-		context.strokeStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
-		var angle = this.rotationAngle || 0;
-		var sx = brush.startPosition.x, sy = brush.startPosition.y;
-		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
-		if (angle) {
-			var cx = this.width / 2, cy = this.height / 2;
-			var cos = Math.cos(angle), sin = Math.sin(angle);
-			context.save();
-			context.translate(cx, cy);
-			context.rotate(-angle);
-			context.translate(-cx, -cy);
-			var dsx = sx - cx, dsy = sy - cy, dex = ex - cx, dey = ey - cy;
-			sx = cx + cos * dsx - sin * dsy;
-			sy = cy + sin * dsx + cos * dsy;
-			ex = cx + cos * dex - sin * dey;
-			ey = cy + sin * dex + cos * dey;
-		}
-		var ecx = (sx + ex) / 2, ecy = (sy + ey) / 2;
-		var rx = Math.abs(ex - sx) / 2, ry = Math.abs(ey - sy) / 2;
-		if (rx > 0 && ry > 0) {
-			context.beginPath();
-			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
-			context.stroke();
-		}
-		if (angle) { context.restore(); }
-		this.effectCallback = null;
-		return true;
-	},
-	drawSpot: function(brush, context, x, y, size, alpha, event) {
-		brush.currentPosition = { x: x, y: y };
-	},
-	effectCallback: function(context, brush, adjustx, adjusty, adjustzoom) {
-		var angle = this.rotationAngle || 0;
-		var sx, sy, ex, ey;
-		if (angle) {
-			var _W = this.width * adjustzoom;
-			var _H = this.height * adjustzoom;
-			var _cx = _W / 2 - adjustx;
-			var _cy = _H / 2 - adjusty;
-			context.save();
-			context.translate(_cx, _cy);
-			context.rotate(-angle);
-			context.translate(-_cx, -_cy);
-			var cos = Math.cos(angle), sin = Math.sin(angle);
-			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
-			var sRelX = brush.startPosition.x  - this.width / 2, sRelY = brush.startPosition.y  - this.height / 2;
-			var eRelX = brush.currentPosition.x - this.width / 2, eRelY = brush.currentPosition.y - this.height / 2;
-			sx = (cos * sRelX - sin * sRelY) * adjustzoom + halfW - adjustx;
-			sy = (sin * sRelX + cos * sRelY) * adjustzoom + halfH - adjusty;
-			ex = (cos * eRelX - sin * eRelY) * adjustzoom + halfW - adjustx;
-			ey = (sin * eRelX + cos * eRelY) * adjustzoom + halfH - adjusty;
-		} else {
-			sx = brush.startPosition.x  * adjustzoom - adjustx;
-			sy = brush.startPosition.y  * adjustzoom - adjusty;
-			ex = brush.currentPosition.x * adjustzoom - adjustx;
-			ey = brush.currentPosition.y * adjustzoom - adjusty;
-		}
-		var ecx = (sx + ex) / 2, ecy = (sy + ey) / 2;
-		var rx = Math.abs(ex - sx) / 2, ry = Math.abs(ey - sy) / 2;
-		if (rx > 0 && ry > 0) {
-			context.globalAlpha = brush.currentAlpha;
-			context.lineWidth = brush.currentSize * adjustzoom;
-			context.strokeStyle = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
-			context.beginPath();
-			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
-			context.stroke();
-		}
-		if (angle) { context.restore(); }
-	}
-});
-
-jQuery.fn.drawr.register({
 	icon: "mdi mdi-eraser mdi-24px",
 	name: "eraser",
 	size: 10,
@@ -3304,6 +4092,7 @@ jQuery.fn.drawr.register({
 	order: 5,
 	pressure_affects_alpha: true,
 	pressure_affects_size: true,
+	size_max: 20,
 	smoothing: false,
 	flow: 1,
 	spacing: 0.15,
@@ -3357,9 +4146,10 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-eyedropper mdi-24px",
 	name: "eyedropper",
 	order: 30,
+	raw_input: true,
 	activate: function(brush,context){},
 	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,size,alpha,event){	
+	drawStart: function(brush,context,x,y,size,alpha,event){
 
 		var rgb_to_hex = function(r, g, b) {
             var rgb = b | (g << 8) | (r << 16);
@@ -3367,7 +4157,15 @@ jQuery.fn.drawr.register({
         };
 
 		var self = this;
-		var raw = context.getImageData(x, y, 1, 1).data;
+		//with multiple layers, sample the composited pixel the user sees (respecting blend modes
+		//and per-layer opacity). single-layer falls through to the active context directly.
+		var raw;
+		if(self.layers && self.layers.length > 1){
+			var comp = self.plugin.composite_for_export.call(self);
+			raw = comp.getContext("2d", { alpha: self.settings.enable_transparency }).getImageData(Math.round(x), Math.round(y), 1, 1).data;
+		} else {
+			raw = context.getImageData(x, y, 1, 1).data;
+		}
 		var hex = rgb_to_hex(raw[0], raw[1], raw[2]);
 
 		if(this._activeButton === 2){
@@ -3468,240 +4266,355 @@ jQuery.fn.drawr.register({
 });
 
 jQuery.fn.drawr.register({
-	icon: "mdi mdi-circle mdi-24px",
-	name: "filledellipse",
-	size: 3,
-	alpha: 1,
-	order: 11,
-	activate: function(brush, context) {},
-	deactivate: function(brush, context) {},
-	drawStart: function(brush, context, x, y, size, alpha, event) {
-		context.globalCompositeOperation = "source-over";
-		brush.currentAlpha = alpha;
-		brush.startPosition = { x: x, y: y };
-		this.effectCallback = brush.effectCallback;
-		context.globalAlpha = alpha;
-		this.tempColor = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-	},
-	drawStop: function(brush, context, x, y, size, alpha, event) {
-		context.globalAlpha = alpha;
-		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-		context.fillStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
-		var angle = this.rotationAngle || 0;
-		var sx = brush.startPosition.x, sy = brush.startPosition.y;
-		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
-		if (angle) {
-			var cx = this.width / 2, cy = this.height / 2;
-			var cos = Math.cos(angle), sin = Math.sin(angle);
-			context.save();
-			context.translate(cx, cy);
-			context.rotate(-angle);
-			context.translate(-cx, -cy);
-			var dsx = sx - cx, dsy = sy - cy, dex = ex - cx, dey = ey - cy;
-			sx = cx + cos * dsx - sin * dsy;
-			sy = cy + sin * dsx + cos * dsy;
-			ex = cx + cos * dex - sin * dey;
-			ey = cy + sin * dex + cos * dey;
+	icon: "mdi mdi-layers mdi-24px",
+	name: "layers",
+	type: "toggle",
+	order: 34,
+	buttonCreated: function(brush, button){
+		var self = this;
+		var plugin = self.plugin;
+
+		self.$layersToolbox = plugin.create_toolbox.call(self, "layers", null, "Layers", 220);
+
+		//toolbar actions that operate on the active layer. built once; render() re-applies
+		//enabled/disabled state on every layer mutation.
+		var toolbarDefs = [
+			{ key:"add",       icon:"mdi-plus",                title:"Add layer"   },
+			{ key:"delete",    icon:"mdi-close",               title:"Delete layer" },
+			{ key:"clear",     icon:"mdi-delete",              title:"Clear layer" },
+			{ key:"paste",     icon:"mdi-content-paste",       title:"Paste clipboard image to active layer" },
+			{ key:"moveup",    icon:"mdi-arrow-up",            title:"Move layer up" },
+			{ key:"movedown",  icon:"mdi-arrow-down",          title:"Move layer down" },
+			{ key:"mergedown", icon:"mdi-arrow-collapse-down", title:"Merge down" }
+		];
+		var toolbarHtml = '<div class="drawr-layers-toolbar" style="display:flex;gap:2px;padding:4px 6px;border-bottom:1px solid rgba(255,255,255,0.1);align-items:center;">';
+		for(var i = 0; i < toolbarDefs.length; i++){
+			var d = toolbarDefs[i];
+			toolbarHtml += '<span class="drawr-layers-tb-' + d.key + ' mdi ' + d.icon + '" title="' + d.title + '" style="font-size:18px;width:24px;height:24px;line-height:24px;text-align:center;cursor:pointer;border-radius:3px;"></span>';
 		}
-		var ecx = (sx + ex) / 2, ecy = (sy + ey) / 2;
-		var rx = Math.abs(ex - sx) / 2, ry = Math.abs(ey - sy) / 2;
-		if (rx > 0 && ry > 0) {
-			context.beginPath();
-			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
-			context.fill();
+		toolbarHtml += '</div>';
+		self.$layersToolbox.append(toolbarHtml);
+		self.$layersToolbox.append('<div class="drawr-layers-rows" style="padding:4px 6px;"></div>');
+
+		var $toolbar = self.$layersToolbox.find('.drawr-layers-toolbar');
+		var $rows = self.$layersToolbox.find('.drawr-layers-rows');
+		var $tbAdd       = $toolbar.find('.drawr-layers-tb-add');
+		var $tbDelete    = $toolbar.find('.drawr-layers-tb-delete');
+		var $tbClear     = $toolbar.find('.drawr-layers-tb-clear');
+		var $tbPaste     = $toolbar.find('.drawr-layers-tb-paste');
+		var $tbMoveUp    = $toolbar.find('.drawr-layers-tb-moveup');
+		var $tbMoveDown  = $toolbar.find('.drawr-layers-tb-movedown');
+		var $tbMergeDown = $toolbar.find('.drawr-layers-tb-mergedown');
+
+		//apply enabled/disabled styling; returns the can-flag for handler short-circuits.
+		function setEnabled($btn, enabled){
+			$btn.css({
+				"opacity": enabled ? 1 : 0.3,
+				"cursor":  enabled ? "pointer" : "not-allowed"
+			});
+			$btn.data("enabled", !!enabled);
 		}
-		if (angle) { context.restore(); }
-		this.effectCallback = null;
-		return true;
+
+		//escape for safe interpolation of user-entered names into the html template.
+		function esc(s){
+			return String(s == null ? "" : s).replace(/[&<>"']/g, function(ch){
+				return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch];
+			});
+		}
+
+		//iOS Scribble activates when the Apple Pencil approaches any visible <input type=text>,
+		//which hijacks drawing strokes that happen to pass near the layer-name field. Workaround:
+		//keep the <input> display:none except while actively editing, and show a plain <span> in
+		//its place. A span is not a Scribble target, so pencil proximity is harmless; tap to edit
+		//still works because the span's click swaps in the real input and focuses it. (^_^)b
+		function makeScribbleSafe($input, onCommit){
+			var placeholder = $input.val() || "";
+			var $span = $('<span class="layer-name-display"></span>').css({
+				"flex": "1",
+				"min-width": "0",
+				"font-weight": "bold",
+				"font-size": "11px",
+				"color": "inherit",
+				"padding": "1px 3px",
+				"border": "1px solid transparent",
+				"border-radius": "2px",
+				"cursor": "text",
+				"text-align": "left",
+				"overflow": "hidden",
+				"text-overflow": "ellipsis",
+				"white-space": "nowrap"
+			}).text(placeholder);
+			$input.before($span).hide();
+			$span.on('pointerdown mousedown touchstart', function(e){ e.stopPropagation(); });
+			$span.on('click', function(e){
+				e.stopPropagation();
+				$span.hide();
+				$input.show();
+				//defer focus one tick so Safari/WebKit accepts the focus from a synthetic path.
+				setTimeout(function(){
+					$input.trigger('focus');
+					try { $input[0].select(); } catch(_){}
+				}, 0);
+			});
+			$input.on('blur.scribble', function(){
+				if(typeof onCommit === 'function') onCommit.call($input[0], $input.val());
+				$span.text($input.val() || placeholder);
+				$input.hide();
+				$span.show();
+			});
+		}
+
+		function blendOptionsHtml(current){
+			var modes = (plugin.BLEND_MODES || [{value:"normal",label:"Normal"},{value:"multiply",label:"Multiply"}]);
+			var html = "";
+			for(var i = 0; i < modes.length; i++){
+				var m = modes[i];
+				html += '<option value="' + m.value + '"' + (current === m.value ? ' selected' : '') + '>' + m.label + '</option>';
+			}
+			return html;
+		}
+
+		//toolbar handlers. read activeLayerIndex at click time so they always operate on
+		//whatever is currently selected.
+		$tbAdd.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var layer = plugin.add_layer.call(self, "normal");
+			if(layer){
+				plugin.set_active_layer.call(self, 0);
+				render();
+			}
+		});
+		$tbDelete.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var idx = self.activeLayerIndex;
+			var layer = self.layers[idx];
+			if(!layer) return;
+			if(!window.confirm("Delete \"" + (layer.name || "New layer") + "\"?")) return;
+			plugin.delete_layer.call(self, idx);
+			render();
+		});
+		$tbClear.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			var idx = self.activeLayerIndex;
+			var layer = self.layers[idx];
+			if(!layer) return;
+			if(!window.confirm("Clear \"" + (layer.name || "New layer") + "\"?")) return;
+			plugin.clear_layer.call(self, idx);
+		});
+
+		//grow all layer canvases to at least newW x newH, preserving pixels at (0,0). Used by
+		//paste when the clipboard image is larger than the current canvas. Existing layer 0
+		//content is preserved; any freshly exposed area on layer 0 gets white under
+		//no-transparency mode so paper coverage stays consistent with initialize_canvas.
+		function grow_canvas_preserving(newW, newH){
+			if(newW <= self.width && newH <= self.height) return false;
+			newW = Math.max(self.width, newW);
+			newH = Math.max(self.height, newH);
+			for(var li = 0; li < self.layers.length; li++){
+				var lc = self.layers[li].canvas;
+				var tmp = document.createElement("canvas");
+				tmp.width = lc.width;
+				tmp.height = lc.height;
+				tmp.getContext("2d").drawImage(lc, 0, 0);
+				//setting width/height clears the canvas; paint back after.
+				lc.width = newW;
+				lc.height = newH;
+				var lctx = lc.getContext("2d", { alpha: true });
+				if(li === 0 && self.settings.enable_transparency === false){
+					lctx.fillStyle = "white";
+					lctx.fillRect(0, 0, newW, newH);
+				}
+				lctx.drawImage(tmp, 0, 0);
+				self.layers[li].$el.width(newW * self.zoomFactor);
+				self.layers[li].$el.height(newH * self.zoomFactor);
+			}
+			plugin.draw_checkerboard.call(self);
+			return true;
+		}
+
+		//paste a clipboard image onto the active layer. grows the canvas (preserving all
+		//layers) if the image doesn't fit, then re-centers so the enlarged artwork is visible.
+		//needs navigator.clipboard.read, which requires a user gesture (the click satisfies
+		//this) and clipboard-read permission. no prompt on resize, per user preference.
+		$tbPaste.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			if(!navigator.clipboard || !navigator.clipboard.read){
+				window.alert("Clipboard read is not supported in this browser.");
+				return;
+			}
+			navigator.clipboard.read().then(function(items){
+				//find the first image/* blob across all clipboard items.
+				for(var i = 0; i < items.length; i++){
+					var types = items[i].types || [];
+					for(var j = 0; j < types.length; j++){
+						if(/^image\//.test(types[j])){
+							return items[i].getType(types[j]);
+						}
+					}
+				}
+				return null;
+			}).then(function(blob){
+				if(!blob){ window.alert("No image found on the clipboard."); return; }
+				var url = URL.createObjectURL(blob);
+				var img = new Image();
+				img.onload = function(){
+					URL.revokeObjectURL(url);
+					//snapshot active layer BEFORE mutation so undo restores the pre-paste state.
+					plugin.record_undo_entry.call(self);
+					var grew = grow_canvas_preserving(img.width, img.height);
+					var actx = plugin.active_context.call(self);
+					actx.save();
+					actx.globalCompositeOperation = "source-over";
+					actx.globalAlpha = 1;
+					actx.drawImage(img, 0, 0);
+					actx.restore();
+					//if we resized, re-center like the load action does so the user sees
+					//the newly enlarged canvas instead of staring at an offset corner.
+					if(grew){
+						var cx = (self.width  - self.containerWidth)  / 2;
+						var cy = (self.height - self.containerHeight) / 2;
+						plugin.apply_scroll.call(self, cx, cy, false);
+					}
+				};
+				img.onerror = function(){
+					URL.revokeObjectURL(url);
+					window.alert("Could not decode the clipboard image.");
+				};
+				img.src = url;
+			}).catch(function(err){
+				window.alert("Could not read the clipboard: " + (err && err.message ? err.message : err));
+			});
+		});
+
+		$tbMoveUp.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.move_layer_down.call(self, self.activeLayerIndex + 1);
+			render();
+		});
+		$tbMoveDown.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.move_layer_down.call(self, self.activeLayerIndex);
+			render();
+		});
+		$tbMergeDown.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			plugin.merge_layer_down.call(self, self.activeLayerIndex);
+			render();
+		});
+
+		//render the row list. top-of-stack first (Photoshop convention).
+		function render(){
+			$rows.empty();
+			var activeIdx = self.activeLayerIndex;
+
+			//toolbar enable/disable based on the active layer.
+			setEnabled($tbAdd,       self.layers.length < plugin.MAX_LAYERS);
+			setEnabled($tbDelete,    self.layers.length > 1);
+			setEnabled($tbClear,     true);
+			setEnabled($tbPaste,     true);
+			setEnabled($tbMoveUp,    activeIdx < self.layers.length - 1);
+			setEnabled($tbMoveDown,  activeIdx > 0);
+			setEnabled($tbMergeDown, activeIdx > 0);
+
+			for(var visualIndex = self.layers.length - 1; visualIndex >= 0; visualIndex--){
+				(function(idx){
+					var layer = self.layers[idx];
+					var isActive = idx === activeIdx;
+					var $row = $(
+						'<div class="drawr-layer-row" data-idx="' + idx + '" style="' +
+							'display:flex;flex-direction:column;gap:2px;padding:4px 6px;margin-bottom:3px;border-radius:3px;cursor:pointer;' +
+							'background:' + (isActive ? 'rgba(255,165,0,0.25)' : 'rgba(255,255,255,0.05)') + ';' +
+							'border:1px solid ' + (isActive ? 'orange' : 'rgba(255,255,255,0.12)') + ';' +
+						'">' +
+							'<div style="display:flex;align-items:center;gap:4px;">' +
+								'<span class="layer-vis mdi ' + (layer.visible ? 'mdi-eye' : 'mdi-eye-off') + '" title="Toggle visibility" style="cursor:pointer;font-size:16px;width:18px;text-align:center;"></span>' +
+								'<input class="layer-name" type="text" value="' + esc(layer.name || "New layer") + '" ' +
+									'style="flex:1;min-width:0;font-weight:bold;font-size:11px;background:transparent;border:1px solid transparent;color:inherit;padding:1px 3px;border-radius:2px;">' +
+							'</div>' +
+							'<div style="display:flex;align-items:center;gap:4px;">' +
+								'<select class="layer-mode" style="flex:1;color:#333;font-size:11px;">' +
+									blendOptionsHtml(layer.mode) +
+								'</select>' +
+								'<input class="layer-opacity" type="range" min="0" max="100" value="' + Math.round(layer.opacity * 100) + '" style="flex:1;min-width:0;height:14px;margin:0;">' +
+								'<span class="layer-opacity-label" style="min-width:26px;text-align:right;font-size:10px;font-variant-numeric:tabular-nums;">' + Math.round(layer.opacity * 100) + '</span>' +
+							'</div>' +
+						'</div>'
+					);
+
+					//row click sets active (but ignore clicks on controls inside the row)
+					$row.on('pointerdown', function(e){
+						if($(e.target).is('.layer-vis, .layer-name, .layer-name-display, select, input, option')) return;
+						plugin.set_active_layer.call(self, idx);
+						render();
+						e.stopPropagation();
+					});
+
+					$row.find('.layer-vis').on('click', function(e){
+						e.stopPropagation();
+						plugin.set_layer_visibility.call(self, idx, !layer.visible);
+						render();
+					});
+
+					//name input keyboard-focused editing. swallow pointer/key events so the
+					//row-click handler and the global toolbox-drag don't interfere.
+					var $name = $row.find('.layer-name')
+						.on('pointerdown mousedown touchstart keydown', function(e){ e.stopPropagation(); })
+						.on('focus', function(){ $(this).css('border-color', 'rgba(255,255,255,0.4)'); })
+						.on('blur', function(){
+							$(this).css('border-color', 'transparent');
+							plugin.set_layer_name.call(self, idx, this.value || "New layer");
+							if(!this.value) this.value = "New layer";
+						})
+						.on('keydown', function(e){ if(e.key === 'Enter') this.blur(); });
+					makeScribbleSafe($name);
+
+					$row.find('.layer-mode').on('change', function(e){
+						e.stopPropagation();
+						plugin.set_layer_mode.call(self, idx, this.value);
+					}).on('pointerdown', function(e){ e.stopPropagation(); });
+
+					$row.find('.layer-opacity').on('input', function(e){
+						e.stopPropagation();
+						var v = parseInt(this.value, 10) / 100;
+						plugin.set_layer_opacity.call(self, idx, v);
+						$row.find('.layer-opacity-label').text(Math.round(v * 100));
+					}).on('pointerdown', function(e){ e.stopPropagation(); });
+
+					$rows.append($row);
+				})(visualIndex);
+			}
+		}
+
+		//expose for external callers (e.g. the panel should refresh when something else mutates layers).
+		self._layersPanelRender = render;
+		render();
 	},
-	drawSpot: function(brush, context, x, y, size, alpha, event) {
-		brush.currentPosition = { x: x, y: y };
-	},
-	effectCallback: function(context, brush, adjustx, adjusty, adjustzoom) {
-		var angle = this.rotationAngle || 0;
-		var sx, sy, ex, ey;
-		if (angle) {
-			var _W = this.width * adjustzoom;
-			var _H = this.height * adjustzoom;
-			var _cx = _W / 2 - adjustx;
-			var _cy = _H / 2 - adjusty;
-			context.save();
-			context.translate(_cx, _cy);
-			context.rotate(-angle);
-			context.translate(-_cx, -_cy);
-			var cos = Math.cos(angle), sin = Math.sin(angle);
-			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
-			var sRelX = brush.startPosition.x  - this.width / 2, sRelY = brush.startPosition.y  - this.height / 2;
-			var eRelX = brush.currentPosition.x - this.width / 2, eRelY = brush.currentPosition.y - this.height / 2;
-			sx = (cos * sRelX - sin * sRelY) * adjustzoom + halfW - adjustx;
-			sy = (sin * sRelX + cos * sRelY) * adjustzoom + halfH - adjusty;
-			ex = (cos * eRelX - sin * eRelY) * adjustzoom + halfW - adjustx;
-			ey = (sin * eRelX + cos * eRelY) * adjustzoom + halfH - adjusty;
+	action: function(brush, context){
+		var self = this;
+		if(typeof self._layersPanelRender === "function") self._layersPanelRender();
+		if(self.$layersToolbox.is(":visible")){
+			self.$layersToolbox.hide();
 		} else {
-			sx = brush.startPosition.x  * adjustzoom - adjustx;
-			sy = brush.startPosition.y  * adjustzoom - adjusty;
-			ex = brush.currentPosition.x * adjustzoom - adjustx;
-			ey = brush.currentPosition.y * adjustzoom - adjusty;
+			self.plugin.show_toolbox.call(self, self.$layersToolbox);
 		}
-		var ecx = (sx + ex) / 2, ecy = (sy + ey) / 2;
-		var rx = Math.abs(ex - sx) / 2, ry = Math.abs(ey - sy) / 2;
-		if (rx > 0 && ry > 0) {
-			context.globalAlpha = brush.currentAlpha;
-			context.fillStyle = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
-			context.beginPath();
-			context.ellipse(ecx, ecy, rx, ry, 0, 0, 2 * Math.PI);
-			context.fill();
+	},
+	cleanup: function(){
+		var self = this;
+		if(self.$layersToolbox){
+			self.$layersToolbox.remove();
+			delete self.$layersToolbox;
 		}
-		if (angle) { context.restore(); }
+		delete self._layersPanelRender;
 	}
 });
 
-jQuery.fn.drawr.register({
-	icon: "mdi mdi-square mdi-24px",
-	name: "filledsquare",
-	size: 3,
-	alpha: 1,
-	order: 8,
-	activate: function(brush,context){
-
-	},
-	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,size,alpha,event){
-		context.globalCompositeOperation="source-over";
-		brush.currentAlpha = alpha;
-		brush.startPosition = {
-			"x" : x,
-			"y" : y
-		};
-		this.effectCallback = brush.effectCallback;
-		context.globalAlpha=alpha;
-		context.lineWidth = size;
-		this.tempColor = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-	},
-	drawStop: function(brush,context,x,y,size,alpha,event){
-		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-		context.globalAlpha=alpha;
-		context.lineJoin = 'miter';
-		context.lineWidth = size;
-		context.fillStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
-		var angle = this.rotationAngle || 0;
-		var sx = brush.startPosition.x, sy = brush.startPosition.y;
-		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
-		if(angle){
-			var cx = this.width/2, cy = this.height/2;
-			var cos = Math.cos(angle), sin = Math.sin(angle);
-			context.save();
-			context.translate(cx, cy);
-			context.rotate(-angle);
-			context.translate(-cx, -cy);
-			var dsx = sx-cx, dsy = sy-cy, dex = ex-cx, dey = ey-cy;
-			sx = cx + cos*dsx - sin*dsy;
-			sy = cy + sin*dsx + cos*dsy;
-			ex = cx + cos*dex - sin*dey;
-			ey = cy + sin*dex + cos*dey;
-		}
-		context.fillRect(sx, sy, ex-sx, ey-sy);
-		if(angle){ context.restore(); }
-
-		this.effectCallback = null;
-		return true;
-	},
-	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		brush.currentPosition = {
-			"x" : x,
-			"y" : y
-		};
-	},
-	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
-		var angle = this.rotationAngle || 0;
-		var sx, sy, ex, ey;
-		if(angle){
-			var _W = this.width * adjustzoom;
-			var _H = this.height * adjustzoom;
-			var _cx = _W / 2 - adjustx;
-			var _cy = _H / 2 - adjusty;
-			context.save();
-			context.translate(_cx, _cy);
-			context.rotate(-angle);
-			context.translate(-_cx, -_cy);
-			var cos = Math.cos(angle), sin = Math.sin(angle);
-			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
-			var sRelX = brush.startPosition.x  - this.width/2, sRelY = brush.startPosition.y  - this.height/2;
-			var eRelX = brush.currentPosition.x - this.width/2, eRelY = brush.currentPosition.y - this.height/2;
-			sx = (cos*sRelX - sin*sRelY) * adjustzoom + halfW - adjustx;
-			sy = (sin*sRelX + cos*sRelY) * adjustzoom + halfH - adjusty;
-			ex = (cos*eRelX - sin*eRelY) * adjustzoom + halfW - adjustx;
-			ey = (sin*eRelX + cos*eRelY) * adjustzoom + halfH - adjusty;
-		} else {
-			sx = brush.startPosition.x  * adjustzoom - adjustx;
-			sy = brush.startPosition.y  * adjustzoom - adjusty;
-			ex = brush.currentPosition.x * adjustzoom - adjustx;
-			ey = brush.currentPosition.y * adjustzoom - adjusty;
-		}
-		context.globalAlpha=brush.currentAlpha;
-		context.lineJoin = 'miter';
-		context.fillStyle = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
-		context.fillRect(sx, sy, ex-sx, ey-sy);
-		if(angle){ context.restore(); }
-	}
-});
-
-//effectCallback
-jQuery.fn.drawr.register({
-	icon: "mdi mdi-vector-line mdi-24px",
-	name: "line",
-	size: 3,
-	alpha: 1,
-	order: 9,
-	activate: function(brush,context){
-
-	},
-	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,size,alpha,event){
-		context.globalCompositeOperation="source-over";
-		brush.currentAlpha = alpha;
-		brush.lineWidth = context.lineWidth = size;
-		brush.startPosition = {
-			"x" : x,
-			"y" : y
-		};
-		context.beginPath();
-		context.moveTo(x, y);
-		this.effectCallback = brush.effectCallback;
-		context.globalAlpha=alpha;
-		context.lineWidth = size;
-		this.tempColor = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-	},
-	drawStop: function(brush,context,x,y,size,alpha,event){
-		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-		context.globalAlpha=alpha;
-		context.lineJoin = 'miter';
-		context.strokeStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
-		context.lineTo(brush.currentPosition.x, brush.currentPosition.y);
-		context.stroke();
-
-		this.effectCallback = null;
-		return true;
-	},
-	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		brush.currentPosition = {
-			"x" : x,
-			"y" : y
-		};
-	},
-	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
-		context.globalAlpha=brush.currentAlpha;
-		context.lineJoin = 'miter';
-		context.lineWidth = brush.lineWidth*adjustzoom;
-		context.strokeStyle = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
-		context.beginPath();
-		context.moveTo((brush.startPosition.x*adjustzoom)-adjustx, (brush.startPosition.y*adjustzoom)-adjusty);
-		context.lineTo((brush.currentPosition.x*adjustzoom)-adjustx, (brush.currentPosition.y*adjustzoom)-adjusty);
-		context.stroke();
-	}
-});
-
-//effectCallback
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-folder-open mdi-24px",
 	name: "load",
@@ -3713,8 +4626,8 @@ jQuery.fn.drawr.register({
 		var self = this;
 
 		self.$loadToolbox = self.plugin.create_toolbox.call(self,"load",
-			{ left: $(self).parent().offset().left + $(self).parent().innerWidth()/2,
-			  top:  $(self).parent().offset().top  + $(self).parent().innerHeight()/2 },
+			{ left: self.$container.offset().left + self.$container.innerWidth()/2,
+			  top:  self.$container.offset().top  + self.$container.innerHeight()/2 },
 			"Load image", 160);
 
 		self.plugin.create_text.call(self, self.$loadToolbox, "Load an image onto the canvas.");
@@ -3742,9 +4655,27 @@ jQuery.fn.drawr.register({
 				var img = document.createElement("img");
 				img.crossOrigin = "Anonymous";
 				img.onload = function(){
-					var ctx = self.getContext("2d", { alpha: self.settings.enable_transparency });
+					//load replaces the active layer (when layers are active). single-layer falls
+					//through to the main canvas context as before. drop history and push a
+					//sticky baseline so undo can step back through subsequent strokes but not
+					//past the load itself.
+					var ctx = self.plugin.active_context.call(self);
+					//reset compositing state: the last tool's drawStart may have left behind a
+					//non-default globalAlpha or globalCompositeOperation, which would otherwise
+					//stamp the loaded image at e.g. 30% opacity or in destination-out mode.
+					ctx.globalCompositeOperation = "source-over";
+					ctx.globalAlpha = 1;
 					ctx.drawImage(img, 0, 0);
-					self.plugin.record_undo_entry.call(self);
+					self.undoStack = [];
+					self.redoStack = [];
+					var _l = self.layers[self.activeLayerIndex];
+					self.undoStack.push({
+						data: _l.canvas.toDataURL("image/png"),
+						layerId: _l.id,
+						sticky: true
+					});
+					if(typeof self.$undoButton !== "undefined") self.$undoButton.css("opacity", 0.5);
+					if(typeof self.$redoButton !== "undefined") self.$redoButton.css("opacity", 0.5);
 				};
 				img.src = dataUrl;
 			}
@@ -3854,102 +4785,104 @@ jQuery.fn.drawr.register({
 	icon: "mdi mdi-cursor-move mdi-24px",
 	name: "move",
 	order: 13,
+	raw_input: true,
 	activate: function(brush,context){
-		$(this).parent().css({"cursor":"move"});//"overflow":"scroll",
+		this.$container.css({"cursor":"move"});
 	},
 	deactivate: function(brush,context){
-	    $(this).parent().css({"cursor":"default"});//"overflow":"hidden",
+		this.$container.css({"cursor":"default"});
 	},
 	drawStart: function(brush,context,x,y,size,alpha,event){
 		context.globalCompositeOperation="source-over";
-		brush.dragStartX=null;brush.scrollStartX=null;
-		brush.dragStartY=null;brush.scrollStartY=null;
+		var self = this;
 
+		var eventX, eventY;
 		if(event.type=="touchmove" || event.type=="touchstart"){
-			x = event.originalEvent.touches[0].pageX;
-			y = event.originalEvent.touches[0].pageY;
+			eventX = event.originalEvent.touches[0].pageX;
+			eventY = event.originalEvent.touches[0].pageY;
 		} else {
-			x = event.pageX;
-			y = event.pageY;
+			eventX = event.pageX;
+			eventY = event.pageY;
 		}
 
-		brush.dragStartX=x;
-		brush.scrollStartX=this.scrollX;
-		brush.dragStartY=y;
-		brush.scrollStartY=this.scrollY;
+		//right-click rotates, anything else pans. _activeButton is stamped on pointerdown
+		//so we can recover it during pointermove where event.button is unreliable.
+		brush.mode = (event.button === 2) ? "rotate" : "pan";
+
+		if(brush.mode === "pan"){
+			brush.dragStartX = eventX;
+			brush.scrollStartX = self.scrollX;
+			brush.dragStartY = eventY;
+			brush.scrollStartY = self.scrollY;
+		} else {
+			var parent = self.$container[0];
+			var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
+			var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
+			var box = parent.getBoundingClientRect();
+			var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
+			var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
+			var W = self.width * self.zoomFactor;
+			var H = self.height * self.zoomFactor;
+			var cx = W / 2 - self.scrollX;
+			var cy = H / 2 - self.scrollY;
+			brush.startAngle = Math.atan2(py - cy, px - cx);
+			brush.startRotation = self.rotationAngle || 0;
+		}
 	},
 	drawSpot: function(brush,context,x,y,size,alpha,event) {
 		var self = this;
 
+		var eventX, eventY;
 		if(event.type=="touchmove" || event.type=="touchstart"){
-			x = event.originalEvent.touches[0].pageX;
-			y = event.originalEvent.touches[0].pageY;
+			eventX = event.originalEvent.touches[0].pageX;
+			eventY = event.originalEvent.touches[0].pageY;
 		} else {
-			x = event.pageX;
-			y = event.pageY;
+			eventX = event.pageX;
+			eventY = event.pageY;
 		}
 
-		var diffx = parseInt(-(x - brush.dragStartX));
-		var diffy = parseInt(-(y - brush.dragStartY));
-
-		self.plugin.apply_scroll.call(self,brush.scrollStartX + diffx,brush.scrollStartY + diffy,true);
-		//$(this).parent()[0].scrollLeft = brush.scrollStartX + diffx;
-		//$(this).parent()[0].scrollTop = brush.scrollStartY + diffy;
+		if(brush.mode === "rotate"){
+			var parent = self.$container[0];
+			var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
+			var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
+			var box = parent.getBoundingClientRect();
+			var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
+			var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
+			var W = self.width * self.zoomFactor;
+			var H = self.height * self.zoomFactor;
+			var cx = W / 2 - self.scrollX;
+			var cy = H / 2 - self.scrollY;
+			var currentAngle = Math.atan2(py - cy, px - cx);
+			var delta = currentAngle - brush.startAngle;
+			self.plugin.apply_rotation.call(self, brush.startRotation + delta, true);
+		} else {
+			var diffx = parseInt(-(eventX - brush.dragStartX));
+			var diffy = parseInt(-(eventY - brush.dragStartY));
+			self.plugin.apply_scroll.call(self, brush.scrollStartX + diffx, brush.scrollStartY + diffy, true);
+		}
 	}
 });
 
 jQuery.fn.drawr.register({
-	icon: "mdi mdi-fountain-pen-tip mdi-24px",
-	name: "pen",
-	size: 3,
+	icon: "mdi mdi-brush mdi-24px",
+	name: "paintbrush",
+	size: 5,
 	alpha: 1,
-	order: 2,
-	pressure_affects_alpha: false,
-	pressure_affects_size: true,
-	smoothing: true,
-	flow: 1,
-	spacing: 0.1,
-	rotation_mode: "none",
-	activate: function(brush,context){},
-	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,size,alpha,event){
-		context.globalCompositeOperation="source-over";
-		context.globalAlpha=alpha;
-	},
-	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-		context.globalAlpha=alpha;
-    	context.fillStyle = 'rgb(' + color.r + ',' + color.g + ',' + color.b + ')';
-		context.beginPath();
-		context.arc(x,y, size/2, 0, 2 * Math.PI);
-		context.fill();
-	},
-	drawStop: function(brush,context,x,y,size,alpha,event){
-		return true;
-	}
-});
-jQuery.fn.drawr.register({
-	icon: "mdi mdi-lead-pencil mdi-24px",
-	name: "pencil",
-	size: 3,
-	alpha: 1,
-	order: 1,
-	brush_fade_in: 20,
+	order: 4,
+	brush_fade_in: 10,
 	pressure_affects_alpha: true,
 	pressure_affects_size: false,
-	smoothing: false,
-	flow: 0.9,
-	spacing: 0.2,
-	size_jitter: 0.15,
-	opacity_jitter: 0.2,
-	rotation_mode: "random_jitter",
-	angle_jitter: 1,
+	smoothing: true,
+	flow: 0.5,
+	angle: 90,
+	spacing: 0.15,
+	rotation_mode: "fixed",
 	activate: function(brush,context){
 		brush._rawImage = new Image();
 		brush._rawImage.crossOrigin = "Anonymous";
 		brush._stampCache = null;
 		brush._stampCacheKey = null;
-		var pencilImg="data:image/png;base64,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";
+		var pencilImg="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABqCAQAAACmV58FAAAAznpUWHRSYXcgcHJvZmlsZSB0eXBlIGV4aWYAAHjabVFbEsIwCPznFB4hAUrhOKmtM97A40sCaqMyk+WxmQ0QOB73G1y6ISnwsqqYSHFjY8PmgZawNrAWHjiMk/J8qoO0JNBL5J4iVcn7r3p9C4RrHi0nIb0msc2E5dOoX0IYjnpHPd5TyFKIMIiaAi07FdP1PMJ2lNk0DnRgndv+yVff3r74O4R4UKXiSCTRAPUjQM0DdkS/5DOQRRyYO/OF/NtT6T+T3cL0E/QhxlhtngKeR1ljAjMOFF8AAAEiaUNDUElDQyBwcm9maWxlAAB4nJ2Qv0rDUBTGf63FiuhU6SAOGVw7tpOD/zA4FGoaweqU3rRYTGJIUopv4JvYh+kgCD6Eo4Kz340ODmbxwuH7cTjn++69UHciE+eNQ4iTInO9o9HV6NppvtGgTZMW3cDkaX945lN5Pl+pWX3pWK/quT/PejjJjXSlSkyaFVA7EPcWRWpZxc6d752IH8VOGCeheCneD+PQst314mhufjztbbYmyeXQ9lV7uJzTZ4DDmDkzIgo60kSdU3p0pS4ZAQ/kGGnERL2FZgpuRbmcXI5Fvki3qcjbLfMGShnLYyYvm3BPLE+bh/3f77WPi3Kz1l6lQRaUrTVVfTqF9yfYHkHrGTZvKrI2fr+tYqZXzvzzjV8/qlCQQ7zFxQAADXZpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+Cjx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IlhNUCBDb3JlIDQuNC4wLUV4aXYyIj4KIDxyZGY6UkRGIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CiAgPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIKICAgIHhtbG5zOnhtcE1NPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvbW0vIgogICAgeG1sbnM6c3RFdnQ9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZUV2ZW50IyIKICAgIHhtbG5zOmRjPSJodHRwOi8vcHVybC5vcmcvZGMvZWxlbWVudHMvMS4xLyIKICAgIHhtbG5zOkdJTVA9Imh0dHA6Ly93d3cuZ2ltcC5vcmcveG1wLyIKICAgIHhtbG5zOnRpZmY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vdGlmZi8xLjAvIgogICAgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIgogICB4bXBNTTpEb2N1bWVudElEPSJnaW1wOmRvY2lkOmdpbXA6OWJiNzJiOWMtYzJkZS00ODEzLTlkOGYtZWUwMmNlODNkNTA1IgogICB4bXBNTTpJbnN0YW5jZUlEPSJ4bXAuaWlkOmI1OWRlZjI1LTFkNzQtNGQ2Zi05ZTZiLTkwYThjNGY2MDUyZCIKICAgeG1wTU06T3JpZ2luYWxEb2N1bWVudElEPSJ4bXAuZGlkOjE4MjE5ZjAwLTliODYtNGFiZS05ODlkLWQ5M2QxNWIzZDQ3NSIKICAgZGM6Rm9ybWF0PSJpbWFnZS9wbmciCiAgIEdJTVA6QVBJPSIyLjAiCiAgIEdJTVA6UGxhdGZvcm09IldpbmRvd3MiCiAgIEdJTVA6VGltZVN0YW1wPSIxNzc2ODQyNTQyOTEyMDMwIgogICBHSU1QOlZlcnNpb249IjIuMTAuMzYiCiAgIHRpZmY6T3JpZW50YXRpb249IjEiCiAgIHhtcDpDcmVhdG9yVG9vbD0iR0lNUCAyLjEwIgogICB4bXA6TWV0YWRhdGFEYXRlPSIyMDI2OjA0OjIyVDA5OjIyOjIyKzAyOjAwIgogICB4bXA6TW9kaWZ5RGF0ZT0iMjAyNjowNDoyMlQwOToyMjoyMiswMjowMCI+CiAgIDx4bXBNTTpIaXN0b3J5PgogICAgPHJkZjpTZXE+CiAgICAgPHJkZjpsaQogICAgICBzdEV2dDphY3Rpb249InNhdmVkIgogICAgICBzdEV2dDpjaGFuZ2VkPSIvIgogICAgICBzdEV2dDppbnN0YW5jZUlEPSJ4bXAuaWlkOmVkYzkxN2FlLTZlMGUtNDM2Mi1hOWNjLThlM2ZlYThiMmEwNCIKICAgICAgc3RFdnQ6c29mdHdhcmVBZ2VudD0iR2ltcCAyLjEwIChXaW5kb3dzKSIKICAgICAgc3RFdnQ6d2hlbj0iMjAyNi0wNC0yMlQwOToyMjoyMiIvPgogICAgPC9yZGY6U2VxPgogICA8L3htcE1NOkhpc3Rvcnk+CiAgPC9yZGY6RGVzY3JpcHRpb24+CiA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgCjw/eHBhY2tldCBlbmQ9InciPz7FatumAAAAAmJLR0QAagfqq3QAAAAJcEhZcwAACxMAAAsTAQCanBgAAAAHdElNRQfqBBYHFhYW+irEAAAJXElEQVRo3r1b23bqug6ddpwLAUrX0/n/vztve7VcArlpP1iW5QQolLDx6FhjNKxo6i5LqsEvPgQYAAZGfkHx1899zC9IGxhYIW+E/AgCgcy7ABBgYOUYWP7/BGAEYZTzBIiHv0meeMYngDCsAE944PMECPMg7564g4NDBicgDPMfiPd8BowYzTIAyAjxnI8TCMEEA/GOD4Mw9NPb3UPkHRwKdQIEyyrw/Hfo0Mqx6NDTjxDcj+QzOOQoUaBCySdHMQPQo0OLC58MGQwMehruQ3APkC9QosKKfypUKJAjZyIkADz5M844w6FhP8F9CO6u6WVwKFFihRo1VqixwgoVShSsBMMm2DOAMxo0yFk+bCP3FOF+JF9hhbWcFWqRgWMSJAo444wGJxTIFQCgo8E8B4AAy8JfYaNOjTVWKFGgYBV4G+jR4YILGpxQsoIs+xiBQHTDKd1N9/Smt8IaG3xgiw9ssWEpeEMMEhgZQIszGlZQzlGCyYPQgR4GQAaZkN/iAzvs8IEtttigxgpVIgEfhjq0aNCwghxHiWCiI8brxujuiH+FGhtsscMnPrHDBzbY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";
 		brush._rawImage.src = pencilImg;
 	},
 	deactivate: function(brush,context){},
@@ -3974,7 +4907,109 @@ jQuery.fn.drawr.register({
 	    context.restore();
 	},
 	//angle is resolved by the engine's emit_spot from brush.rotation_mode. pencil's default is
-	//"random_jitter" so every stamp comes in rotated by the engine — no local randomisation needed.
+	//"random_jitter" so every stamp comes in rotated by the engine. no local randomisation needed.
+	drawSpot: function(brush,context,x,y,size,alpha,event,angle) {
+		if(!brush._rawImage || !brush._rawImage.complete) return;
+		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
+		var cacheKey = color.r + "," + color.g + "," + color.b;
+		if(brush._stampCacheKey !== cacheKey){
+			var img = brush._rawImage;
+			var buffer = document.createElement("canvas");
+			buffer.width = img.width;
+			buffer.height = img.height;
+			var bctx = buffer.getContext("2d");
+			bctx.fillStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
+			bctx.fillRect(0, 0, img.width, img.height);
+			bctx.globalCompositeOperation = "destination-atop";
+			bctx.drawImage(img, 0, 0);
+			brush._stampCache = buffer;
+			brush._stampCacheKey = cacheKey;
+		}
+		context.globalAlpha = alpha;
+		var calculated_size = parseInt(size);
+		if(calculated_size<2) calculated_size = 2;
+		brush.drawRotatedImage(context, brush._stampCache, x, y, angle || 0, calculated_size);
+	},
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		return true;
+	}
+});
+
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-fountain-pen-tip mdi-24px",
+	name: "pen",
+	size: 1,
+	alpha: 1,
+	order: 2,
+	pressure_affects_alpha: false,
+	pressure_affects_size: true,
+	size_max: 3,
+	smoothing: true,
+	flow: 1,
+	spacing: 0.25,
+	rotation_mode: "none",
+	activate: function(brush,context){},
+	deactivate: function(brush,context){},
+	drawStart: function(brush,context,x,y,size,alpha,event){
+		context.globalCompositeOperation="source-over";
+		context.globalAlpha=alpha;
+	},
+	drawSpot: function(brush,context,x,y,size,alpha,event) {
+		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
+		context.globalAlpha=alpha;
+    	context.fillStyle = 'rgb(' + color.r + ',' + color.g + ',' + color.b + ')';
+		context.beginPath();
+		context.arc(x,y, size/2, 0, 2 * Math.PI);
+		context.fill();
+	},
+	drawStop: function(brush,context,x,y,size,alpha,event){
+		return true;
+	}
+});
+jQuery.fn.drawr.register({
+	icon: "mdi mdi-lead-pencil mdi-24px",
+	name: "pencil",
+	size: 2,
+	alpha: 1,
+	order: 1,
+	brush_fade_in: 25,
+	pressure_affects_alpha: true,
+	pressure_affects_size: false,
+	smoothing: true,
+	flow: 0.9,
+	spacing: 0.25,
+	rotation_mode: "follow_stroke",
+	activate: function(brush,context){
+		brush._rawImage = new Image();
+		brush._rawImage.crossOrigin = "Anonymous";
+		brush._stampCache = null;
+		brush._stampCacheKey = null;
+		var pencilImg="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABKCAYAAAAL8lK4AAAAxHpUWHRSYXcgcHJvZmlsZSB0eXBlIGV4aWYAAHjabVBRDsMgCP33FDuCAkU8jl27ZDfY8fcU2rTLXuITeOSJpP3zfqXHABVJslTTppoBadKoI7Ds6JNLlskTEhLyWz1JD4FQYtzsqWn0H/VyGvjVES0XI3uGsN6FFk+T/RjFQzwmIgRbGLUwYnKhhEGPSbVZvX5h3fMd5icN4jq9T5PfXCq2ty0oMtHOhTOYWX0AHkcTdwQCJi6jEW0jVueYBAv5t6cD6QsowllMzCBlqwAAAYVpQ0NQSUNDIHByb2ZpbGUAAHicfZG/S8NAHMVf00pFqg6tIMUhQ3Wyi4o4lioWwUJpK7TqYHLpL2jSkKS4OAquBQd/LFYdXJx1dXAVBMEfIP4B4qToIiV+Lym0iPXguA/v7j3u3gFCs8pU0xcDVM0y0om4mMuviv5X+DCCIMIYkpipJzOLWfQcX/fw8PUuyrN6n/tzDCoFkwEekTjGdMMi3iCe3bR0zvvEIVaWFOJz4kmDLkj8yHXZ5TfOJYcFnhkysul54hCxWOpiuYtZ2VCJZ4gjiqpRvpBzWeG8xVmt1ln7nvyFgYK2kuE6zTEksIQkUhAho44KqrAQpVUjxUSa9uM9/GHHnyKXTK4KGDkWUIMKyfGD/8Hvbs3i9JSbFIgDfS+2/TEO+HeBVsO2v49tu3UCeJ+BK63jrzWBuU/SGx0tcgQMbwMX1x1N3gMud4DRJ10yJEfy0hSKReD9jL4pDwRvgYE1t7f2Pk4fgCx1tXwDHBwCEyXKXu/x7v7u3v490+7vB5TscrR2sgy3AAAOVWlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iWE1QIENvcmUgNC40LjAtRXhpdjIiPgogPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4KICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iCiAgICB4bWxuczpzdEV2dD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL3NUeXBlL1Jlc291cmNlRXZlbnQjIgogICAgeG1sbnM6ZGM9Imh0dHA6Ly9wdXJsLm9yZy9kYy9lbGVtZW50cy8xLjEvIgogICAgeG1sbnM6R0lNUD0iaHR0cDovL3d3dy5naW1wLm9yZy94bXAvIgogICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iCiAgICB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iCiAgIHhtcE1NOkRvY3VtZW50SUQ9ImdpbXA6ZG9jaWQ6Z2ltcDo4YmUxNGZiNS02OGU0LTRjODktYWZjYi0xMzdhZWE2ZDU3ZTYiCiAgIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6ZTQxMjQ2MDktNGFmZi00MzgyLThmZjQtODZhZWQ0NjE3ODNlIgogICB4bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ9InhtcC5kaWQ6YTM0ZDcxNTYtMDZhMS00NTJiLTgzM2EtNWRlOGVmMWRmM2NkIgogICBkYzpGb3JtYXQ9ImltYWdlL3BuZyIKICAgR0lNUDpBUEk9IjIuMCIKICAgR0lNUDpQbGF0Zm9ybT0iV2luZG93cyIKICAgR0lNUDpUaW1lU3RhbXA9IjE3NzY3OTk1ODYzMzQ2MzgiCiAgIEdJTVA6VmVyc2lvbj0iMi4xMC4zNiIKICAgdGlmZjpPcmllbnRhdGlvbj0iMSIKICAgeG1wOkNyZWF0b3JUb29sPSJHSU1QIDIuMTAiCiAgIHhtcDpNZXRhZGF0YURhdGU9IjIwMjY6MDQ6MjFUMjE6MjY6MjYrMDI6MDAiCiAgIHhtcDpNb2RpZnlEYXRlPSIyMDI2OjA0OjIxVDIxOjI2OjI2KzAyOjAwIj4KICAgPHhtcE1NOkhpc3Rvcnk+CiAgICA8cmRmOlNlcT4KICAgICA8cmRmOmxpCiAgICAgIHN0RXZ0OmFjdGlvbj0ic2F2ZWQiCiAgICAgIHN0RXZ0OmNoYW5nZWQ9Ii8iCiAgICAgIHN0RXZ0Omluc3RhbmNlSUQ9InhtcC5paWQ6OWFiZmQ4YzAtYmQzMy00Nzk4LWI5ZmMtNjg3NjZmYjdhNWMyIgogICAgICBzdEV2dDpzb2Z0d2FyZUFnZW50PSJHaW1wIDIuMTAgKFdpbmRvd3MpIgogICAgICBzdEV2dDp3aGVuPSIyMDI2LTA0LTIxVDIxOjIyOjA3Ii8+CiAgICAgPHJkZjpsaQogICAgICBzdEV2dDphY3Rpb249InNhdmVkIgogICAgICBzdEV2dDpjaGFuZ2VkPSIvIgogICAgICBzdEV2dDppbnN0YW5jZUlEPSJ4bXAuaWlkOmIxZjMyZjMxLTUwMWQtNDY4My1hMzZiLTNlMzQyOWIzYjNmZCIKICAgICAgc3RFdnQ6c29mdHdhcmVBZ2VudD0iR2ltcCAyLjEwIChXaW5kb3dzKSIKICAgICAgc3RFdnQ6d2hlbj0iMjAyNi0wNC0yMVQyMToyNjoyNiIvPgogICAgPC9yZGY6U2VxPgogICA8L3htcE1NOkhpc3Rvcnk+CiAgPC9yZGY6RGVzY3JpcHRpb24+CiA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgCjw/eHBhY2tldCBlbmQ9InciPz6MSqnZAAAABmJLR0QAAgB/APKPnVRCAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6gQVExoaumONoQAAE91JREFUeNrtnFlwZOdVx//39q7WLlnSSCONZvF4Vg/jcWzHceykDAQIDksIhCVQqWKp8AJVUFTxQPHAC0XxxAO8+YEqs8QpKIpAEkzIBuV4CTOeffHsM9JoH0mtXqTu/njw7zhnrlqyxo7LD6GrVLf7Lt93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";
+		brush._rawImage.src = pencilImg;
+	},
+	deactivate: function(brush,context){},
+	drawStart: function(brush,context,x,y,size,alpha,event){
+		context.globalCompositeOperation="source-over";
+		context.globalAlpha = alpha;
+	},
+	drawRotatedImage: function (context, image, x, y, angle, size) {
+		context.save();
+		context.translate(x,y);
+		context.rotate(angle);
+		if(image.width>=image.height){
+			var imageHeight=image.height/(image.width/size);
+			var imageWidth=size;
+		} else {
+			var imageWidth=image.width/(image.height/size)
+			var imageHeight=size;
+		}
+		var destx=-imageWidth/2;
+		var desty=-imageHeight/2;
+		context.drawImage(image,destx,desty,imageWidth,imageHeight);
+	    context.restore();
+	},
+	//angle is resolved by the engine's emit_spot from brush.rotation_mode. pencil's default is
+	//"random_jitter" so every stamp comes in rotated by the engine. no local randomisation needed.
 	drawSpot: function(brush,context,x,y,size,alpha,event,angle) {
 		if(!brush._rawImage || !brush._rawImage.complete) return;
 		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
@@ -4015,129 +5050,57 @@ jQuery.fn.drawr.register({
 		self.$redoButton = button;
 
 	},
+	//Re-apply an undone action. Pops the most recent entry from redoStack, restores its
+	//pixel data to its layer, and pushes it back onto undoStack (now the new most-recent).
 	action: function(brush,context){
 		var self = this;
+		var plugin = self.plugin;
 
-		if(self.redoStack.length>0){
-			var redo = self.redoStack.pop();
-
-			//mark the current undoStack entry as a regular history entry
-			//so undo can step back through it after this redo
-			if(self.undoStack.length>0 && self.undoStack[self.undoStack.length-1].current==true){
-				self.undoStack[self.undoStack.length-1].current = false;
-			}
-
-			var img = document.createElement("img");
-			img.crossOrigin = "Anonymous";
-
-			img.onload = function(){
-				self.plugin.clear_canvas.call(self,false);
-				context.globalCompositeOperation="source-over";
-				context.globalAlpha = 1;
-				context.drawImage(img,0,0);
-
-				//we push the restored state as the new current so undo knows where we are
-				self.undoStack.push({data:redo,current:true});
-				if(self.undoStack.length>(self.settings.undo_max_levels+1)) self.undoStack.shift();
-
-				if(typeof self.$undoButton!=="undefined"){
-					self.$undoButton.css("opacity",1);
-				}
-				if(self.redoStack.length==0){
-					self.$redoButton.css("opacity",0.5);
-				}
-			};
-			img.src=redo;
+		function setUndoButton(bright){
+			if(typeof self.$undoButton !== "undefined") self.$undoButton.css("opacity", bright ? 1 : 0.5);
+		}
+		function setRedoButton(bright){
+			if(typeof self.$redoButton !== "undefined") self.$redoButton.css("opacity", bright ? 1 : 0.5);
 		}
 
+		//skip orphaned entries (layer deleted since snapshot).
+		while(self.redoStack.length > 0 && plugin.resolve_layer_by_id.call(self, self.redoStack[self.redoStack.length-1].layerId) < 0){
+			self.redoStack.pop();
+		}
+		if(self.redoStack.length === 0){
+			setRedoButton(false);
+			return;
+		}
+
+		var entry = self.redoStack.pop();
+		var targetIdx = plugin.resolve_layer_by_id.call(self, entry.layerId);
+		var targetCanvas = self.layers[targetIdx].canvas;
+		var targetCtx = targetCanvas.getContext("2d", { alpha: true });
+
+		var img = document.createElement("img");
+		img.crossOrigin = "Anonymous";
+		img.onload = function(){
+			targetCtx.globalCompositeOperation = "source-over";
+			targetCtx.globalAlpha = 1;
+			if(targetIdx === 0 && self.settings.enable_transparency == false){
+				targetCtx.fillStyle = "white";
+				targetCtx.fillRect(0, 0, self.width, self.height);
+			} else {
+				targetCtx.clearRect(0, 0, self.width, self.height);
+			}
+			targetCtx.drawImage(img, 0, 0);
+		};
+		img.src = entry.data;
+
+		self.undoStack.push(entry);
+		if(self.undoStack.length > (self.settings.undo_max_levels + 1)) self.undoStack.shift();
+
+		setUndoButton(true);
+		if(self.redoStack.length === 0) setRedoButton(false);
 	},
 	cleanup: function(){
 		var self = this;
 		delete self.$redoButton;
-	}
-
-});
-
-jQuery.fn.drawr.register({
-
-	icon: "mdi mdi-rotate-3d mdi-24px",
-	name: "rotate",
-	order: 11,
-
-	activate: function(brush,context){
-		$(this).parent().css({"cursor":"crosshair"});
-	},
-	deactivate: function(brush,context){
-		$(this).parent().css({"cursor":"default"});
-	},
-	//reads raw page coordinates to compute angle from canvas center.
-	drawStart: function(brush,context,x,y,size,alpha,event){
-
-
-		var self = this;
-		var parent = $(self).parent()[0];
-		var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
-		var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
-		var box = parent.getBoundingClientRect();
-
-		var eventX, eventY;
-		if(event.type=="touchmove" || event.type=="touchstart"){
-			eventX = event.originalEvent.touches[0].pageX;
-			eventY = event.originalEvent.touches[0].pageY;
-		} else {
-			eventX = event.pageX;
-			eventY = event.pageY;
-		}
-
-		//click position
-		var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
-		var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
-
-		//canvas center
-		var W = self.width * self.zoomFactor;
-		var H = self.height * self.zoomFactor;
-		var cx = W / 2 - self.scrollX;
-		var cy = H / 2 - self.scrollY;
-
-		brush.startAngle = Math.atan2(py - cy, px - cx);
-		brush.startRotation=self.rotationAngle || 0;
-
-	},
-
-	drawSpot: function(brush,context,x,y,size,alpha,event){
-
-		var self = this;
-		var parent = $(self).parent()[0];
-		/*
-		var rect = parent.getBoundingClientRect();
-		 
-		*/
-		var borderTop = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-top-width"));
-		var borderLeft = parseInt(window.getComputedStyle(parent, null).getPropertyValue("border-left-width"));
-		var box = parent.getBoundingClientRect();
-
-		var eventX, eventY;
-		if(event.type=="touchmove" || event.type=="touchstart"){
-			eventX = event.originalEvent.touches[0].pageX;
-			eventY = event.originalEvent.touches[0].pageY;
-		} else {
-			eventX = event.pageX;
-			eventY = event.pageY;
-		}
-
-		var px = eventX - (box.x + $(document).scrollLeft()) - borderLeft;
-		var py = eventY - (box.y + $(document).scrollTop()) - borderTop;
-
-		var W = self.width * self.zoomFactor;
-		var H = self.height * self.zoomFactor;
-		var cx = W / 2 - self.scrollX;
-		var cy = H / 2 - self.scrollY;
-
-		var currentAngle = Math.atan2(py - cy, px - cx);
-		var delta = currentAngle - brush.startAngle;
-
-		self.plugin.apply_rotation.call(self, brush.startRotation + delta,true);
-
 	}
 
 });
@@ -4168,17 +5131,20 @@ jQuery.fn.drawr.register({
 	buttonCreated: function(brush,button){
 
 		var self = this;
-		var context = self.getContext('2d');
+		//the color-picker change handlers re-invoke the active brush's activate() with a
+		//context reference. resolve it lazily so a layer-switch between toolbox creation and
+		//a color choice routes to the right canvas.
+		var ctx = function(){ return self.plugin.active_context.call(self); };
 
 		//color dialog
-		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",180);
+		self.$settingsToolbox = self.plugin.create_toolbox.call(self,"settings",null,"Settings",240);
 
 		self.$cbPressureAlpha = self.plugin.create_label.call(self, self.$settingsToolbox, "Color");
 
 		self.$settingsToolbox.append("<div style='margin-bottom:40px;'><input type='text' class='color-picker' style='z-index:1;position:absolute;margin:-10px 0px 0px -30px;'/></div>");
 		self.$settingsToolbox.find('.color-picker').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
 			self.brushColor = self.plugin.hex_to_rgb(hexcolor);
-			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
+			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,ctx());
 		});
 
 		self.$settingsToolbox.find('input.color-picker').drawrpalette("set",self.plugin.rgb_to_hex(self.brushColor.r,self.brushColor.g,self.brushColor.b));
@@ -4186,12 +5152,12 @@ jQuery.fn.drawr.register({
 		self.$settingsToolbox.append("<input type='text' class='color-picker2' style='z-index:0;position:absolute;margin:-40px 0px 0px -10px;'/>");
 		self.$settingsToolbox.find('.color-picker2').drawrpalette({ auto_apply: true }).on("choose.drawrpalette",function(event,hexcolor){
 			self.brushBackColor = self.plugin.hex_to_rgb(hexcolor);
-			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,context);
+			if(typeof self.active_brush.activate!=="undefined") self.active_brush.activate.call(self,self.active_brush,ctx());
 		});
 
 		self.$settingsToolbox.find('input.color-picker2').drawrpalette("set",self.plugin.rgb_to_hex(self.brushBackColor.r,self.brushBackColor.g,self.brushBackColor.b));
 
-		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha)).on("input.drawr",function(){
+		self.$alphaSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"alpha", 0,100,parseInt(100*self.settings.inital_brush_alpha), true).on("input.drawr",function(){
 			var v = parseFloat(this.value/100);
 			self.brushAlpha = v;
 			if(typeof self.active_brush.alpha!=="undefined") self.active_brush.alpha = v;
@@ -4200,7 +5166,7 @@ jQuery.fn.drawr.register({
 			}
 			self.plugin.is_dragging=false;
 		});
-		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,100,self.settings.inital_brush_size).on("input.drawr",function(){
+		self.$sizeSlider = self.plugin.create_slider.call(self, self.$settingsToolbox,"size", 1,200,self.settings.inital_brush_size, true).on("input.drawr",function(){
 			var v = parseInt(this.value);
 			self.brushSize = v;
 			if(typeof self.active_brush.size!=="undefined")  self.active_brush.size = v;
@@ -4347,7 +5313,7 @@ jQuery.fn.drawr.register({
 			{ value: "fixed",          label: "Fixed" },
 			{ value: "follow_stroke",  label: "Follow" },
 			{ value: "random_jitter",  label: "Random" },
-			{ value: "follow_jitter",  label: "Follow±" }
+			{ value: "follow_jitter",  label: "Follow" }
 		], "none");
 		self.$rotationModeDropdown.on("change.drawr", function(){
 			if(!self.active_brush) return;
@@ -4358,14 +5324,18 @@ jQuery.fn.drawr.register({
 
 		//all numeric dynamics use a 0..100 slider; values are mapped to the canonical range in the handler.
 		//spacing uses 2..200 mapped to 0.02..2 so the min is usable.
-		self.$spacingSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "spacing",    2, 200, 25);
-		self.$flowSlider       = self.plugin.create_slider.call(self, self.$advancedSection, "flow",       0, 100, 100);
+		self.$spacingSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "spacing",    2, 200, 25, true);
+		self.$flowSlider       = self.plugin.create_slider.call(self, self.$advancedSection, "flow",       0, 100, 100, true);
 		self.$sizeJitSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizejitter", 0, 100, 0);
 		self.$opJitSlider      = self.plugin.create_slider.call(self, self.$advancedSection, "opjitter",   0, 100, 0);
 		self.$angleJitSlider   = self.plugin.create_slider.call(self, self.$advancedSection, "anglejit",   0, 100, 0);
 		self.$scatterSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "scatter",    0, 100, 0);
-		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0);
+		self.$fixedAngleSlider = self.plugin.create_slider.call(self, self.$advancedSection, "angle",      0, 359, 0, true);
 		self.$fadeInSlider     = self.plugin.create_slider.call(self, self.$advancedSection, "fadein",     0, 200, 0);
+		//size_max: absolute max size in pixels at full pen pressure. Only meaningful when
+		//pressure_affects_size is on. Same range as the main size slider. If set below the current
+		//`size`, the engine clamps up so you never invert the sweep.
+		self.$sizeMaxSlider    = self.plugin.create_slider.call(self, self.$advancedSection, "sizemax",    1, 200, 20, true);
 
 		//bind each slider to its canonical field on active_brush, with its own mapping.
 		//update() sets _suppressSettingsWrite=true while repopulating, so we don't write-back defaults on every tool switch.
@@ -4386,6 +5356,7 @@ jQuery.fn.drawr.register({
 		bindSlider(self.$scatterSlider,    "scatter",        function(v){ return v / 100; });
 		bindSlider(self.$fixedAngleSlider, "fixed_angle",    function(v){ return v * Math.PI / 180; });
 		bindSlider(self.$fadeInSlider,     "brush_fade_in",  function(v){ return Math.round(v); });
+		bindSlider(self.$sizeMaxSlider,    "size_max",       function(v){ return v; });
 
 		self.$cbSmoothing = self.plugin.create_checkbox.call(self, self.$advancedSection, "Smoothing", false);
 		self.$cbSmoothing.on("change.drawr", function(){
@@ -4395,7 +5366,7 @@ jQuery.fn.drawr.register({
 			self.plugin.is_dragging = false;
 		});
 
-		//Reset Defaults — restores the tool to the values snapshotted at register() time.
+		//Reset Defaults; restores the tool to the values snapshotted at register() time.
 		//Hidden for custom (removable) brushes since their "defaults" live in the saved record.
 		self.$resetButton = self.plugin.create_button.call(self, self.$advancedSection, "Reset defaults");
 		self.$resetButton.on("click.drawr", function(){
@@ -4460,7 +5431,7 @@ jQuery.fn.drawr.register({
 			var curGamma = self.plugin.read_pressure_curve();
 			var t = Math.max(0, Math.min(100, Math.round(50 - 50 * Math.log(curGamma) / Math.log(3))));
 			self.$pressureCurveSlider.val(t);
-			//preview is a raw canvas, not tied to slider input event — redraw directly.
+			//preview is a raw canvas, not tied to slider input event. redraw directly.
 			var c = self.$pressureCurvePreview && self.$pressureCurvePreview[0];
 			if(c && c.getContext){
 				var ctx = c.getContext("2d");
@@ -4481,14 +5452,16 @@ jQuery.fn.drawr.register({
 		}
 
 		//---- Advanced section ----------------------------------------
-		//Hide entirely for tools without drawSpot (shape/action tools) — dynamics don't apply to them.
+		//Hide entirely for tools without drawSpot (shape/action tools). dynamics don't apply to them.
 		if(self.$advancedSection){
 			var hasSpot = typeof self.active_brush.drawSpot !== "undefined";
-			self.$advancedSection.closest(".drawr-collapsible").css("display", hasSpot ? "" : "none");
+			//hide_advanced_brush_settings hides the whole section from the UI, but engine dynamics keep working.
+			var hideAdvanced = !hasSpot || !!self.settings.hide_advanced_brush_settings;
+			self.$advancedSection.closest(".drawr-collapsible").css("display", hideAdvanced ? "none" : "");
 			if(hasSpot){
 				//read each field from active_brush with a sensible fallback; slider setters use .val() + trigger("input")
 				//to update the numeric display but we avoid re-persisting on every activate by setting val() directly
-				//when the value matches what we'd write back. Cheap approach: use .val() then trigger("input") — which
+				//when the value matches what we'd write back. Cheap approach: use .val() then trigger("input") which
 				//calls our handler and writes to active_brush[field] with the same value (idempotent).
 				var b = self.active_brush;
 				if(self.$rotationModeDropdown){
@@ -4502,6 +5475,7 @@ jQuery.fn.drawr.register({
 				if(self.$scatterSlider)    self.$scatterSlider.val(Math.round((b.scatter || 0) * 100)).trigger("input");
 				if(self.$fixedAngleSlider) self.$fixedAngleSlider.val(Math.round(((b.fixed_angle || 0) * 180 / Math.PI) % 360)).trigger("input");
 				if(self.$fadeInSlider)     self.$fadeInSlider.val(b.brush_fade_in || 0).trigger("input");
+				if(self.$sizeMaxSlider)    self.$sizeMaxSlider.val(Math.round((typeof b.size_max === "number") ? b.size_max : (b.size || 20))).trigger("input");
 				if(self.$cbSmoothing)      self.$cbSmoothing.prop("checked", !!b.smoothing);
 				//Reset hidden for custom brushes (their "defaults" are the record fields)
 				if(self.$resetButton)      self.$resetButton.css("display", b.removable ? "none" : "");
@@ -4549,6 +5523,7 @@ jQuery.fn.drawr.register({
 		delete self.$scatterSlider;
 		delete self.$fixedAngleSlider;
 		delete self.$fadeInSlider;
+		delete self.$sizeMaxSlider;
 		delete self.$cbSmoothing;
 		delete self.$resetButton;
 		delete self.$pressureCurveSlider;
@@ -4557,98 +5532,186 @@ jQuery.fn.drawr.register({
 
 });
 
+//unified shape tool: line / arrow / ellipse / filled ellipse / rectangle / filled rectangle.
+//the active shape is selected via a dropdown in the shapes toolbox. drawing math is identical
+//for every shape (start + current drag positions, with the canvas-rotation inverse applied so
+//axis-aligned shapes stay axis-aligned in canvas space), only the final stroke/fill differs.
 jQuery.fn.drawr.register({
-	icon: "mdi mdi-vector-square mdi-24px",
-	name: "square",
+	icon: "mdi mdi-shape mdi-24px",
+	name: "shapes",
 	size: 3,
 	alpha: 1,
 	order: 7,
-	activate: function(brush,context){
+	_shape: "line",
 
+	//the tool object is shared across all drawr instances on a page, so DOM refs live on
+	//`self` (the canvas). `brush._shape` itself is intentionally global. a change in one
+	//canvas's dropdown syncs all siblings via brush._shapeDropdowns.
+	buttonCreated: function(brush, button) {
+		var self = this;
+
+		self.$shapesToolbox = self.plugin.create_toolbox.call(self, "shapes", null, "Shape", 140);
+
+		var $dd = self.plugin.create_dropdown.call(self, self.$shapesToolbox, "Type", [
+			{ value: "line",          label: "Line"             },
+			{ value: "arrow",         label: "Arrow"            },
+			{ value: "ellipse",       label: "Ellipse"          },
+			{ value: "filledellipse", label: "Filled Ellipse"   },
+			{ value: "rectangle",     label: "Rectangle"        },
+			{ value: "filledrect",    label: "Filled Rectangle" }
+		], brush._shape);
+
+		if(!brush._shapeDropdowns) brush._shapeDropdowns = [];
+		brush._shapeDropdowns.push($dd);
+
+		$dd.on("change.drawr", function() {
+			var val = $(this).val();
+			brush._shape = val;
+			var siblings = brush._shapeDropdowns;
+			for(var i = 0; i < siblings.length; i++){
+				if(siblings[i][0] !== this) siblings[i].val(val);
+			}
+			self.plugin.is_dragging = false;
+		});
 	},
-	deactivate: function(brush,context){},
-	drawStart: function(brush,context,x,y,size,alpha,event){
-		context.globalCompositeOperation="source-over";
+
+	activate: function(brush, context) {
+		if(this.$shapesToolbox) this.plugin.show_toolbox.call(this, this.$shapesToolbox);
+	},
+
+	deactivate: function(brush, context) {
+		if(this.$shapesToolbox) this.$shapesToolbox.hide();
+	},
+
+	drawStart: function(brush, context, x, y, size, alpha, event) {
+		context.globalCompositeOperation = "source-over";
 		brush.currentAlpha = alpha;
 		brush.currentSize = size;
-		brush.startPosition = {
-			"x" : x,
-			"y" : y
-		};
+		brush.startPosition = { x: x, y: y };
+		brush.currentPosition = { x: x, y: y };
 		this.effectCallback = brush.effectCallback;
-		context.globalAlpha=alpha;
+		context.globalAlpha = alpha;
 		this.tempColor = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
 	},
-	drawStop: function(brush,context,x,y,size,alpha,event){
+
+	drawSpot: function(brush, context, x, y, size, alpha, event) {
+		brush.currentPosition = { x: x, y: y };
+	},
+
+	drawStop: function(brush, context, x, y, size, alpha, event) {
 		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;
-		context.globalAlpha=alpha;
-		context.lineJoin = 'miter';
-		context.lineWidth = size;
-		context.strokeStyle = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
 		var angle = this.rotationAngle || 0;
-		var sx = brush.startPosition.x, sy = brush.startPosition.y;
+		var sx = brush.startPosition.x,   sy = brush.startPosition.y;
 		var ex = brush.currentPosition.x, ey = brush.currentPosition.y;
 		if(angle){
 			var cx = this.width/2, cy = this.height/2;
 			var cos = Math.cos(angle), sin = Math.sin(angle);
 			context.save();
-			context.translate(cx, cy);
-			context.rotate(-angle);
-			context.translate(-cx, -cy);
+			context.translate(cx, cy); context.rotate(-angle); context.translate(-cx, -cy);
 			var dsx = sx-cx, dsy = sy-cy, dex = ex-cx, dey = ey-cy;
 			sx = cx + cos*dsx - sin*dsy;
 			sy = cy + sin*dsx + cos*dsy;
 			ex = cx + cos*dex - sin*dey;
 			ey = cy + sin*dex + cos*dey;
 		}
-		context.strokeRect(sx, sy, ex-sx, ey-sy);
-		if(angle){ context.restore(); }
+		context.globalAlpha  = alpha;
+		context.lineWidth    = size;
+		context.lineJoin     = 'miter';
+		var rgb = "rgb(" + color.r + "," + color.g + "," + color.b + ")";
+		context.strokeStyle  = rgb;
+		context.fillStyle    = rgb;
+		brush._renderShape(context, sx, sy, ex, ey, size, brush._shape);
+		if(angle) context.restore();
 
 		this.effectCallback = null;
 		return true;
 	},
-	drawSpot: function(brush,context,x,y,size,alpha,event) {
-		brush.currentPosition = {
-			"x" : x,
-			"y" : y
-		};
+
+	//draws the selected shape into canvas space. the caller has already applied any rotation
+	//transform, so this just draws axis-aligned.
+	_renderShape: function(context, sx, sy, ex, ey, size, shape) {
+		if(shape === "line"){
+			context.beginPath();
+			context.moveTo(sx, sy);
+			context.lineTo(ex, ey);
+			context.stroke();
+		} else if(shape === "arrow"){
+			var dx = ex - sx, dy = ey - sy;
+			var len = Math.sqrt(dx*dx + dy*dy);
+			if(len <= 0) return;
+			//arrowhead scales with line width but has a sensible minimum.
+			var head  = Math.max(size * 5, 12);
+			var ang   = Math.atan2(dy, dx);
+			var cos   = Math.cos(ang), sin = Math.sin(ang);
+			//base of the triangle sits behind the tip by `head` along the line. stop the shaft at
+			//the base (slightly inside it, so a round line cap doesn't poke through the fill).
+			var baseX = ex - cos * head;
+			var baseY = ey - sin * head;
+			var shaftEndX = ex - cos * head * 0.9;
+			var shaftEndY = ey - sin * head * 0.9;
+			context.beginPath();
+			context.moveTo(sx, sy);
+			context.lineTo(shaftEndX, shaftEndY);
+			context.stroke();
+			//triangle: tip at (ex,ey), fins fan out from the base. width ~= head * tan(angle/2).
+			var spread = head * 0.45;
+			context.beginPath();
+			context.moveTo(ex, ey);
+			context.lineTo(baseX - sin * spread, baseY + cos * spread);
+			context.lineTo(baseX + sin * spread, baseY - cos * spread);
+			context.closePath();
+			context.fill();
+		} else if(shape === "rectangle"){
+			context.strokeRect(sx, sy, ex-sx, ey-sy);
+		} else if(shape === "filledrect"){
+			context.fillRect(sx, sy, ex-sx, ey-sy);
+		} else if(shape === "ellipse" || shape === "filledellipse"){
+			var ecx = (sx+ex)/2, ecy = (sy+ey)/2;
+			var rx = Math.abs(ex-sx)/2, ry = Math.abs(ey-sy)/2;
+			if(rx > 0 && ry > 0){
+				context.beginPath();
+				context.ellipse(ecx, ecy, rx, ry, 0, 0, 2*Math.PI);
+				if(shape === "filledellipse") context.fill();
+				else context.stroke();
+			}
+		}
 	},
-	effectCallback: function(context,brush,adjustx,adjusty,adjustzoom){
+
+	effectCallback: function(context, brush, adjustx, adjusty, adjustzoom) {
 		var angle = this.rotationAngle || 0;
 		var sx, sy, ex, ey;
 		if(angle){
 			var _W = this.width * adjustzoom;
 			var _H = this.height * adjustzoom;
-			var _cx = _W / 2 - adjustx;
-			var _cy = _H / 2 - adjusty;
+			var _cx = _W/2 - adjustx;
+			var _cy = _H/2 - adjusty;
 			context.save();
-			context.translate(_cx, _cy);
-			context.rotate(-angle);
-			context.translate(-_cx, -_cy);
+			context.translate(_cx, _cy); context.rotate(-angle); context.translate(-_cx, -_cy);
 			var cos = Math.cos(angle), sin = Math.sin(angle);
-			var halfW = this.width * adjustzoom / 2, halfH = this.height * adjustzoom / 2;
-			var sRelX = brush.startPosition.x  - this.width/2, sRelY = brush.startPosition.y  - this.height/2;
-			var eRelX = brush.currentPosition.x - this.width/2, eRelY = brush.currentPosition.y - this.height/2;
+			var halfW = _W/2, halfH = _H/2;
+			var sRelX = brush.startPosition.x   - this.width/2,  sRelY = brush.startPosition.y   - this.height/2;
+			var eRelX = brush.currentPosition.x - this.width/2,  eRelY = brush.currentPosition.y - this.height/2;
 			sx = (cos*sRelX - sin*sRelY) * adjustzoom + halfW - adjustx;
 			sy = (sin*sRelX + cos*sRelY) * adjustzoom + halfH - adjusty;
 			ex = (cos*eRelX - sin*eRelY) * adjustzoom + halfW - adjustx;
 			ey = (sin*eRelX + cos*eRelY) * adjustzoom + halfH - adjusty;
 		} else {
-			sx = brush.startPosition.x  * adjustzoom - adjustx;
-			sy = brush.startPosition.y  * adjustzoom - adjusty;
+			sx = brush.startPosition.x   * adjustzoom - adjustx;
+			sy = brush.startPosition.y   * adjustzoom - adjusty;
 			ex = brush.currentPosition.x * adjustzoom - adjustx;
 			ey = brush.currentPosition.y * adjustzoom - adjusty;
 		}
 		context.globalAlpha = brush.currentAlpha;
-		context.lineWidth = brush.currentSize*adjustzoom;
-		context.lineJoin = 'miter';
-		context.strokeStyle = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
-		context.strokeRect(sx, sy, ex-sx, ey-sy);
-		if(angle){ context.restore(); }
+		context.lineWidth   = brush.currentSize * adjustzoom;
+		context.lineJoin    = 'miter';
+		var rgb = "rgb(" + this.tempColor.r + "," + this.tempColor.g + "," + this.tempColor.b + ")";
+		context.strokeStyle = rgb;
+		context.fillStyle   = rgb;
+		brush._renderShape(context, sx, sy, ex, ey, brush.currentSize * adjustzoom, brush._shape);
+		if(angle) context.restore();
 	}
 });
 
-//effectCallback
 jQuery.fn.drawr.register({
 	icon: "mdi mdi-format-text mdi-24px",
 	name: "text",
@@ -4656,7 +5719,7 @@ jQuery.fn.drawr.register({
 	alpha: 1,
 	order: 14,
 	//The tool object is shared across drawr instances on a page, so per-canvas DOM/state
-	//(the floating input box, the pending text position) must live on `self` — never on `brush`.
+	//(the floating input box, the pending text position) must live on `self`. never on `brush`.
 	activate: function(brush,context){
 
 	},
@@ -4682,13 +5745,60 @@ jQuery.fn.drawr.register({
 		self._textPosition = { x: x, y: y };
 		context.globalAlpha=alpha
 		if(typeof self.$textFloatyBox=="undefined"){
-			var fontSizeForDisplay= parseInt(20 * self.zoomFactor);
-			self.$textFloatyBox = $('<div style="z-index:6;position:absolute;width:100px;height:20px;"><input style="background:transparent;border:0px;padding:0px;font-size:' + fontSizeForDisplay + 'px;font-family:sans-serif;" type="text" value=""><button class="ok"><i class="mdi mdi-check"></i></button><button class="cancel"><i class="mdi mdi-close"></i></button></div>');
-			$(self.$textFloatyBox).insertAfter($(self).parent());
+			var fontSizeForDisplay = parseInt(self.brushSize * self.zoomFactor);
+			var boxStyle = [
+				"z-index:6",
+				"position:absolute",
+				"font-family:sans-serif"
+			].join(";");
+			var toolbarStyle = [
+				"position:absolute",
+				"bottom:100%",
+				"left:0",
+				"margin-bottom:2px",
+				"display:flex",
+				"gap:2px",
+				"padding:2px",
+				"background:#f5f5f5",
+				"border:1px solid #bbb",
+				"border-radius:3px",
+				"box-shadow:0 1px 4px rgba(0,0,0,0.15)"
+			].join(";");
+			var btnStyle = [
+				"border:1px solid #bbb",
+				"background:#fff",
+				"border-radius:2px",
+				"padding:1px 5px",
+				"cursor:pointer",
+				"line-height:1",
+				"font-size:14px"
+			].join(";");
+			var inputStyle = [
+				"background:transparent",
+				"border:1px dashed #4a90d9",
+				"outline:none",
+				"padding:0",
+				"margin:0",
+				"font-size:" + fontSizeForDisplay + "px",
+				"line-height:1",
+				"font-family:sans-serif",
+				"min-width:80px",
+				"box-sizing:content-box"
+			].join(";");
+			self.$textFloatyBox = $(
+				'<div style="' + boxStyle + '">' +
+					'<div class="drawr-text-toolbar" style="' + toolbarStyle + '">' +
+						'<button class="ok" style="' + btnStyle + '" title="Apply"><i class="mdi mdi-check"></i></button>' +
+						'<button class="cancel" style="' + btnStyle + '" title="Cancel"><i class="mdi mdi-close"></i></button>' +
+					'</div>' +
+					'<input style="' + inputStyle + '" type="text" value="">' +
+				'</div>'
+			);
+			$(self.$textFloatyBox).insertAfter(self.$container);
 			var vp = brush.canvasToViewport.call(self, x, y);
 			self.$textFloatyBox.css({
-				left: $(self).parent().offset().left + vp.x,
-				top: $(self).parent().offset().top + vp.y,
+				left: self.$container.offset().left + vp.x,
+				top: self.$container.offset().top + vp.y,
 			});
 			self.$textFloatyBox.find("input").on("pointerdown",function(e){
 				e.preventDefault();
@@ -4714,17 +5824,37 @@ jQuery.fn.drawr.register({
 		} else {
 			var vp = brush.canvasToViewport.call(self, x, y);
 			self.$textFloatyBox.css({
-				left: $(self).parent().offset().left + vp.x,
-				top: $(self).parent().offset().top + vp.y,
+				left: self.$container.offset().left + vp.x,
+				top: self.$container.offset().top + vp.y,
 			});
 		}
 	},
+	measureInputBaselineOffset: function(fontSize){
+		//Probe where an <input>'s alphabetic baseline sits relative to its border-box top,
+		//for the same font/border/padding/line-height used by the floaty input. Returns pixels
+		//in canvas-font units (we build the probe with the canvas font-size directly).
+		var probe = document.createElement('div');
+		probe.style.cssText = 'position:absolute;visibility:hidden;top:-10000px;left:-10000px;' +
+			'font-family:sans-serif;font-size:' + fontSize + 'px;line-height:1;' +
+			'border:1px dashed;padding:0;margin:0;box-sizing:content-box;white-space:pre;';
+		probe.innerHTML = 'x<span style="display:inline-block;width:0;height:0;vertical-align:baseline;"></span>';
+		document.body.appendChild(probe);
+		var probeRect = probe.getBoundingClientRect();
+		var marker = probe.querySelector('span').getBoundingClientRect();
+		var offset = marker.top - probeRect.top;
+		document.body.removeChild(probe);
+		return offset;
+	},
 	applyText: function(context,brush,x,y,text){
-		context.font = "20px sans-serif";
+		var fontSize = this.brushSize;
+		context.font = fontSize + "px sans-serif";
 		context.textAlign = "left";
+		context.textBaseline = "alphabetic";
 		context.fillStyle = "rgb(" + this.brushColor.r + "," + this.brushColor.g + "," + this.brushColor.b + ")";
 		var angle = this.rotationAngle || 0;
-		var drawX = x - 2, drawY = y + 19;
+		//Align canvas baseline with input's measured baseline so preview and commit match at any size.
+		var baselineOffset = Math.round(brush.measureInputBaselineOffset(fontSize));
+		var drawX = x + 1, drawY = y + baselineOffset + 2;
 		if(angle){
 			var cx = this.width / 2, cy = this.height / 2;
 			var cos = Math.cos(angle), sin = Math.sin(angle);
@@ -4745,8 +5875,8 @@ jQuery.fn.drawr.register({
 		if(typeof this.$textFloatyBox!=="undefined"){
 			var vp = brush.canvasToViewport.call(this, x, y);
 			this.$textFloatyBox.css({
-				left: $(this).parent().offset().left + vp.x,
-				top: $(this).parent().offset().top + vp.y,
+				left: this.$container.offset().left + vp.x,
+				top: this.$container.offset().top + vp.y,
 			});
 		}
 	}
@@ -4768,82 +5898,113 @@ jQuery.fn.drawr.register({
 		self.$undoButton = button;
 
 	},
+	//Each undo reverses the most recent stroke in the linear action history. The top-of-stack
+	//entry is the after-state of the last action; its layerId identifies which layer to undo
+	//on. We walk down the stack for the previous entry for the same layer. that's the state
+	//to restore to. If there's no such entry (the very first stroke on a fresh layer), we
+	//fallback-clear the layer. The popped entry goes to redoStack.
 	action: function(brush,context){
 		var self = this;
+		var plugin = self.plugin;
 
-		if(self.undoStack.length>0){
-			//the current property is because of the way some tools work it is needed to always keep a copy of the canvas' latest state (AFTER last draw action was done) in the undo buffer.
-			//obviously you want to go back to the previous version, not the current one, so that one is ignored.
-			var currentData = null;
-			if(self.undoStack[self.undoStack.length-1].current==true){
-				currentData = self.undoStack.pop().data;//save current canvas state for redo
-			}
-			$.each(self.undoStack,function(i,stackitem){
-				stackitem.current=false;
-			});
-			if(self.undoStack.length>0) {//is there anything noncurrent
-				var undo = self.undoStack.pop().data;
-				//push current state onto redo stack before restoring
-				if(currentData!==null){
-					self.redoStack.push(currentData);
-					if(typeof self.$redoButton!=="undefined"){
-						self.$redoButton.css("opacity",1);
-					}
+		function setUndoButton(bright){
+			if(typeof self.$undoButton !== "undefined") self.$undoButton.css("opacity", bright ? 1 : 0.5);
+		}
+		function setRedoButton(bright){
+			if(typeof self.$redoButton !== "undefined") self.$redoButton.css("opacity", bright ? 1 : 0.5);
+		}
+		//can the user undo right now? the top must be non-sticky and non-orphaned, AND the
+		//action must be able to actually complete. a top-only entry on a trimmed layer has
+		//no prior state to restore to and fallback-clear is forbidden, so that too counts as
+		//"can't undo" and should leave the button dimmed.
+		function canUndo(){
+			if(self.undoStack.length === 0) return false;
+			var t = self.undoStack[self.undoStack.length - 1];
+			if(t.sticky) return false;
+			var lidx = plugin.resolve_layer_by_id.call(self, t.layerId);
+			if(lidx < 0) return false;
+			if(self.layers[lidx].history_trimmed){
+				//need a prior same-layer entry to restore to.
+				for(var j = self.undoStack.length - 2; j >= 0; j--){
+					var e = self.undoStack[j];
+					if(plugin.resolve_layer_by_id.call(self, e.layerId) < 0) continue;
+					if(e.layerId === t.layerId) return true;
 				}
-				var img = document.createElement("img");
-				img.crossOrigin = "Anonymous";
-
-				img.onload = function(){
-					self.plugin.clear_canvas.call(self,false);
-					context.globalCompositeOperation="source-over";
-					context.globalAlpha = 1;
-					context.drawImage(img,0,0);
-				};
-				img.src=undo;
+				return false;
 			}
-			if(self.undoStack.length==0) {//re-add current version of the canvas.
-				self.$undoButton.css("opacity",0.5);
-			}
-			self.undoStack.push({data:undo,current:true});
+			return true;
 		}
 
+		//discard any orphaned entries at the top (layer was deleted). they have no current
+		//state to reverse and shouldn't consume an undo click.
+		while(self.undoStack.length > 0 && plugin.resolve_layer_by_id.call(self, self.undoStack[self.undoStack.length-1].layerId) < 0){
+			self.undoStack.pop();
+		}
+		if(self.undoStack.length === 0){
+			setUndoButton(false);
+			return;
+		}
+
+		var top = self.undoStack[self.undoStack.length - 1];
+		//sticky baseline (e.g. image-load state): refuse to pop it, just dim and bail.
+		if(top.sticky){
+			setUndoButton(false);
+			return;
+		}
+		var L = top.layerId;
+		var targetIdx = plugin.resolve_layer_by_id.call(self, L);
+		var targetLayer = self.layers[targetIdx];
+		var targetCanvas = targetLayer.canvas;
+		var targetCtx = targetCanvas.getContext("2d", { alpha: true });
+
+		//find the previous same-layer entry (skipping orphans).
+		var prev = null;
+		for(var i = self.undoStack.length - 2; i >= 0; i--){
+			var e = self.undoStack[i];
+			if(plugin.resolve_layer_by_id.call(self, e.layerId) < 0) continue;
+			if(e.layerId === L){ prev = e; break; }
+		}
+
+		//if there's no prior state AND we've trimmed history for this layer (cap hit), refuse
+		//to undo. fallback-clear would wipe real content the user doesn't remember is there.
+		if(!prev && targetLayer.history_trimmed){
+			setUndoButton(false);
+			return;
+		}
+
+		//pop the top entry and route it to redo.
+		var reversed = self.undoStack.pop();
+		self.redoStack.push(reversed);
+		setRedoButton(true);
+
+		//clear the target layer, then (if a prior state exists) draw it back in.
+		var clearTarget = function(){
+			targetCtx.globalCompositeOperation = "source-over";
+			targetCtx.globalAlpha = 1;
+			if(targetIdx === 0 && self.settings.enable_transparency == false){
+				targetCtx.fillStyle = "white";
+				targetCtx.fillRect(0, 0, self.width, self.height);
+			} else {
+				targetCtx.clearRect(0, 0, self.width, self.height);
+			}
+		};
+		if(prev){
+			var img = document.createElement("img");
+			img.crossOrigin = "Anonymous";
+			img.onload = function(){
+				clearTarget();
+				targetCtx.drawImage(img, 0, 0);
+			};
+			img.src = prev.data;
+		} else {
+			clearTarget();
+		}
+
+		setUndoButton(canUndo());
 	},
 	cleanup: function(){
 		var self = this;
 		delete self.$undoButton;
-	}
-
-});
-
-jQuery.fn.drawr.register({
-	icon: "mdi mdi-magnify mdi-24px",
-	name: "zoom",
-	type: "toggle",
-	order: 14,
-	buttonCreated: function(brush,button){
-
-		var self = this;
-
-		self.$zoomToolbox = self.plugin.create_toolbox.call(self,"zoom",null,"Zoom",80);
-		self.plugin.create_slider.call(self, self.$zoomToolbox,"zoom", 0,400,100).on("input.drawr",function(){
-			var cleaned = Math.ceil(this.value/10)*10;
-			$(this).next().text(cleaned);
-			self.plugin.apply_zoom.call(self,cleaned/100);
-		});
-
-	},
-	action: function(brush,context){
-		var self = this;
-		if(self.$zoomToolbox.is(":visible")){
-			self.$zoomToolbox.hide();
-		} else {
-			self.plugin.show_toolbox.call(self, self.$zoomToolbox);
-		}
-	},
-	cleanup: function(){
-		var self = this;
-		self.$zoomToolbox.remove();
-		delete self.$zoomToolbox;
 	}
 
 });
