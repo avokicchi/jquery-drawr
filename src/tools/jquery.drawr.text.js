@@ -5,7 +5,7 @@ jQuery.fn.drawr.register({
 	alpha: 1,
 	order: 14,
 	//The tool object is shared across drawr instances on a page, so per-canvas DOM/state
-	//(the floating input box, the pending text position) must live on `self` — never on `brush`.
+	//(the floating input box, the pending text position) must live on `self`. never on `brush`.
 	activate: function(brush,context){
 
 	},

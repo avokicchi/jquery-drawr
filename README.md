@@ -28,6 +28,7 @@ $("#canvas").drawr("start");
 - User-definable custom image brushes
 - Ignores unintended touches
 - Rotation, pinch to zoom and dragging on mobile, right click to draw and mousewheel zooming on desktop
+- Tap and hold to pick color
 
 **Methods**
 
@@ -62,8 +63,8 @@ $("#canvas").drawr("start");
 
 The plugin triggers jQuery events on the canvas element whenever the user starts or ends a valid stroke. Palm/wrist touches, pinch/rotate gestures, and middle-mouse pans are filtered out and do not fire events.
 
-- `drawr:drawstart` — fires once when a stroke begins
-- `drawr:drawstop` — fires once when the stroke ends
+- `drawr:drawstart` fires once when a stroke begins
+- `drawr:drawstop` fires once when the stroke ends
 
 Each event carries a data object: `{x, y, tool, size, alpha, pressure}`: canvas-local coordinates, the active tool's `name`, the resolved size/alpha for the stroke, and the input pressure (0..1; 0.5 for non-pressure-sensitive devices).
 
@@ -90,7 +91,7 @@ Tools live in `src/tools/` and self-register at load time by calling `jQuery.fn.
 
 ```javascript
 jQuery.fn.drawr.register({
-    //metadata — shown in the toolbox
+    //metadata shown in the toolbox
     name: "my_tool",
     icon: "mdi mdi-brush mdi-24px",
     order: 10,
@@ -105,12 +106,12 @@ jQuery.fn.drawr.register({
     size_max: 3,            //with pressure_affects_size on, `size` is the base (low-pressure, and
                             //what draws on devices without pen pressure) and the stroke lerps up to
                             //`size_max` (px) at full press. So size=1, size_max=3 stays hairline on
-                            //desktop mouse and sweeps 1..3 px on a stylus — ideal for inking. Set
+                            //desktop mouse and sweeps 1..3 px on a stylus. ideal for inking. Set
                             //size_max to the same value as size to disable growth. Alpha uses the
-                            //simpler multiplicative form — its natural ceiling at 1 makes that
+                            //simpler multiplicative form. its natural ceiling at 1 makes that
                             //correct.
 
-    //dynamics (all optional — omit to skip that effect)
+    //dynamics (all optional; omit to skip that effect)
     flow: 0.9,              //deterministic per-spot alpha multiplier (0..1)
     spacing: 0.15,          //step distance as a fraction of size; replaces the old hardcoded size/4
     smoothing: true,        //enables Catmull-Rom interpolation of the stroke path
@@ -133,7 +134,7 @@ jQuery.fn.drawr.register({
         context.globalAlpha = alpha;
     },
 
-    //8-argument signature. `angle` (radians) is resolved by the engine from rotation_mode —
+    //8-argument signature. `angle` (radians) is resolved by the engine from rotation_mode
     //consume it if your stamp rotates (pencil, custom brushes), ignore it otherwise.
     drawSpot: function(brush, context, x, y, size, alpha, event, angle){
         //... draw one stamp at (x, y)

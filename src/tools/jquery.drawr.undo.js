@@ -14,7 +14,7 @@ jQuery.fn.drawr.register({
 	},
 	//Each undo reverses the most recent stroke in the linear action history. The top-of-stack
 	//entry is the after-state of the last action; its layerId identifies which layer to undo
-	//on. We walk down the stack for the previous entry for the same layer — that's the state
+	//on. We walk down the stack for the previous entry for the same layer. that's the state
 	//to restore to. If there's no such entry (the very first stroke on a fresh layer), we
 	//fallback-clear the layer. The popped entry goes to redoStack.
 	action: function(brush,context){
@@ -28,7 +28,7 @@ jQuery.fn.drawr.register({
 			if(typeof self.$redoButton !== "undefined") self.$redoButton.css("opacity", bright ? 1 : 0.5);
 		}
 		//can the user undo right now? the top must be non-sticky and non-orphaned, AND the
-		//action must be able to actually complete — a top-only entry on a trimmed layer has
+		//action must be able to actually complete. a top-only entry on a trimmed layer has
 		//no prior state to restore to and fallback-clear is forbidden, so that too counts as
 		//"can't undo" and should leave the button dimmed.
 		function canUndo(){
@@ -80,7 +80,7 @@ jQuery.fn.drawr.register({
 		}
 
 		//if there's no prior state AND we've trimmed history for this layer (cap hit), refuse
-		//to undo — fallback-clear would wipe real content the user doesn't remember is there.
+		//to undo. fallback-clear would wipe real content the user doesn't remember is there.
 		if(!prev && targetLayer.history_trimmed){
 			setUndoButton(false);
 			return;

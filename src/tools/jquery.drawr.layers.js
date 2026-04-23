@@ -9,12 +9,13 @@ jQuery.fn.drawr.register({
 
 		self.$layersToolbox = plugin.create_toolbox.call(self, "layers", null, "Layers", 220);
 
-		//toolbar — actions that operate on the active layer. built once; render() re-applies
+		//toolbar actions that operate on the active layer. built once; render() re-applies
 		//enabled/disabled state on every layer mutation.
 		var toolbarDefs = [
 			{ key:"add",       icon:"mdi-plus",                title:"Add layer"   },
 			{ key:"delete",    icon:"mdi-close",               title:"Delete layer" },
 			{ key:"clear",     icon:"mdi-delete",              title:"Clear layer" },
+			{ key:"paste",     icon:"mdi-content-paste",       title:"Paste clipboard image to active layer" },
 			{ key:"moveup",    icon:"mdi-arrow-up",            title:"Move layer up" },
 			{ key:"movedown",  icon:"mdi-arrow-down",          title:"Move layer down" },
 			{ key:"mergedown", icon:"mdi-arrow-collapse-down", title:"Merge down" }
@@ -33,6 +34,7 @@ jQuery.fn.drawr.register({
 		var $tbAdd       = $toolbar.find('.drawr-layers-tb-add');
 		var $tbDelete    = $toolbar.find('.drawr-layers-tb-delete');
 		var $tbClear     = $toolbar.find('.drawr-layers-tb-clear');
+		var $tbPaste     = $toolbar.find('.drawr-layers-tb-paste');
 		var $tbMoveUp    = $toolbar.find('.drawr-layers-tb-moveup');
 		var $tbMoveDown  = $toolbar.find('.drawr-layers-tb-movedown');
 		var $tbMergeDown = $toolbar.find('.drawr-layers-tb-mergedown');
@@ -105,7 +107,7 @@ jQuery.fn.drawr.register({
 			return html;
 		}
 
-		//toolbar handlers — read activeLayerIndex at click time so they always operate on
+		//toolbar handlers. read activeLayerIndex at click time so they always operate on
 		//whatever is currently selected.
 		$tbAdd.on('click', function(e){
 			e.stopPropagation();
@@ -135,6 +137,92 @@ jQuery.fn.drawr.register({
 			if(!window.confirm("Clear \"" + (layer.name || "New layer") + "\"?")) return;
 			plugin.clear_layer.call(self, idx);
 		});
+
+		//grow all layer canvases to at least newW x newH, preserving pixels at (0,0). Used by
+		//paste when the clipboard image is larger than the current canvas. Existing layer 0
+		//content is preserved; any freshly exposed area on layer 0 gets white under
+		//no-transparency mode so paper coverage stays consistent with initialize_canvas.
+		function grow_canvas_preserving(newW, newH){
+			if(newW <= self.width && newH <= self.height) return false;
+			newW = Math.max(self.width, newW);
+			newH = Math.max(self.height, newH);
+			for(var li = 0; li < self.layers.length; li++){
+				var lc = self.layers[li].canvas;
+				var tmp = document.createElement("canvas");
+				tmp.width = lc.width;
+				tmp.height = lc.height;
+				tmp.getContext("2d").drawImage(lc, 0, 0);
+				//setting width/height clears the canvas; paint back after.
+				lc.width = newW;
+				lc.height = newH;
+				var lctx = lc.getContext("2d", { alpha: true });
+				if(li === 0 && self.settings.enable_transparency === false){
+					lctx.fillStyle = "white";
+					lctx.fillRect(0, 0, newW, newH);
+				}
+				lctx.drawImage(tmp, 0, 0);
+				self.layers[li].$el.width(newW * self.zoomFactor);
+				self.layers[li].$el.height(newH * self.zoomFactor);
+			}
+			plugin.draw_checkerboard.call(self);
+			return true;
+		}
+
+		//paste a clipboard image onto the active layer. grows the canvas (preserving all
+		//layers) if the image doesn't fit, then re-centers so the enlarged artwork is visible.
+		//needs navigator.clipboard.read, which requires a user gesture (the click satisfies
+		//this) and clipboard-read permission. no prompt on resize, per user preference.
+		$tbPaste.on('click', function(e){
+			e.stopPropagation();
+			if(!$(this).data("enabled")) return;
+			if(!navigator.clipboard || !navigator.clipboard.read){
+				window.alert("Clipboard read is not supported in this browser.");
+				return;
+			}
+			navigator.clipboard.read().then(function(items){
+				//find the first image/* blob across all clipboard items.
+				for(var i = 0; i < items.length; i++){
+					var types = items[i].types || [];
+					for(var j = 0; j < types.length; j++){
+						if(/^image\//.test(types[j])){
+							return items[i].getType(types[j]);
+						}
+					}
+				}
+				return null;
+			}).then(function(blob){
+				if(!blob){ window.alert("No image found on the clipboard."); return; }
+				var url = URL.createObjectURL(blob);
+				var img = new Image();
+				img.onload = function(){
+					URL.revokeObjectURL(url);
+					//snapshot active layer BEFORE mutation so undo restores the pre-paste state.
+					plugin.record_undo_entry.call(self);
+					var grew = grow_canvas_preserving(img.width, img.height);
+					var actx = plugin.active_context.call(self);
+					actx.save();
+					actx.globalCompositeOperation = "source-over";
+					actx.globalAlpha = 1;
+					actx.drawImage(img, 0, 0);
+					actx.restore();
+					//if we resized, re-center like the load action does so the user sees
+					//the newly enlarged canvas instead of staring at an offset corner.
+					if(grew){
+						var cx = (self.width  - self.containerWidth)  / 2;
+						var cy = (self.height - self.containerHeight) / 2;
+						plugin.apply_scroll.call(self, cx, cy, false);
+					}
+				};
+				img.onerror = function(){
+					URL.revokeObjectURL(url);
+					window.alert("Could not decode the clipboard image.");
+				};
+				img.src = url;
+			}).catch(function(err){
+				window.alert("Could not read the clipboard: " + (err && err.message ? err.message : err));
+			});
+		});
+
 		$tbMoveUp.on('click', function(e){
 			e.stopPropagation();
 			if(!$(this).data("enabled")) return;
@@ -163,6 +251,7 @@ jQuery.fn.drawr.register({
 			setEnabled($tbAdd,       self.layers.length < plugin.MAX_LAYERS);
 			setEnabled($tbDelete,    self.layers.length > 1);
 			setEnabled($tbClear,     true);
+			setEnabled($tbPaste,     true);
 			setEnabled($tbMoveUp,    activeIdx < self.layers.length - 1);
 			setEnabled($tbMoveDown,  activeIdx > 0);
 			setEnabled($tbMergeDown, activeIdx > 0);
@@ -206,7 +295,7 @@ jQuery.fn.drawr.register({
 						render();
 					});
 
-					//name input — keyboard-focused editing. swallow pointer/key events so the
+					//name input keyboard-focused editing. swallow pointer/key events so the
 					//row-click handler and the global toolbox-drag don't interfere.
 					var $name = $row.find('.layer-name')
 						.on('pointerdown mousedown touchstart keydown', function(e){ e.stopPropagation(); })

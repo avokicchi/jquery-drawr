@@ -164,7 +164,7 @@
 		//Multiply blending reaches through transparent pixels down to $bgCanvas (checkerboard
 		//or paper), which is what we want on screen. Export skips $bgCanvas, so saved output
 		//only carries the artwork.
-		plugin.MAX_LAYERS = 3;
+		plugin.MAX_LAYERS = 4;
 
 		//Supported layer blend modes. The name is used both as the CSS mix-blend-mode
 		//value (for on-screen compositing) and the canvas globalCompositeOperation
@@ -726,6 +726,8 @@
 							ctx().putImageData(self._gestureAbortSnapshot, 0, 0);
 							self._gestureAbortSnapshot = null;
 						}
+						//a second finger aborts any pending or active long-press pick.
+						plugin.cancel_color_picker.call(self);
 						var t1 = pts[0], t2 = pts[1];
 						self.gestureStart = {
 							dist:	 plugin.distance_between(t1, t2),
@@ -749,7 +751,13 @@
 						//save snapshot of the active layer so the second touch can erase this stroke
 						//start if a gesture is detected. only the active layer can have changed.
 						var _startCtx = ctx();
-						if(e.originalEvent.pointerType === "touch") self._gestureAbortSnapshot = _startCtx.getImageData(0, 0, self.width, self.height);
+						//snapshot for touch (so a 2-finger gesture can roll back the first dot) and
+						//for any pointer type when the long-press colour picker is enabled (the
+						//rollback path is identical). skip when the eyedropper is active, since
+						//picking-while-picking is pointless and the eyedropper doesn't place a dot.
+						var _wantSnapshot = e.originalEvent.pointerType === "touch" ||
+							(self.settings.long_press_pick_enabled && self.active_brush.name !== "eyedropper");
+						if(_wantSnapshot) self._gestureAbortSnapshot = _startCtx.getImageData(0, 0, self.width, self.height);
 						$(self).data("is_drawing",true);
 						self._activeButton = e.button;//store button, since pointer events only have useful button info in pointerdown, and we catch pointermove later.
 						_startCtx.lineCap = "round";_startCtx.lineJoin = 'round';
@@ -792,6 +800,25 @@
 						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
 						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
 						$(self).trigger("drawr:drawstart", [{x: mouse_data.x, y: mouse_data.y, tool: self.active_brush.name, size: calculatedSize, alpha: startAlpha, pressure: mouse_data.pressure}]);
+
+						//arm the long-press colour picker timer. get cancelled on movement
+						//past tolerance (drawMove) or on release (drawStop). on fire, rolls back
+						//the initial dot above via the snapshot we just took and enters pick mode.
+						if(self.settings.long_press_pick_enabled && self.active_brush.name !== "eyedropper"){
+							if(self._longPressTimer) clearTimeout(self._longPressTimer);
+							var _rect = self.$container[0].getBoundingClientRect();
+							self._longPressStart = {
+								pageX: e.pageX, pageY: e.pageY,
+								canvasX: mouse_data.x, canvasY: mouse_data.y,
+								viewX: e.pageX - _rect.left - window.scrollX,
+								viewY: e.pageY - _rect.top  - window.scrollY
+							};
+							self._longPressTimer = setTimeout(function(){
+								self._longPressTimer = null;
+								plugin.activate_color_picker.call(self);
+							}, self.settings.long_press_pick_duration);
+						}
+
 						plugin.request_redraw.call(self);
 					}
 				}
@@ -805,6 +832,37 @@
 				//update tracked pointer position for gesture calculation
 				if(e.originalEvent.pointerType === "touch" && self.activePointers[e.originalEvent.pointerId]){
 					self.activePointers[e.originalEvent.pointerId] = {x: e.pageX, y: e.pageY};
+				}
+
+				//long-press colour picker: while active, hunt a colour under the pointer
+				//(no drawing). live-updates brushColor so the palette swatch tracks your finger.
+				if(self._pickerActive){
+					var _pmd = plugin.get_mouse_data.call(self, e, self.$container[0], self);
+					var _pRect = self.$container[0].getBoundingClientRect();
+					self._pickerPos     = { x: _pmd.x, y: _pmd.y };
+					self._pickerViewPos = { x: e.pageX - _pRect.left - window.scrollX, y: e.pageY - _pRect.top - window.scrollY };
+					plugin.sample_picker_color.call(self, _pmd.x, _pmd.y);
+					//live-mirror into brushColor + palette so the user sees feedback while hunting.
+					if(self._pickerColor){
+						self.brushColor = { r: self._pickerColor.r, g: self._pickerColor.g, b: self._pickerColor.b };
+						if(self.$settingsToolbox){
+							var _hex = plugin.rgb_to_hex(self._pickerColor.r, self._pickerColor.g, self._pickerColor.b);
+							self.$settingsToolbox.find('.color-picker.active-drawrpalette').drawrpalette("set", _hex);
+						}
+					}
+					plugin.request_redraw.call(self);
+					return;
+				}
+
+				//long-press armed: cancel if the user drifts past tolerance. the normal stroke
+				//then proceeds uninterrupted from this same pointermove event.
+				if(self._longPressTimer){
+					var _lpdx = e.pageX - self._longPressStart.pageX;
+					var _lpdy = e.pageY - self._longPressStart.pageY;
+					if(Math.sqrt(_lpdx*_lpdx + _lpdy*_lpdy) > self.settings.long_press_pick_move_tolerance){
+						clearTimeout(self._longPressTimer);
+						self._longPressTimer = null;
+					}
 				}
 
 				//apply pinch zoom and rotation while gesturing
@@ -984,6 +1042,18 @@
 				//remove pointer from tracking map on lift or cancel
 				if(e.originalEvent && e.originalEvent.pointerType === "touch"){
 					delete self.activePointers[e.originalEvent.pointerId];
+				}
+
+				//long-press timer still armed (user released before it fired): disarm and
+				//fall through to the normal stroke end for whatever tool is active.
+				if(self._longPressTimer){ clearTimeout(self._longPressTimer); self._longPressTimer = null; }
+
+				//long-press colour picker active: commit the sampled colour and short-circuit.
+				//the tool never saw a drawing stroke (drawStart rolled back on activation),
+				//so sending it a drawStop here would be meaningless.
+				if(self._pickerActive){
+					plugin.commit_color_picker.call(self);
+					return;
 				}
 
 				//end gesture mode when fewer than two touch pointers remain
@@ -1501,7 +1571,8 @@
 
 			var button_width = 100/self.settings.toolbox_cols;
 			var el = $("<a class='drawr-tool-btn' style='cursor:pointer;float:left;display:block;margin:0px;'><i class='" + data.icon + "'></i></a>");
-			el.css({ "outline" : "none", "text-align":"center","padding": "0px 0px 0px 0px","width" : button_width + "%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
+			//faint outline (not border) so we can visually separate buttons without adding to the layout box.
+			el.css({ "outline" : "1px solid rgba(0,0,0,0.15)", "outline-offset" : "0px", "text-align":"center","padding": "0px 0px 0px 0px","width" : button_width + "%", "background" : "#eeeeee", "color" : "#000000","border":"0px","min-height":"30px","user-select": "none", "text-align": "center", "border-radius" : "0px" });
 			if(typeof css!=="undefined") el.css(css);
 			el.addClass("type-" + type);
 			el.data("data",data).data("type",type);
@@ -1910,6 +1981,25 @@
 				context.restore();
 			}
 
+			//long-press colour-picker indicator. drawn outside the rotation transform
+			//so the ring stays upright regardless of canvas rotation.
+			if(this._pickerActive || (typeof this._pickerOpacity === "number" && this._pickerOpacity > 0)){
+				var _pkTarget = (typeof this._pickerTargetOpacity === "number") ? this._pickerTargetOpacity : 0;
+				var _pkCur    = (typeof this._pickerOpacity === "number") ? this._pickerOpacity : 0;
+				this._pickerOpacity = _pkCur + (_pkTarget - _pkCur) * 0.15;
+				if(Math.abs(_pkTarget - this._pickerOpacity) < 0.01) this._pickerOpacity = _pkTarget;
+
+				plugin.draw_picker_indicator.call(this, context);
+
+				//fully faded out: tear down.
+				if(!this._pickerActive && this._pickerOpacity <= 0){
+					this._pickerOpacity = 0;
+					this._pickerViewPos = null;
+					this._pickerPos = null;
+					this._pickerColor = null;
+				}
+			}
+
 			var container_width = this.containerWidth;
 			var container_height = this.containerHeight;
 
@@ -2055,7 +2145,7 @@
 			}
 
 			//we only keep the loop alive when there is work to do (effectCallback preview or scroll indicators fading in n out). Everything else is triggered via request_redraw.
-			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || this.zoomIndicatorTimer > 0 || (this.settings.debug_mode && this.isGesturing)){
+			if((typeof this.effectCallback!=="undefined" && this.effectCallback!==null) || this.scrollTimer > 0 || this.zoomIndicatorTimer > 0 || (this.settings.debug_mode && this.isGesturing) || this._pickerActive || (typeof this._pickerOpacity === "number" && this._pickerOpacity > 0)){
 				this._animFrameQueued = true;
 				window.requestAnimationFrame(this.draw_animations_bound);
 			}
@@ -2068,6 +2158,188 @@
 				this._animFrameQueued = true;
 				window.requestAnimationFrame(this.draw_animations_bound);
 			}
+		};
+
+		//---- long-press colour picker ----------------------------------------------------
+		//
+		//hold still on the canvas for settings.long_press_pick_duration ms and a colour
+		//ring blooms under the pointer. drag to hunt a colour, release to pick. any
+		//initial dot the active tool placed at drawStart is rolled back using the
+		//existing _gestureAbortSnapshot so picking is never destructive.
+
+		//fires when the long-press timer elapses.
+		plugin.activate_color_picker = function(){
+			var self = this;
+			//setTimeout races pointerup; the user may already have released.
+			if($(self).data("is_drawing") !== true) return;
+
+			//roll back the initial dot placed by the active tool's drawStart.
+			var _ctx = plugin.active_context.call(self);
+			if(self._gestureAbortSnapshot){
+				_ctx.putImageData(self._gestureAbortSnapshot, 0, 0);
+				self._gestureAbortSnapshot = null;
+			}
+
+			//stop drawing without delivering drawStop to the tool: the stroke was
+			//retroactively cancelled, so the tool should not see an end for it.
+			$(self).data("is_drawing", false);
+
+			//multi-layer: composite once into a sample canvas (drawing is locked while
+			//picking, so the snapshot can't go stale). single-layer: sample the active
+			//context directly.
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = plugin.composite_for_export.call(self);
+				self._pickerSampleCtx = self._pickerSampleCanvas.getContext("2d", { alpha: self.settings.enable_transparency });
+			} else {
+				self._pickerSampleCanvas = self;
+				self._pickerSampleCtx = _ctx;
+			}
+
+			self._pickerActive = true;
+			if(typeof self._pickerOpacity !== "number") self._pickerOpacity = 0;
+			self._pickerTargetOpacity = 1;
+
+			//seed position + colour from where the press started.
+			var lp = self._longPressStart;
+			self._pickerPos     = { x: lp.canvasX, y: lp.canvasY };
+			self._pickerViewPos = { x: lp.viewX,   y: lp.viewY };
+			plugin.sample_picker_color.call(self, lp.canvasX, lp.canvasY);
+
+			//small haptic on devices that offer it. no-op on desktop. (^_^)
+			if(typeof navigator !== "undefined" && typeof navigator.vibrate === "function"){
+				try { navigator.vibrate(10); } catch(e) {}
+			}
+
+			plugin.request_redraw.call(self);
+		};
+
+		//samples a pixel from the active sample source into self._pickerColor.
+		//transparent / semi-transparent pixels get composited over the visible paper
+		//background so the picker returns what the user sees, not raw rgba (a fully
+		//transparent pixel reads as (0,0,0,0) and would otherwise pick as black).
+		//approximation: solid paper mode uses the configured paper_color; checkerboard
+		//mode uses white. close enough without sampling the checker pattern itself.
+		plugin.sample_picker_color = function(canvasX, canvasY){
+			var self = this;
+			if(!self._pickerSampleCtx) return;
+			var rx = Math.max(0, Math.min(self.width  - 1, Math.round(canvasX)));
+			var ry = Math.max(0, Math.min(self.height - 1, Math.round(canvasY)));
+			var d = self._pickerSampleCtx.getImageData(rx, ry, 1, 1).data;
+			var a = d[3];
+			if(a < 255){
+				var bg = (self.paperColorMode === "solid")
+					? (plugin.hex_to_rgb(self.paperColor) || { r: 255, g: 255, b: 255 })
+					: { r: 255, g: 255, b: 255 };
+				//standard source-over: out = src*sa + bg*(1-sa). canvas ImageData is
+				//non-premultiplied, so d[0..2] are the original rgb components.
+				var sa = a / 255;
+				var ia = 1 - sa;
+				self._pickerColor = {
+					r: Math.round(d[0] * sa + bg.r * ia),
+					g: Math.round(d[1] * sa + bg.g * ia),
+					b: Math.round(d[2] * sa + bg.b * ia)
+				};
+			} else {
+				self._pickerColor = { r: d[0], g: d[1], b: d[2] };
+			}
+		};
+
+		//release-while-picking: commit the final colour and start the fade-out.
+		plugin.commit_color_picker = function(){
+			var self = this;
+			if(!self._pickerActive) return;
+			var c = self._pickerColor || { r: 0, g: 0, b: 0 };
+			self.brushColor = { r: c.r, g: c.g, b: c.b };
+			var hex = plugin.rgb_to_hex(c.r, c.g, c.b);
+			//mirror into palette UI (matches eyedropper.js flow).
+			if(self.$settingsToolbox) self.$settingsToolbox.find('.color-picker.active-drawrpalette').drawrpalette("set", hex);
+
+			self._pickerActive = false;
+			self._pickerTargetOpacity = 0;
+			//release multi-layer composite so GC can reclaim it. the active-context
+			//reference is harmless to leave; draw_animations teardown clears it anyway.
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = null;
+				self._pickerSampleCtx = null;
+			}
+			plugin.request_redraw.call(self);
+		};
+
+		//two-finger gesture started mid-pick: cancel without committing.
+		plugin.cancel_color_picker = function(){
+			var self = this;
+			if(self._longPressTimer){ clearTimeout(self._longPressTimer); self._longPressTimer = null; }
+			if(!self._pickerActive) return;
+			self._pickerActive = false;
+			self._pickerTargetOpacity = 0;
+			if(self.layers && self.layers.length > 1){
+				self._pickerSampleCanvas = null;
+				self._pickerSampleCtx = null;
+			}
+			plugin.request_redraw.call(self);
+		};
+
+		//renders the picker ring on the memory canvas in container-local coordinates
+		//(called outside the rotation transform so the ring sits upright on screen
+		//regardless of canvas rotation).
+		plugin.draw_picker_indicator = function(context){
+			var self = this;
+			if(self._pickerOpacity <= 0 || !self._pickerViewPos) return;
+			var vx = self._pickerViewPos.x;
+			var vy = self._pickerViewPos.y;
+			var c  = self._pickerColor || { r: 128, g: 128, b: 128 };
+
+			//offset the ring up-and-left so the finger/stylus doesn't occlude the sample point.
+			var offX = -42, offY = -42;
+			var ringR  = 28;
+			var innerR = 22;
+			var cx = vx + offX, cy = vy + offY;
+
+			context.save();
+			context.globalAlpha = self._pickerOpacity;
+
+			//connector line from sample point to ring centre.
+			context.lineWidth = 2;
+			context.strokeStyle = "rgba(0,0,0,0.5)";
+			context.beginPath();
+			context.moveTo(vx, vy);
+			context.lineTo(cx, cy);
+			context.stroke();
+
+			//little crosshair marker at the actual sample point.
+			context.beginPath();
+			context.arc(vx, vy, 4, 0, Math.PI * 2);
+			context.fillStyle = "rgba(255,255,255,0.9)";
+			context.fill();
+			context.lineWidth = 1;
+			context.strokeStyle = "rgba(0,0,0,0.8)";
+			context.stroke();
+
+			//soft drop shadow under the ring.
+			context.beginPath();
+			context.arc(cx, cy + 2, ringR + 2, 0, Math.PI * 2);
+			context.fillStyle = "rgba(0,0,0,0.25)";
+			context.fill();
+
+			//inner filled disc showing the sampled colour.
+			context.beginPath();
+			context.arc(cx, cy, innerR, 0, Math.PI * 2);
+			context.fillStyle = "rgb(" + c.r + "," + c.g + "," + c.b + ")";
+			context.fill();
+
+			//double-stroke ring (white inner + dark outer) for contrast on any background.
+			context.lineWidth = 3;
+			context.strokeStyle = "rgba(255,255,255,0.95)";
+			context.beginPath();
+			context.arc(cx, cy, ringR - 1, 0, Math.PI * 2);
+			context.stroke();
+			context.lineWidth = 2;
+			context.strokeStyle = "rgba(0,0,0,0.75)";
+			context.beginPath();
+			context.arc(cx, cy, ringR + 1, 0, Math.PI * 2);
+			context.stroke();
+
+			context.restore();
 		};
 
 		/* Create floating dialog and appends it hidden after the canvas */
@@ -2601,7 +2873,12 @@
 					"debug_mode" : false,
 					"paper_color_mode" : "checkerboard",
 					"paper_color" : "#ffffff",
-					"hide_advanced_brush_settings" : false
+					"hide_advanced_brush_settings" : false,
+					//sketchbook-style: hold still on the canvas for a beat and a colour
+					//ring blooms under the pointer. drag to hunt a colour, release to pick.
+					"long_press_pick_enabled" : true,
+					"long_press_pick_duration" : 700,   //ms
+					"long_press_pick_move_tolerance" : 8 //page px before the hold is abandoned
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;

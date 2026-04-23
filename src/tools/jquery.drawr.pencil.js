@@ -41,7 +41,7 @@ jQuery.fn.drawr.register({
 	    context.restore();
 	},
 	//angle is resolved by the engine's emit_spot from brush.rotation_mode. pencil's default is
-	//"random_jitter" so every stamp comes in rotated by the engine — no local randomisation needed.
+	//"random_jitter" so every stamp comes in rotated by the engine. no local randomisation needed.
 	drawSpot: function(brush,context,x,y,size,alpha,event,angle) {
 		if(!brush._rawImage || !brush._rawImage.complete) return;
 		var color = this._activeButton === 2 ? this.brushBackColor : this.brushColor;

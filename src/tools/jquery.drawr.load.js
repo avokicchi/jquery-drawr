@@ -43,7 +43,7 @@ jQuery.fn.drawr.register({
 					//sticky baseline so undo can step back through subsequent strokes but not
 					//past the load itself.
 					var ctx = self.plugin.active_context.call(self);
-					//reset compositing state — the last tool's drawStart may have left behind a
+					//reset compositing state: the last tool's drawStart may have left behind a
 					//non-default globalAlpha or globalCompositeOperation, which would otherwise
 					//stamp the loaded image at e.g. 30% opacity or in destination-out mode.
 					ctx.globalCompositeOperation = "source-over";

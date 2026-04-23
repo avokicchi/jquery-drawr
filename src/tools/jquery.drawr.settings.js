@@ -241,7 +241,7 @@ jQuery.fn.drawr.register({
 			self.plugin.is_dragging = false;
 		});
 
-		//Reset Defaults — restores the tool to the values snapshotted at register() time.
+		//Reset Defaults; restores the tool to the values snapshotted at register() time.
 		//Hidden for custom (removable) brushes since their "defaults" live in the saved record.
 		self.$resetButton = self.plugin.create_button.call(self, self.$advancedSection, "Reset defaults");
 		self.$resetButton.on("click.drawr", function(){
@@ -306,7 +306,7 @@ jQuery.fn.drawr.register({
 			var curGamma = self.plugin.read_pressure_curve();
 			var t = Math.max(0, Math.min(100, Math.round(50 - 50 * Math.log(curGamma) / Math.log(3))));
 			self.$pressureCurveSlider.val(t);
-			//preview is a raw canvas, not tied to slider input event — redraw directly.
+			//preview is a raw canvas, not tied to slider input event. redraw directly.
 			var c = self.$pressureCurvePreview && self.$pressureCurvePreview[0];
 			if(c && c.getContext){
 				var ctx = c.getContext("2d");
@@ -327,7 +327,7 @@ jQuery.fn.drawr.register({
 		}
 
 		//---- Advanced section ----------------------------------------
-		//Hide entirely for tools without drawSpot (shape/action tools) — dynamics don't apply to them.
+		//Hide entirely for tools without drawSpot (shape/action tools). dynamics don't apply to them.
 		if(self.$advancedSection){
 			var hasSpot = typeof self.active_brush.drawSpot !== "undefined";
 			//hide_advanced_brush_settings hides the whole section from the UI, but engine dynamics keep working.
@@ -336,7 +336,7 @@ jQuery.fn.drawr.register({
 			if(hasSpot){
 				//read each field from active_brush with a sensible fallback; slider setters use .val() + trigger("input")
 				//to update the numeric display but we avoid re-persisting on every activate by setting val() directly
-				//when the value matches what we'd write back. Cheap approach: use .val() then trigger("input") — which
+				//when the value matches what we'd write back. Cheap approach: use .val() then trigger("input") which
 				//calls our handler and writes to active_brush[field] with the same value (idempotent).
 				var b = self.active_brush;
 				if(self.$rotationModeDropdown){

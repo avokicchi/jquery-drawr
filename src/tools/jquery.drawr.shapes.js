@@ -11,7 +11,7 @@ jQuery.fn.drawr.register({
 	_shape: "line",
 
 	//the tool object is shared across all drawr instances on a page, so DOM refs live on
-	//`self` (the canvas). `brush._shape` itself is intentionally global — a change in one
+	//`self` (the canvas). `brush._shape` itself is intentionally global. a change in one
 	//canvas's dropdown syncs all siblings via brush._shapeDropdowns.
 	buttonCreated: function(brush, button) {
 		var self = this;
