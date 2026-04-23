@@ -330,7 +330,9 @@ jQuery.fn.drawr.register({
 		//Hide entirely for tools without drawSpot (shape/action tools) — dynamics don't apply to them.
 		if(self.$advancedSection){
 			var hasSpot = typeof self.active_brush.drawSpot !== "undefined";
-			self.$advancedSection.closest(".drawr-collapsible").css("display", hasSpot ? "" : "none");
+			//hide_advanced_brush_settings hides the whole section from the UI, but engine dynamics keep working.
+			var hideAdvanced = !hasSpot || !!self.settings.hide_advanced_brush_settings;
+			self.$advancedSection.closest(".drawr-collapsible").css("display", hideAdvanced ? "none" : "");
 			if(hasSpot){
 				//read each field from active_brush with a sensible fallback; slider setters use .val() + trigger("input")
 				//to update the numeric display but we avoid re-persisting on every activate by setting val() directly

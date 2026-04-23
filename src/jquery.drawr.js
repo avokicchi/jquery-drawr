@@ -126,18 +126,13 @@
 		};
 		plugin.is_dragging = false;
 
-		//calculates effective alpha and size for a brush, scaling by pressure if the brush supports it.
-		//pressure is reshaped as `pow(pressure, gamma)` where gamma is a global user-adjustable curve
-		//(see plugin.read_pressure_curve). gamma<1 boosts low pressure so gentle stylus strokes (Apple
-		//Pencil resting pressure sits around 0.2-0.3) reach a useful fraction of the base; gamma=1 is
-		//linear; gamma>1 requires a firmer press.
-		//Size and alpha handle pressure differently on purpose. Alpha has a natural ceiling of 1,
-		//so `brushAlpha * pow(pressure, gamma)` gives a well-shaped 0..target sweep. Size has no
-		//such ceiling, and treating `size` as a max with a 1 px floor made the dynamic range
-		//proportional to size (tiny at small sizes, huge at large). Instead: `size` is the base /
-		//low-pressure value (what draws on a pressureless device), and `size_max` is the absolute
-		//pixel size at full press. Pressure interpolates: size + (size_max - size) * shaped.
-		//If size_max < size we clamp to size (no growth) so users can't accidentally invert it.
+		//Compute the final alpha and size for a brush spot, scaling by pen pressure if supported.
+		//Pressure is reshaped with a user-adjustable curve (gamma): <1 helps light presses show up
+		//(Apple Pencil rests around 0.2-0.3), 1 is linear, >1 needs a firmer press. See
+		//plugin.read_pressure_curve.
+		//Alpha just multiplies with the shaped pressure (it already caps at 1). Size interpolates
+		//between `size` (light press) and `size_max` (full press): size + (size_max - size) * shaped.
+		//If size_max < size we clamp to size, so pressing harder never shrinks the brush.
 		plugin.calc_brush_params = function(brush, brushSize, brushAlpha, pressure, pen_pressure){
 			var gamma  = plugin.read_pressure_curve();
 			var shaped = Math.pow(pressure, gamma);
@@ -162,14 +157,13 @@
 		};
 
 		//---- Layers -----------------------------------------------------------------------
-		//Multi-layer support. Layer 0 is the main <canvas> element itself; additional layers
-		//are sibling <canvas> elements added into the drawr-container. The browser composites
-		//them via CSS mix-blend-mode on the GPU, so drawing still targets exactly one context
-		//per stroke — perf is unchanged vs. single-canvas mode.
+		//Layer 0 is the main <canvas>; extra layers are sibling <canvas> elements inside
+		//drawr-container. The browser blends them together on the GPU via CSS mix-blend-mode,
+		//so a stroke still draws into a single canvas and performance matches single-layer mode.
 		//
-		//Blending scope: multiply reaches through transparent regions of layers below to
-		//$bgCanvas (checkerboard or solid paper). This is intentional (cheap + correct for
-		//solid paper) — export compositing in JS ignores $bgCanvas so saved output is clean.
+		//Multiply blending reaches through transparent pixels down to $bgCanvas (checkerboard
+		//or paper), which is what we want on screen. Export skips $bgCanvas, so saved output
+		//only carries the artwork.
 		plugin.MAX_LAYERS = 3;
 
 		//Supported layer blend modes. The name is used both as the CSS mix-blend-mode
@@ -219,7 +213,7 @@
 			var transform = plugin.canvas_transform(self.scrollX || 0, self.scrollY || 0, self.rotationAngle || 0);
 			$(self).css("transform", transform);
 			if(self.layers){
-				//iterate all layers — the main canvas may sit at any array position after
+				//iterate all layers; the main canvas may sit at any array position after
 				//move_layer_down, so we can't skip index 0. Re-applying the transform to the
 				//main canvas's own $el is a harmless no-op.
 				for(var i = 0; i < self.layers.length; i++){
@@ -234,19 +228,16 @@
 			var self = this;
 			if(!self.layers) return;
 			var zoom = self.zoomFactor || 1;
-			//same reason as broadcast_transform — the main canvas may be at any index.
+			//same reason as broadcast_transform: the main canvas may be at any index.
 			for(var i = 0; i < self.layers.length; i++){
 				self.layers[i].$el.width(self.width * zoom);
 				self.layers[i].$el.height(self.height * zoom);
 			}
 		};
 
-		//Create a new layer canvas as a sibling of the main canvas inside the drawr-container.
-		//pixel dimensions match self.width x self.height; CSS display size tracks zoom.
-		//the new layer is inserted at array index 0 (bottom of the stack / bottom of the
-		//layers panel) — feels more natural than appearing above existing artwork and
-		//immediately obscuring it. z-index is re-applied by restack_layers. opacity/
-		//visibility/mix-blend-mode applied per mode.
+		//Add a new layer as a sibling canvas inside drawr-container. Pixel size matches the
+		//main canvas; display size follows zoom. New layers go to the bottom of the stack so
+		//they don't immediately hide existing artwork. Stacking is finalised by restack_layers.
 		plugin.add_layer = function(mode, name){
 			var self = this;
 			if(self.layers.length >= plugin.MAX_LAYERS) return null;
@@ -268,7 +259,7 @@
 				"opacity": 1
 			});
 			//place below the current bottom layer in the DOM. z-index (set by restack_layers)
-			//is authoritative for stacking, so DOM order is cosmetic — we still mirror it.
+			//is authoritative for stacking, so DOM order is cosmetic, but we still mirror it.
 			$c.insertBefore(self.layers[0].$el);
 			var layer = {
 				id: self._nextLayerId++,
@@ -295,19 +286,18 @@
 			}
 		};
 
-		//delete a layer. guaranteed to leave at least one layer standing.
-		//special case: if the targeted layer happens to use the main canvas DOM element
-		//(which can't be removed from the page), we instead copy an adjacent layer's pixels
-		//into the main canvas and delete that adjacent layer. the main canvas adopts the
-		//adjacent layer's id/name/mode/opacity — so from the user's perspective, the layer
-		//they clicked delete on really is gone, and the neighbour now sits on the main canvas.
+		//Delete a layer (always leaves at least one). The main <canvas> element can't be
+		//removed from the page, so if the user deletes the layer that owns it we instead
+		//copy a neighbouring layer's pixels and metadata onto the main canvas and remove
+		//the neighbour. From the user's side the result looks the same: the clicked layer
+		//is gone, and its neighbour now sits on the main canvas.
 		plugin.delete_layer = function(index){
 			var self = this;
 			if(self.layers.length <= 1) return;
 			if(index < 0 || index >= self.layers.length) return;
 			var target = self.layers[index];
 			if(target.canvas === self){
-				//pick a donor — prefer the layer directly above; fall back to the one below.
+				//pick a donor: prefer the layer directly above; fall back to the one below.
 				var donorIdx = (index + 1 < self.layers.length) ? index + 1 : index - 1;
 				var donor = self.layers[donorIdx];
 				var mctx = target.canvas.getContext("2d", { alpha: true });
@@ -317,7 +307,7 @@
 				mctx.drawImage(donor.canvas, 0, 0);
 				//main canvas adopts donor's identity so undo entries keyed by the donor's id
 				//continue to work (they now restore to the main canvas). the original target
-				//layer's id is abandoned — its undo entries get skipped by resolve_layer_by_id.
+				//layer's id is abandoned; its undo entries get skipped by resolve_layer_by_id.
 				target.id = donor.id;
 				target.name = donor.name;
 				target.mode = donor.mode;
@@ -331,11 +321,11 @@
 				//remove the donor.
 				donor.$el.remove();
 				self.layers.splice(donorIdx, 1);
-				//active pointer: if donor was active, main canvas now holds its data — point at main.
+				//active pointer: if donor was active, main canvas now holds its data, so point at main.
 				if(self.activeLayerIndex === donorIdx) self.activeLayerIndex = self.layers.indexOf(target);
 				else if(self.activeLayerIndex > donorIdx) self.activeLayerIndex--;
 			} else {
-				//simple case — detach the DOM element and splice out.
+				//simple case: detach the DOM element and splice out.
 				target.$el.remove();
 				self.layers.splice(index, 1);
 				if(self.activeLayerIndex > index) self.activeLayerIndex--;
@@ -348,7 +338,7 @@
 		};
 
 		//swap layer at index with the one below it (index-1). covers "move up" by symmetry.
-		//the main canvas element can sit at any array position — z-index handles stacking
+		//the main canvas element can sit at any array position; z-index handles stacking
 		//regardless of which canvas is position:relative vs absolute.
 		plugin.move_layer_down = function(index){
 			var self = this;
@@ -356,7 +346,7 @@
 			var tmp = self.layers[index];
 			self.layers[index] = self.layers[index - 1];
 			self.layers[index - 1] = tmp;
-			//keep DOM order in sync with array order (cosmetic — z-index is authoritative).
+			//keep DOM order in sync with array order (cosmetic; z-index is authoritative).
 			tmp.$el.insertBefore(self.layers[index].$el);
 			if(self.activeLayerIndex === index) self.activeLayerIndex = index - 1;
 			else if(self.activeLayerIndex === index - 1) self.activeLayerIndex = index;
@@ -373,7 +363,7 @@
 			var self = this;
 			if(index < 0 || index >= self.layers.length) return;
 			self.layers[index].mode = mode;
-			//apply to every layer including the main canvas — multiply on the bottom-most
+			//apply to every layer including the main canvas. multiply on the bottom-most
 			//layer is a no-op visually (nothing below to blend with), but after reorder any
 			//layer may end up on top.
 			self.layers[index].$el.css("mix-blend-mode", plugin._blendCssValue(mode));
@@ -401,7 +391,7 @@
 		};
 
 		//wipe a single layer's pixels while keeping its metadata (name/mode/opacity/visibility).
-		//only the bottom layer under no-transparency mode fills white — matches the invariant
+		//only the bottom layer under no-transparency mode fills white, matching the invariant
 		//that clear_canvas() maintains for single-layer drawings; clearing a non-base layer to
 		//white would obscure everything below it.
 		plugin.clear_layer = function(index){
@@ -470,7 +460,7 @@
 
 		//collapse back to a single base layer: strips every extra sibling canvas and resets
 		//the base layer's metadata (name/mode/opacity/visibility) to defaults. the base layer
-		//is always self.layers[0] — delete_layer preserves this invariant by copying donor
+		//is always self.layers[0]; delete_layer preserves this invariant by copying donor
 		//pixels into the main canvas when the main canvas itself is the deletion target.
 		//caller is responsible for clearing pixels first (or not) as appropriate.
 		plugin.collapse_to_base_layer = function(){
@@ -493,7 +483,7 @@
 		};
 
 		//composite all visible layers into a fresh canvas for export. mirrors what the GPU
-		//does on screen via mix-blend-mode, but without $bgCanvas — saved output carries
+		//does on screen via mix-blend-mode, but without $bgCanvas, so saved output carries
 		//only the artwork.
 		plugin.composite_for_export = function(){
 			var self = this;
@@ -527,17 +517,17 @@
 			};
 		};
 
-		//Evaluates a centripetal Catmull-Rom spline (alpha=0.5) at parameter u (0..1) for the
-		//segment p1 -> p2, using p0 and p3 as the outer control points. The centripetal
-		//parameterisation guarantees no cusps or loops regardless of knot spacing or sharp
-		//direction changes — unlike the uniform variant which overshoots into loops at turns.
-		//Uses the Barry–Goldman recursive form (three linear interpolations per level, three levels),
-		//which is numerically friendlier for drawing apps than expanding the basis polynomials.
+		//Evaluate a centripetal Catmull-Rom spline at u (0..1) along the segment p1 -> p2,
+		//with p0 and p3 as outer control points. "Centripetal" just means the math spaces
+		//knots in a way that keeps the curve smooth through sharp turns; the uniform variant
+		//loops around on hairpins. Implemented with the Barry–Goldman form (three nested
+		//linear interpolations), which is more numerically stable than expanding the basis
+		//polynomials.
 		//Refs:
-		//Catmull-Rom spline — https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
-		//Barry–Goldman algorithm — https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
+		//Catmull-Rom spline: https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline
+		//Barry–Goldman algorithm: https://en.wikipedia.org/wiki/De_Casteljau%27s_algorithm (same idea,
 		//generalised to non-uniform knot spacing; see also Yuksel et al., "On the Parameterization of
-		//Catmull-Rom Curves", 2011 — http://www.cemyuksel.com/research/catmullrom_param/).
+		//Catmull-Rom Curves", 2011, at http://www.cemyuksel.com/research/catmullrom_param/).
 		plugin.catmull_rom_point = function(p0, p1, p2, p3, u) {
 			var d01 = Math.sqrt(plugin.distance_between(p0, p1));
 			var d12 = Math.sqrt(plugin.distance_between(p1, p2));
@@ -568,12 +558,12 @@
 			};
 		};
 
-		//central per-spot pipeline. applies brush dynamics (size/opacity/angle jitter, flow,
-		//scatter, rotation mode, fade-in) on top of the calculated base size/alpha, then calls
-		//brush.drawSpot with the resolved values. all three interpolation loops (drawMove linear,
-		//Catmull-Rom, drawStop flush) funnel through here so dynamics apply uniformly.
-		//strokeAngleRad: direction of travel at this spot in radians (atan2(dx, dy) convention
-		//matching plugin.angle_between); undefined means no direction available (first/stationary spot).
+		//Central per-spot pipeline. Applies brush dynamics (jitter on size/opacity/angle,
+		//flow, scatter, rotation mode, fade-in) on top of the base size/alpha, then calls
+		//brush.drawSpot. All three interpolation paths (drawMove linear, Catmull-Rom, drawStop
+		//flush) go through here so dynamics apply the same way everywhere.
+		//strokeAngleRad: direction of travel in radians (same convention as plugin.angle_between).
+		//Pass undefined when there's no direction yet, e.g. the very first spot of a stroke.
 		plugin.emit_spot = function(context, brush, baseX, baseY, strokeAngleRad, size, alpha, e) {
 			var self = this;
 
@@ -778,12 +768,11 @@
 							self._fadeInSpotCount++;
 							startAlpha = calculatedAlpha * Math.min(1, self._fadeInSpotCount / self.active_brush.brush_fade_in);
 						}
-						//resolve the first spot's angle per rotation_mode. stroke direction isn't
-						//available yet (no movement), so follow_stroke/follow_jitter fall back to
-						//base=0; fixed uses fixed_angle; random_jitter randomises. this mirrors
-						//emit_spot so the first stamp doesn't look different from the rest.
-						//fade-in already applied inline above, so this call bypasses emit_spot to
-						//avoid double-incrementing the counter.
+						//Resolve the first spot's angle. There's no stroke direction yet, so
+						//follow_stroke/follow_jitter fall back to 0; fixed uses fixed_angle;
+						//random_jitter randomises. Mirrors emit_spot so the first stamp matches
+						//the rest. Fade-in was applied above, so we bypass emit_spot here to
+						//avoid counting the first spot twice.
 						var _startMode = self.active_brush.rotation_mode || "none";
 						var _startAngle = 0;
 						if(_startMode === "fixed"){
@@ -793,13 +782,12 @@
 						} else if(_startMode === "follow_jitter"){
 							_startAngle = (Math.random() * 2 - 1) * (self.active_brush.angle_jitter || 0) * Math.PI;
 						}
-						//The first spot draws at the brush's base size, never the pressure-scaled size.
-						//Why: the Pointer Events spec reports pressure=0.5 on pointerdown when the
-						//hardware hasn't yet returned a real reading (Apple Pencil / Surface Pen both
-						//do this). With `pressure_affects_size` on and a wide size_max, that bogus 0.5
-						//becomes a huge first dot before pointermove delivers the real pressure. Using
-						//base size here matches the Photoshop/Krita convention of de-emphasising the
-						//landing pressure; alpha still gets pressure-scaled so fade-in keeps working.
+						//Draw the first spot at the brush's base size, ignoring pressure. Why:
+						//the Pointer Events spec returns pressure=0.5 on pointerdown before the
+						//stylus has given a real reading (Apple Pencil and Surface Pen both do
+						//this). With pressure_affects_size and a wide size_max, that placeholder
+						//0.5 would paint a huge first dot. Photoshop and Krita also de-emphasise
+						//landing pressure. Alpha still gets pressure-scaled so fade-in still works.
 						var _startSize = self.active_brush.pressure_affects_size ? self.brushSize : calculatedSize;
 						if(typeof self.active_brush.drawStart!=="undefined") self.active_brush.drawStart.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
 						if(typeof self.active_brush.drawSpot!=="undefined") self.active_brush.drawSpot.call(self,self.active_brush,_startCtx,mouse_data.x,mouse_data.y,_startSize,startAlpha,e,_startAngle);
@@ -886,7 +874,7 @@
 					var bp = plugin.calc_brush_params(self.active_brush, self.brushSize, self.brushAlpha, mouse_data.pressure, self.pen_pressure);
 					var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 
-					//navigation tools (move, eyedropper) operate on raw pointer events — bypass the
+					//navigation tools (move, eyedropper) operate on raw pointer events, so bypass the
 					//spacing/smoothing/jitter pipeline so every pointermove forwards straight to drawSpot.
 					//otherwise leftover brushSize/spacing from the previously-active paint tool would
 					//throttle the event rate and make panning/rotating choppy.
@@ -901,13 +889,13 @@
 						if(stepSize<1) stepSize = 1;
 
 						if(self.active_brush.smoothing) {
-							//smooth path: buffer raw knots and draw a Catmull-Rom segment lagging one event behind,
-							//using the new knot as the lookahead (P3) that shapes the tangent of the previous segment.
-							//Only accept a new knot if it is far enough from the last one. Sub-pixel (or near-pixel)
-							//knot spacing gives the spline no room to round corners, so high-precision stylus input
-							//would pass through every jitter point rather than smoothing over them.
-							//Cutoff is a fraction of brush size (not stepSize) — knot decimation is about jitter
-							//tolerance for the spline, which is unrelated to how densely the spline is sampled.
+							//Smooth path: buffer raw knots and draw a Catmull-Rom segment one event
+							//behind, using the newest knot as the lookahead (P3) that shapes the
+							//previous segment's tangent. A knot is only accepted if it's far enough
+							//from the last one; near-pixel spacing leaves the spline no room to round
+							//corners, and a high-precision stylus would just trace every jitter point.
+							//The cutoff is a fraction of brush size (jitter tolerance, independent of
+							//how densely we sample along the spline).
 							var knotCutoff = calculatedSize * 0.375;
 							if(knotCutoff < 1) knotCutoff = 1;
 							var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
@@ -1116,7 +1104,7 @@
 			this.undoStack.push({data: layer.canvas.toDataURL("image/png"), layerId: layer.id});
 			//enforce the cap by dropping the oldest non-sticky entry. sticky entries are
 			//baselines (loaded image) and shouldn't count toward the cap. when we drop a
-			//real entry, mark its layer as history-trimmed — undo's fallback-to-clear must
+			//real entry, mark its layer as history-trimmed, so undo's fallback-to-clear must
 			//refuse once we've lost the layer's oldest state.
 			if(this.undoStack.length > (this.settings.undo_max_levels + 1)){
 				for(var i = 0; i < this.undoStack.length; i++){
@@ -1145,12 +1133,11 @@
 			plugin.activate_brush.call(this, $(button).data("data"));
 		};
 
-		//activates a brush ( a tool plugin ).
 		//---- Persistence & cross-instance sync -------------------------------------------------
-		//Two localStorage keys: drawr.toolOverrides ({ [name]: { field: value } }) for built-in tools,
-		//and drawr.customBrushes ([ { id, ... } ]) for user-created brushes (step 8 populates these).
-		//Writes propagate to (a) all same-page drawr canvases via $.fn.drawr._instances, and (b) other
-		//tabs via the storage event. The writing tab does not receive its own storage event.
+		//Two localStorage keys hold tool state: drawr.toolOverrides ({ [name]: { field: value } })
+		//for built-in tools, and drawr.customBrushes ([ { id, ... } ]) for user-created brushes.
+		//Writes propagate to every drawr canvas on the page via $.fn.drawr._instances, and to
+		//other tabs via the storage event (which the writing tab does not receive itself).
 
 		plugin.read_overrides = function(){
 			try {
@@ -1197,7 +1184,7 @@
 			plugin._pressureCurveCache = gamma;
 			try { window.localStorage.setItem("drawr.pressureCurve", String(gamma)); } catch(e){}
 		};
-		//Refresh settings UI on every instance (no tool filter — this is a global setting).
+		//Refresh settings UI on every instance (no tool filter; this is a global setting).
 		plugin.broadcast_pressure_curve_change = function(){
 			var instances = $.fn.drawr._instances || [];
 			for(var i = 0; i < instances.length; i++){
@@ -1210,7 +1197,7 @@
 			}
 		};
 
-		//apply overrides from localStorage onto already-registered tools. idempotent — safe to re-run.
+		//apply overrides from localStorage onto already-registered tools. idempotent, safe to re-run.
 		//sets a guard so we don't iterate every call; set `force=true` to re-apply after a storage event.
 		plugin.apply_overrides = function(force){
 			if($.fn.drawr._overridesApplied && !force) return;
@@ -1441,8 +1428,8 @@
 			}
 
 			//patch fields on brushes that exist in both but may have changed (e.g. edited in another tab).
-			//We only copy the canonical dynamics fields — not id/icon/image_data_url, which shouldn't
-			//change for an existing brush — so reuse the single source of truth for that list.
+			//We only copy the canonical dynamics fields (not id/icon/image_data_url, which shouldn't
+			//change for an existing brush), so reuse the single source of truth for that list.
 			var dynFields = $.fn.drawr._dynamicsFields || [];
 			for(var eid2 in existingById){
 				if(recordById[eid2]){
@@ -1538,7 +1525,7 @@
 			//stopPropagation so clicking × doesn't also select the brush underneath.
 			if(data.removable){
 				el.css("position", "relative");
-				//use an MDI glyph rather than the × unicode character — the latter falls back
+				//use an MDI glyph rather than the × unicode character. the latter falls back
 				//to tofu on systems whose default font lacks the geometric-shape range.
 				var $x = $("<span class='drawr-tool-x mdi mdi-close' title='Remove brush'></span>");
 				$x.css({
@@ -1761,7 +1748,7 @@
 		plugin.create_collapsible = function(toolbox, title, collapsedDefault){
 			var uid = 'col-' + Math.random().toString(36).slice(2, 8);
 			var collapsed = !!collapsedDefault;
-			//use MDI chevron glyphs instead of raw unicode triangles — iOS Firefox renders those as
+			//use MDI chevron glyphs instead of raw unicode triangles. iOS Firefox renders those as
 			//tofu/garbled symbols because its default fallback font lacks the geometric-shape range.
 			var chevClass = function(c){ return c ? 'mdi-chevron-right' : 'mdi-chevron-down'; };
 			var $wrap = $(
@@ -1794,7 +1781,7 @@
 			$(this).css({ "display" : "block", "user-select": "none", "webkit-touch-callout": "none", "position": "relative", "z-index": 1 });
 			//`isolation: isolate` confines mix-blend-mode (used by multiply layers) to the
 			//drawr-container, so blending never reaches the surrounding page. $bgCanvas is
-			//still inside the isolated context — by design; multiply reaches through
+			//still inside the isolated context (by design); multiply reaches through
 			//transparent regions of layer 0 to the paper background.
 			this.$container.css({	"overflow": "hidden", "position": "relative", "user-select": "none", "webkit-touch-callout": "none", "isolation": "isolate" });
 
@@ -1814,7 +1801,7 @@
 
 			//drawr-layer-stack: inner wrapper that holds the main canvas + extra layer canvases.
 			//its `isolation: isolate` creates a fresh stacking context so layer mix-blend-mode
-			//only reaches sibling layers — the checkerboard ($bgCanvas) and UI overlay
+			//only reaches sibling layers. the checkerboard ($bgCanvas) and UI overlay
 			//($memoryCanvas) sit outside and never participate in blending.
 			if(!this.$layerStack){
 				this.$layerStack = $("<div class='drawr-layer-stack'></div>").css({
@@ -1834,7 +1821,7 @@
 			if(this.width!==width || this.height!==height){//if statement because it resets otherwise.
 				this.width=width;
 				this.height=height;
-				//resize extra layer canvases to match. drops their pixel data — acceptable during
+				//resize extra layer canvases to match. drops their pixel data; acceptable during
 				//explicit resize/load flows.
 				if(this.layers){
 					for(var li = 1; li < this.layers.length; li++){
@@ -1871,7 +1858,7 @@
 				} else {
 					context.clearRect(0,0,width,height);
 				}
-				//clear extra layers to transparent (regardless of paper setting — extras must be
+				//clear extra layers to transparent (regardless of paper setting; extras must be
 				//transparent for multiply/normal blending to compose correctly with layer 0).
 				if(this.layers){
 					for(var lk = 1; lk < this.layers.length; lk++){
@@ -2031,7 +2018,7 @@
 				context.stroke();
 			}
 
-			//zoom percentage indicator — bottom-center of the viewport, fades like the scrollbars.
+			//zoom percentage indicator, bottom-center of the viewport, fades like the scrollbars.
 			if(this.zoomIndicatorTimer > 0){
 				var _zAlpha = Math.min(0.85, (0.85/100)*this.zoomIndicatorTimer);
 				this.zoomIndicatorTimer -= 5;
@@ -2094,15 +2081,14 @@
 				"position" : "absolute", "z-index" : 6, "cursor" : "move", "width" : width + "px", "height" : "auto", "color" : "#fff",
 				"padding" : "2px", "background" : "linear-gradient(to bottom, rgba(69,72,77,1) 0%,rgba(0,0,0,1) 100%)", "border-radius" : "2px",
 				"box-shadow" : "0px 2px 5px -2px rgba(0,0,0,0.75)",	"user-select": "none", "font-family" : "sans-serif", "font-size" :"12px", "text-align" : "center",
-				//touch-action: none tells the browser this element never triggers native scroll/zoom,
-				//which is the only reliable way to stop a finger/pencil drag across the toolbox from
-				//scrolling the iOS page. preventDefault() on pointerdown can't do it. the browser
-				//decides pan vs pointer before pointer events fire, based purely on touch-action.
-				//binding touchstart+preventDefault used to work but broke taps on nested controls
-				//(iOS drops the synthesized click when touchstart and pointerdown are both bound on
-				//the same element). none fixes scroll without needing touchstart at all. buttons,
-				//labels, selects, and range sliders all still work because they use pointer/click
-				//events. (^_^)
+				//touch-action: none tells the browser this element never triggers native scroll
+				//or zoom. On iOS it's the only reliable way to stop a finger/pencil drag across
+				//the toolbox from scrolling the page; preventDefault() in pointerdown is too
+				//late, since the browser decides pan-vs-pointer from touch-action before pointer
+				//events fire. An older fix bound touchstart+preventDefault, but that broke taps
+				//on nested controls (iOS drops the synthesized click when touchstart and
+				//pointerdown are both bound on one element). Buttons, labels, selects, and
+				//sliders still work because they're driven by pointer/click events. (^_^)
 				"touch-action": "none"
 			});
 			$(toolbox).insertAfter(this.$container);
@@ -2114,7 +2100,7 @@
 			$(toolbox).on("mousedown." + self._evns, function(e){
 				if(e.button === 1) e.preventDefault();
 			});
-			//drag using pointerdown only — it covers mouse/touch/pen on all modern browsers.
+			//drag using pointerdown only; it covers mouse/touch/pen on all modern browsers.
 			//binding touchstart alongside is the root cause of mobile tap failures: iOS Safari
 			//treats a same-element touchstart+pointerdown pair as ambiguous, frequently dropping
 			//the synthesized click on nested buttons/labels/sliders.
@@ -2482,7 +2468,7 @@
 					//active layer context is all that's left.
 					var context = plugin.active_context.call(currentCanvas);
 					context.drawImage(img,0,0);
-					//drop prior history — dimensions changed, older snapshots no longer align —
+					//drop prior history (dimensions changed, older snapshots no longer align),
 					//and mark the loaded state sticky so undo treats it as a baseline: it serves
 					//as a restore target for later strokes, but undo refuses to pop it.
 					currentCanvas.undoStack = [];
@@ -2524,7 +2510,7 @@
 
 				currentCanvas.$memoryCanvas.remove();
 				if(currentCanvas.$bgCanvas){ currentCanvas.$bgCanvas.remove(); delete currentCanvas.$bgCanvas; }
-				//remove extra layer canvases (layer 0 is the main canvas — left in place).
+				//remove extra layer canvases (layer 0 is the main canvas, left in place).
 				if(currentCanvas.layers){
 					for(var _li = 1; _li < currentCanvas.layers.length; _li++){
 						currentCanvas.layers[_li].$el.remove();
@@ -2614,7 +2600,8 @@
 					"toolbox_cols" : 3,
 					"debug_mode" : false,
 					"paper_color_mode" : "checkerboard",
-					"paper_color" : "#ffffff"
+					"paper_color" : "#ffffff",
+					"hide_advanced_brush_settings" : false
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
@@ -2662,7 +2649,7 @@
 				//set up canvas
 				plugin.initialize_canvas.call(currentCanvas,defaultSettings.canvas_width,defaultSettings.canvas_height,true);
 				//undo/redo use "walk for prev same-layer" semantics with fallback-to-clear.
-				//no initial seed needed — the first stroke's undo will fallback-clear.
+				//no initial seed needed; the first stroke's undo will fallback-clear.
 				currentCanvas.undoStack = [];
 				currentCanvas.redoStack = [];
 				var context = currentCanvas.getContext("2d", { alpha: defaultSettings.enable_transparency });
@@ -2702,7 +2689,7 @@
 	$.fn.drawr.register = function (tool){
 		if(typeof $.fn.drawr.availableTools=="undefined") $.fn.drawr.availableTools=[];
 		//snapshot dynamics defaults so Reset-Defaults has a pristine target. Shallow copy of
-		//only the fields the tool actually declares — missing fields stay missing after reset.
+		//only the fields the tool actually declares; missing fields stay missing after reset.
 		if(typeof tool._defaults === "undefined"){
 			var defaults = {};
 			for(var i = 0; i < $.fn.drawr._dynamicsFields.length; i++){

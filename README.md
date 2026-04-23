@@ -56,6 +56,7 @@ $("#canvas").drawr("start");
 - toolbox_cols(3): configure the toolbox size
 - paper_color(#ffffff): configure the paper color used when paper_color_mode is solid
 - paper_color_mode(checkerboard/solid): configure the paper color display mode used if transparency is on.
+- hide_advanced_brush_settings(false): hides the Advanced section (per-spot brush dynamics) from the Settings dialog. The engine still applies whatever defaults/overrides are in place but users just can't edit them from the UI.
 
 **Events**
 
