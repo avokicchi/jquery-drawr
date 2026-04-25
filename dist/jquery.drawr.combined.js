@@ -782,6 +782,11 @@
 						var calculatedAlpha = bp.alpha, calculatedSize = bp.size;
 
 						$(self).data("positions",[{x:mouse_data.x,y:mouse_data.y}]);
+						//path-length spacing state: accumulate distance traveled along the stroke
+						//and emit a stamp every stepSize px. Tracks raw pointer (not last stamp)
+						//so tight scribbles inside a stepSize-radius still accumulate.
+						self._pathAccumDist = 0;
+						self._lastRawPoint = {x: mouse_data.x, y: mouse_data.y};
 						if(self.active_brush.smoothing) { self._smoothKnots = [{x: mouse_data.x, y: mouse_data.y}]; self._smoothAccumDist = 0; self._smoothLastStepSize = null; }
 						var startAlpha = calculatedAlpha;
 						if(self.active_brush.brush_fade_in){
@@ -964,10 +969,10 @@
 							//previous segment's tangent. A knot is only accepted if it's far enough
 							//from the last one; near-pixel spacing leaves the spline no room to round
 							//corners, and a high-precision stylus would just trace every jitter point.
-							//The cutoff is a fraction of brush size (jitter tolerance, independent of
-							//how densely we sample along the spline).
-							var knotCutoff = calculatedSize * 0.375;
-							if(knotCutoff < 1) knotCutoff = 1;
+							//Cutoff is a small absolute value: just enough to filter sub-pixel
+							//stylus jitter that would destabilise the spline. Scaling it with brush
+							//size used to swallow whole scribbles on large brushes.
+							var knotCutoff = 1.5;
 							var lastKnot = self._smoothKnots[self._smoothKnots.length - 1];
 							if(plugin.distance_between(lastKnot, {x: mouse_data.x, y: mouse_data.y}) < knotCutoff) return;
 							self._smoothKnots.push({x: mouse_data.x, y: mouse_data.y});
@@ -989,20 +994,32 @@
 								self._smoothAccumDist = plugin.draw_catmull_segment.call(self, ctx(), self.active_brush, p0, p1, p2, p3, stepSize, calculatedSize, calculatedAlpha, e, self._smoothAccumDist);
 							}
 						} else {
-							//original linear interpolation along the line between the last drawn spot and the current position
+							//path-length spacing: accumulate the distance the pointer has actually
+							//traveled and emit a stamp every stepSize px along the stroke. Unlike a
+							//chord-to-last-stamp gate, this lets tight scribbles inside a stepSize
+							//radius still deposit paint once their cumulative travel crosses stepSize.
 							var positions = $(self).data("positions");
-							var currentSpot = {x:mouse_data.x,y:mouse_data.y};
-							var lastSpot=positions[positions.length-1];
-							var dist = plugin.distance_between(lastSpot, currentSpot);
-							var angle = plugin.angle_between(lastSpot, currentSpot);
-							var _moveCtx = ctx();
-							for (var i = stepSize; i < dist; i+=stepSize) {
-								x = lastSpot.x + (Math.sin(angle) * i);
-								y = lastSpot.y + (Math.cos(angle) * i);
-								plugin.emit_spot.call(self, _moveCtx, self.active_brush, x, y, angle, calculatedSize, calculatedAlpha, e);
-								positions.push({x:x,y:y});
+							var prev = self._lastRawPoint;
+							var curX = mouse_data.x, curY = mouse_data.y;
+							var dx = curX - prev.x, dy = curY - prev.y;
+							var chord = Math.sqrt(dx*dx + dy*dy);
+							if(chord > 0){
+								var angle = plugin.angle_between(prev, {x:curX, y:curY});
+								var ux = dx / chord, uy = dy / chord;
+								var _moveCtx = ctx();
+								self._pathAccumDist += chord;
+								while(self._pathAccumDist >= stepSize){
+									//distance from `prev` along this chord to the emission point
+									var d = chord - (self._pathAccumDist - stepSize);
+									var ex = prev.x + ux * d;
+									var ey = prev.y + uy * d;
+									plugin.emit_spot.call(self, _moveCtx, self.active_brush, ex, ey, angle, calculatedSize, calculatedAlpha, e);
+									positions.push({x:ex, y:ey});
+									self._pathAccumDist -= stepSize;
+								}
+								self._lastRawPoint = {x:curX, y:curY};
+								$(self).data("positions",positions);
 							}
-							$(self).data("positions",positions);
 						}
 					}
 				}
