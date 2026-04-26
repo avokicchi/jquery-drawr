@@ -8,6 +8,10 @@ Screenshot:
 
 ![screenshot of canvas](https://cachecat.io/jquery-drawr/images/sample3.jpg "Screenshot of drawr")
 
+More minimal usage: 
+
+![screenshot of canvas](https://cachecat.io/jquery-drawr/images/sample4.jpg "Screenshot of drawr")
+
 Usage:
 
 ```
