@@ -64,6 +64,9 @@ $("#canvas").drawr("start");
 - paper_color(#ffffff): configure the paper color used when paper_color_mode is solid
 - paper_color_mode(checkerboard/solid): configure the paper color display mode used if transparency is on.
 - hide_advanced_brush_settings(false): hides the Advanced section (per-spot brush dynamics) from the Settings dialog. The engine still applies whatever defaults/overrides are in place but users just can't edit them from the UI.
+- long_press_pick_enabled(true): enable or disable long press color picker
+- long_press_pick_duration(1300): ms
+- long_press_pick_move_tolerance(3): //page px before the hold is abandoned
 
 **Events**
 

@@ -2894,8 +2894,8 @@
 					//sketchbook-style: hold still on the canvas for a beat and a colour
 					//ring blooms under the pointer. drag to hunt a colour, release to pick.
 					"long_press_pick_enabled" : true,
-					"long_press_pick_duration" : 700,   //ms
-					"long_press_pick_move_tolerance" : 8 //page px before the hold is abandoned
+					"long_press_pick_duration" : 1300,   //ms
+					"long_press_pick_move_tolerance" : 3 //page px before the hold is abandoned
 				};
 				if(typeof action == "object") defaultSettings = Object.assign(defaultSettings, action);
 				currentCanvas.settings = defaultSettings;
